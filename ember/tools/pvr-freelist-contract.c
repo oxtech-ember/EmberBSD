@@ -23,6 +23,7 @@ static unsigned checks;
 #define KM_SLEEP 1
 #define BUS_DMA_WAITOK 1
 #define BUS_DMA_COHERENT 2
+#define BUS_DMA_NOWAIT 16
 #define _BUS_DMAMAP_COHERENT 4
 #define _BUS_DMAMAP_IS_BOUNCING 8
 #define BUS_DMASYNC_PREWRITE 1
@@ -38,6 +39,7 @@ static unsigned checks;
 #endif
 
 typedef void *bus_dma_tag_t;
+typedef size_t bus_size_t;
 struct allocation {
 	struct allocation *next;
 	void *cpu;
@@ -53,7 +55,7 @@ typedef struct {
 typedef struct test_dmamap {
 	unsigned _dm_flags;
 	int dm_nsegs;
-	size_t dm_mapsize;
+	size_t size, dm_mapsize;
 	bus_dma_segment_t dm_segs[1];
 	bool loaded, owned;
 } *bus_dmamap_t;
@@ -63,8 +65,10 @@ static struct allocation *metadata, *memory;
 static unsigned meta_count, mem_count, map_count, kva_count, loaded_count;
 static unsigned allocation_count, fault_at, fault_stage, current_serial;
 static void *fault_cpu;
+static unsigned batch_attempts, fail_batch_at, fail_batch_stage;
+static bool fragmented;
 static uint64_t next_pa;
-static const uint8_t zeros[4096];
+static const uint8_t zeros[16 * 4096];
 static struct {
 	unsigned alloc_calls, free_calls, commands, syncs, flushes, checks;
 	int alloc_error, free_error, command_error, flush_error, check_error;
@@ -126,10 +130,16 @@ bus_dmamem_alloc(bus_dma_tag_t t, size_t size, size_t align, size_t boundary,
 {
 	void *p = NULL;
 	struct allocation *r;
-	CHECK(t != NULL && size == 4096 && align == 4096 && boundary == 0 &&
-	    max == 1 && flags == BUS_DMA_WAITOK);
+	CHECK(t != NULL && size >= 4096 && size <= sizeof(zeros) &&
+	    size % 4096 == 0 && align == 4096 && boundary == 0 && max == 1 &&
+	    flags == (size == 4096 ? BUS_DMA_WAITOK : BUS_DMA_NOWAIT));
+	if (size > 4096)
+		batch_attempts++;
 	current_serial = ++allocation_count;
-	if (fault(1)) return ENOMEM;
+	if (fault(1) || (size > 4096 &&
+	    (fragmented || (batch_attempts == fail_batch_at &&
+	    fail_batch_stage == 1))))
+		return ENOMEM;
 	CHECK(posix_memalign(&p, align, size) == 0 && p != NULL);
 	memset(p, 0xa5, size);
 	r = record(&memory, p, size); r->pa = next_pa; next_pa += size;
@@ -149,15 +159,20 @@ bus_dmamem_free(bus_dma_tag_t t, bus_dma_segment_t *seg, int n)
 		CHECK(!fw.live || fw.reset);
 		CHECK(!fw.initialized || fw.ack || fw.reset);
 	}
-	mem_count--; forget(&memory, p, 4096); free(p);
+	/* The driver must release allocations in reverse order. */
+	CHECK(seg->allocation == memory);
+	mem_count--; forget(&memory, p, seg->allocation->size); free(p);
 }
 
 static int
 bus_dmamem_map(bus_dma_tag_t t, bus_dma_segment_t *seg, int n,
     size_t size, void **cpu, int flags)
 {
-	CHECK(n == 1 && size == 4096 && flags == (BUS_DMA_WAITOK | BUS_DMA_COHERENT));
-	if (fault(2)) return ENOMEM;
+	CHECK(n == 1 && size == seg->allocation->size &&
+	    flags == (BUS_DMA_WAITOK | BUS_DMA_COHERENT));
+	if (fault(2) || (size > 4096 && batch_attempts == fail_batch_at &&
+	    fail_batch_stage == 2))
+		return ENOMEM;
 	*cpu = seg->allocation->cpu; kva_count++;
 	return 0;
 }
@@ -165,16 +180,23 @@ bus_dmamem_map(bus_dma_tag_t t, bus_dma_segment_t *seg, int n,
 static void
 bus_dmamem_unmap(bus_dma_tag_t t, void *cpu, size_t size)
 {
-	CHECK(size == 4096 && kva_count != 0); kva_count--;
+	struct allocation *r;
+	for (r = memory; r != NULL && r->cpu != cpu; r = r->next)
+		continue;
+	CHECK(r != NULL && size == r->size && kva_count != 0);
+	kva_count--;
 }
 
 static int
 bus_dmamap_create(bus_dma_tag_t t, size_t size, int n, size_t max,
     size_t boundary, int flags, bus_dmamap_t *out)
 {
-	CHECK(size == 4096 && n == 1 && max == size && boundary == 0 && flags == BUS_DMA_WAITOK);
-	if (fault(3)) return ENOMEM;
-	*out = calloc(1, sizeof(**out)); CHECK(*out != NULL); map_count++;
+	CHECK(size >= 4096 && size <= sizeof(zeros) && n == 1 &&
+	    max == size && boundary == 0 && flags == BUS_DMA_WAITOK);
+	if (fault(3) || (size > 4096 && batch_attempts == fail_batch_at &&
+	    fail_batch_stage == 3))
+		return ENOMEM;
+	*out = calloc(1, sizeof(**out)); CHECK(*out != NULL); (*out)->size = size; map_count++;
 	return 0;
 }
 
@@ -189,11 +211,11 @@ bus_dmamap_load(bus_dma_tag_t t, bus_dmamap_t map, void *cpu, size_t size,
     void *proc, int flags)
 {
 	struct allocation *r;
-	CHECK(map != NULL && size == 4096 && flags == BUS_DMA_WAITOK && proc == NULL);
+	CHECK(map != NULL && size == map->size && flags == BUS_DMA_WAITOK && proc == NULL);
 	if (fault(4)) return EIO;
 	for (r = memory; r != NULL && r->cpu != cpu; r = r->next)
 		continue;
-	CHECK(r != NULL);
+	CHECK(r != NULL && r->size == size);
 	map->loaded = true; loaded_count++;
 	map->_dm_flags = _BUS_DMAMAP_COHERENT;
 	map->dm_nsegs = 1; map->dm_mapsize = size;
@@ -212,9 +234,9 @@ bus_dmamap_load(bus_dma_tag_t t, bus_dmamap_t map, void *cpu, size_t size,
 static void
 bus_dmamap_sync(bus_dma_tag_t t, bus_dmamap_t map, size_t off, size_t size, int flags)
 {
-	CHECK(map != NULL && map->loaded && off == 0 && size == 4096);
+	CHECK(map != NULL && map->loaded && off == 0 && size == map->size);
 	if (flags == (BUS_DMASYNC_PREWRITE | BUS_DMASYNC_PREREAD)) {
-		CHECK(memcmp(map->dm_segs[0].allocation->cpu, zeros, 4096) == 0);
+		CHECK(memcmp(map->dm_segs[0].allocation->cpu, zeros, size) == 0);
 		map->owned = true;
 	} else {
 		CHECK(flags == (BUS_DMASYNC_POSTWRITE | BUS_DMASYNC_POSTREAD));
@@ -317,7 +339,8 @@ backing_sync(void *cookie, int flags)
 		memcpy(backing.visible, backing.cpu, backing.size);
 		for (r = memory; r != NULL; r = r->next) {
 			if (r->pa < lowest) lowest = r->pa;
-			if (r->pa > highest) highest = r->pa;
+			if (r->pa + r->size - 4096 > highest)
+				highest = r->pa + r->size - 4096;
 		}
 		for (offset = 0; offset < backing.size; offset += 4) {
 			const uint8_t *b = backing.visible + offset;
@@ -325,7 +348,10 @@ backing_sync(void *cookie, int flags)
 			    (uint64_t)b[2] << 16 | (uint64_t)b[3] << 24) << 12;
 			if (pa < lowest || pa > highest) continue;
 			for (r = memory; r != NULL; r = r->next)
-				if (r->pa == pa) { r->published = true; break; }
+				if (pa >= r->pa && pa - r->pa < r->size) {
+					r->published = true;
+					break;
+				}
 		}
 	}
 	backing.syncs++;
@@ -354,6 +380,8 @@ reset_state(void)
 	allocation_count = fault_at = fault_stage = current_serial = 0;
 	fault_cpu = NULL;
 	next_pa = UINT64_C(0x120000000);
+	batch_attempts = fail_batch_at = fail_batch_stage = 0;
+	fragmented = false;
 	backing.syncs = 0;
 	memset(backing.cpu, 0xa5, backing.size);
 	memset(backing.visible, 0x5a, backing.size);
@@ -394,7 +422,7 @@ put64(uint8_t *p, uint64_t v)
 
 static void
 valid_case(uint32_t initial, uint32_t max, uint32_t grow, uint32_t threshold,
-    uint32_t ready)
+    uint32_t ready, unsigned maps)
 {
 	struct pvr_freelist *fl = NULL;
 	struct pvr_freelist_config c;
@@ -404,7 +432,7 @@ valid_case(uint32_t initial, uint32_t max, uint32_t grow, uint32_t threshold,
 	reset_state(); c = config(initial, max, grow, threshold);
 	CHECK(pvr_freelist_create(&fw, &backend, &c, &fl) == 0 && fl != NULL);
 	CHECK(pvr_freelist_fw_address(fl) == 0xc0123000U);
-	CHECK(mem_count == initial && map_count == initial && loaded_count == initial);
+	CHECK(mem_count == maps && map_count == maps && loaded_count == maps);
 	CHECK(fw.flushes == 1 && fw.checks == 2 && fw.syncs == 1);
 	put64(expected, c.gpu_va);
 	put64(expected + 8, (c.gpu_va + (max - initial + ready) * 4) & ~UINT64_C(15));
@@ -487,6 +515,75 @@ allocation_failures(void)
 	CHECK(mem_count == 4 && fw.live && fw.syncs == 0 && backing.syncs == 0);
 	CHECK(pvr_freelist_fw_address(fl) == 0);
 	CHECK(pvr_freelist_destroy(&fl) == 0 && fl == NULL && fw.commands == 0);
+}
+
+static void
+batch_cases(void)
+{
+	struct pvr_freelist *fl = NULL;
+	struct pvr_freelist_config c;
+	unsigned int stage, i;
+	uint32_t pfn;
+
+	reset_state();
+	c = config(32, 32, 0, 0);
+	fragmented = true;
+	CHECK(pvr_freelist_create(&fw, &backend, &c, &fl) == 0);
+	CHECK(batch_attempts == 1 && allocation_count == 33 && map_count == 32);
+	for (i = 0; i < 32; i++)
+		CHECK(get32(backing.visible + i * 4) == 0x120000U + i);
+	CHECK(pvr_freelist_destroy(&fl) == 0);
+
+	for (stage = 1; stage <= 3; stage++) {
+		reset_state();
+		c = config(36, 36, 0, 0);
+		fail_batch_at = 2;
+		fail_batch_stage = stage;
+		CHECK(pvr_freelist_create(&fw, &backend, &c, &fl) == 0);
+		CHECK(batch_attempts == 2 && allocation_count == 22);
+		CHECK(mem_count == 21 && map_count == 21 && loaded_count == 21);
+		for (i = 0; i < 36; i++) {
+			pfn = 0x120000U + i;
+			if (stage != 1 && i >= 16)
+				pfn += 16;
+			CHECK(get32(backing.visible + i * 4) == pfn);
+		}
+		fw.response = 3;
+		CHECK(pvr_freelist_destroy(&fl) == EBUSY && fl != NULL);
+		CHECK(mem_count == 21 && map_count == 21);
+		fw.response = 1;
+		CHECK(pvr_freelist_destroy(&fl) == 0);
+	}
+
+	/* A successful first group and singles roll back after a later error. */
+	reset_state();
+	c = config(32, 32, 0, 0);
+	fail_batch_at = 2;
+	fail_batch_stage = 1;
+	fault_at = 4;
+	fault_stage = 1;
+	CHECK(pvr_freelist_create(&fw, &backend, &c, &fl) == ENOMEM);
+	CHECK(batch_attempts == 2 && allocation_count == 4 && fl == NULL);
+	CHECK(fw.alloc_calls == 0 && backing.syncs == 0 && backing.cpu[0] == 0xa5);
+
+	/* An invalid DMA mapping on the second group must never retry singles. */
+	for (stage = 5; stage <= 12; stage++) {
+		reset_state();
+		c = config(32, 32, 0, 0);
+		fault_at = 2;
+		fault_stage = stage;
+		CHECK(pvr_freelist_create(&fw, &backend, &c, &fl) ==
+		    (stage <= 6 ? EOPNOTSUPP : EINVAL));
+		CHECK(batch_attempts == 2 && allocation_count == 2 && fl == NULL);
+		CHECK(fw.alloc_calls == 0 && backing.syncs == 0);
+	}
+
+	reset_state();
+	c = config(16, 16, 0, 0);
+	next_pa = (UINT64_C(1) << 36) - 15 * 4096;
+	CHECK(pvr_freelist_create(&fw, &backend, &c, &fl) == EINVAL);
+	CHECK(batch_attempts == 1 && allocation_count == 1 && fl == NULL);
+	CHECK(fw.alloc_calls == 0 && backing.syncs == 0);
 }
 
 /* No production reset API exists. The test models a separately proven reset. */
@@ -574,7 +671,7 @@ growth_cases(void)
 	CHECK(pvr_freelist_grow_prepare(fl, &response) == 0);
 	expected = (struct rogue_fwif_freelist_gs_data){ 0xc0123000U, 256, 768, 96 };
 	CHECK(memcmp(&response, &expected, sizeof(response)) == 0);
-	CHECK(mem_count == 768 && fl->current_pages == 672 && fl->ready_pages == 96);
+	CHECK(mem_count == 32 + 256 && fl->current_pages == 672 && fl->ready_pages == 96);
 	CHECK(memcmp(image, fw.image, sizeof(image)) == 0 && fw.syncs == 1);
 	CHECK(fw.commands == 0 && fw.flushes == 1 && fw.checks == 2);
 	for (i = 0; i < 256; i++)
@@ -585,12 +682,12 @@ growth_cases(void)
 	CHECK(pvr_freelist_grow_prepare(fl, &response) == EBUSY);
 	CHECK(memcmp(&response, &saved, sizeof(response)) == 0);
 	CHECK(pvr_freelist_destroy(&fl) == EBUSY && fl != NULL);
-	CHECK(fw.commands == 0 && fw.checks == 2 && mem_count == 768);
+	CHECK(fw.commands == 0 && fw.checks == 2 && mem_count == 32 + 256);
 	CHECK(pvr_freelist_grow_complete(fl, 0) == 0);
 	CHECK(pvr_freelist_grow_complete(fl, 0) == EINVAL);
 	CHECK(pvr_freelist_grow_prepare(fl, &response) == 0);
 	expected = (struct rogue_fwif_freelist_gs_data){ 0xc0123000U, 256, 1024, 132 };
-	CHECK(memcmp(&response, &expected, sizeof(response)) == 0 && mem_count == 1024);
+	CHECK(memcmp(&response, &expected, sizeof(response)) == 0 && mem_count == 32 + 512);
 	for (i = 0; i < 256; i++)
 		CHECK(get32(backing.visible + i * 4) == 0x120000U + 768 + i);
 	CHECK(pvr_freelist_grow_complete(fl, 0) == 0);
@@ -788,11 +885,11 @@ main(void)
 	backing.size = 524288 * 4;
 	backing.cpu = malloc(backing.size); backing.visible = malloc(backing.size);
 	CHECK(backing.cpu != NULL && backing.visible != NULL);
-	valid_case(512, 65536, 256, 13, 64);
-	valid_case(28, 28, 0, 0, 0);
-	valid_case(4, 8, 4, 100, 4);
-	valid_case(0, 524288, 4, 13, 0);
-	invalid_cases(); allocation_failures(); retained_failures();
+	valid_case(512, 65536, 256, 13, 64, 32);
+	valid_case(28, 28, 0, 0, 0, 2);
+	valid_case(4, 8, 4, 100, 4, 4);
+	valid_case(0, 524288, 4, 13, 0, 0);
+	invalid_cases(); allocation_failures(); batch_cases(); retained_failures();
 	growth_cases(); growth_failures(); current_pages_tests(); reconstruction_case(); reset_state();
 	free(backing.cpu); free(backing.visible);
 	printf("pvr FreeList: %u checks passed\n", checks);

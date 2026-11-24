@@ -35,6 +35,7 @@
 #include "pvr_hwrt.h"
 
 #define PVR_FREELIST_PAGE 4096U
+#define PVR_FREELIST_BATCH 16U
 #define PVR_FREELIST_PA_END (UINT64_C(1) << 36)
 #define PVR_FREELIST_VA_END (UINT64_C(1) << 40)
 /*
@@ -49,6 +50,8 @@ struct pvr_freelist_page {
 	bus_dmamap_t map;
 	void *cpu;
 	uint64_t pa;
+	/* The first PFN owns the DMA mapping for the entire allocation. */
+	bus_size_t size;
 	int nsegments;
 	bool loaded, synced;
 };
@@ -68,50 +71,58 @@ static void
 pvr_freelist_page_free(struct pvr_freelist *fl, struct pvr_freelist_page *page)
 {
 
+	if (page->size == 0)
+		return;
 	if (page->loaded && page->synced)
-		bus_dmamap_sync(fl->dmat, page->map, 0, PVR_FREELIST_PAGE,
+		bus_dmamap_sync(fl->dmat, page->map, 0, page->size,
 		    BUS_DMASYNC_POSTWRITE | BUS_DMASYNC_POSTREAD);
 	if (page->loaded)
 		bus_dmamap_unload(fl->dmat, page->map);
 	if (page->map != NULL)
 		bus_dmamap_destroy(fl->dmat, page->map);
 	if (page->cpu != NULL)
-		bus_dmamem_unmap(fl->dmat, page->cpu, PVR_FREELIST_PAGE);
+		bus_dmamem_unmap(fl->dmat, page->cpu, page->size);
 	if (page->nsegments != 0)
 		bus_dmamem_free(fl->dmat, &page->segment, page->nsegments);
 	memset(page, 0, sizeof(*page));
 }
 
 static int
-pvr_freelist_page_alloc(struct pvr_freelist *fl, struct pvr_freelist_page *page)
+pvr_freelist_page_alloc(struct pvr_freelist *fl, struct pvr_freelist_page *page,
+    uint32_t count)
 {
+	const bus_size_t size = count * PVR_FREELIST_PAGE;
+	uint64_t pa;
 	int error;
 
-	error = bus_dmamem_alloc(fl->dmat, PVR_FREELIST_PAGE,
+	KASSERT(count > 0 && count <= PVR_FREELIST_BATCH);
+	page->size = size;
+
+	error = bus_dmamem_alloc(fl->dmat, size,
 	    PVR_FREELIST_PAGE, 0, &page->segment, 1, &page->nsegments,
-	    BUS_DMA_WAITOK);
+	    (count == 1 ? BUS_DMA_WAITOK : BUS_DMA_NOWAIT));
 	if (error != 0) {
 		page->nsegments = 0;
-		return error;
+		goto fail;
 	}
 	if (page->nsegments != 1) {
 		error = EINVAL;
 		goto fail;
 	}
-	error = bus_dmamem_map(fl->dmat, &page->segment, 1, PVR_FREELIST_PAGE,
+	error = bus_dmamem_map(fl->dmat, &page->segment, 1, size,
 	    &page->cpu, BUS_DMA_WAITOK | BUS_DMA_COHERENT);
 	if (error != 0) {
 		page->cpu = NULL;
 		goto fail;
 	}
-	error = bus_dmamap_create(fl->dmat, PVR_FREELIST_PAGE, 1,
-	    PVR_FREELIST_PAGE, 0, BUS_DMA_WAITOK, &page->map);
+	error = bus_dmamap_create(fl->dmat, size, 1,
+	    size, 0, BUS_DMA_WAITOK, &page->map);
 	if (error != 0) {
 		page->map = NULL;
 		goto fail;
 	}
 	error = bus_dmamap_load(fl->dmat, page->map, page->cpu,
-	    PVR_FREELIST_PAGE, NULL, BUS_DMA_WAITOK);
+	    size, NULL, BUS_DMA_WAITOK);
 	if (error != 0)
 		goto fail;
 	page->loaded = true;
@@ -121,23 +132,26 @@ pvr_freelist_page_alloc(struct pvr_freelist *fl, struct pvr_freelist_page *page)
 		goto fail;
 	}
 	if (page->map->dm_nsegs != 1 ||
-	    page->map->dm_mapsize != PVR_FREELIST_PAGE ||
-	    page->map->dm_segs[0].ds_len != PVR_FREELIST_PAGE) {
+	    page->map->dm_mapsize != size ||
+	    page->map->dm_segs[0].ds_len != size) {
 		error = EINVAL;
 		goto fail;
 	}
-	page->pa = page->map->dm_segs[0].ds_addr;
-	if (page->segment.ds_len < PVR_FREELIST_PAGE ||
-	    page->pa != page->segment.ds_addr ||
-	    (page->pa & (PVR_FREELIST_PAGE - 1)) != 0 ||
-	    page->pa > PVR_FREELIST_PA_END - PVR_FREELIST_PAGE) {
+	pa = page->map->dm_segs[0].ds_addr;
+	/* An aligned contiguous segment in this range proves all its PFNs. */
+	if (page->segment.ds_len < size ||
+	    pa != page->segment.ds_addr ||
+	    (pa & (PVR_FREELIST_PAGE - 1)) != 0 ||
+	    pa > PVR_FREELIST_PA_END - size) {
 		error = EINVAL;
 		goto fail;
 	}
-	memset(page->cpu, 0, PVR_FREELIST_PAGE);
-	bus_dmamap_sync(fl->dmat, page->map, 0, PVR_FREELIST_PAGE,
+	memset(page->cpu, 0, size);
+	bus_dmamap_sync(fl->dmat, page->map, 0, size,
 	    BUS_DMASYNC_PREWRITE | BUS_DMASYNC_PREREAD);
 	page->synced = true;
+	for (uint32_t i = 0; i < count; i++)
+		page[i].pa = pa + i * PVR_FREELIST_PAGE;
 	return 0;
 fail:
 	pvr_freelist_page_free(fl, page);
@@ -166,7 +180,7 @@ pvr_freelist_create(bus_dma_tag_t dmat, const struct pvr_backend *be,
 	struct rogue_fwif_freelist *firmware;
 	uint8_t *table;
 	uint64_t bytes;
-	uint32_t ready, entry, i;
+	uint32_t batch, count, ready, entry, i;
 	int error;
 
 	if (dmat == NULL || be == NULL || config == NULL || owner == NULL ||
@@ -202,13 +216,22 @@ pvr_freelist_create(bus_dma_tag_t dmat, const struct pvr_backend *be,
 	if (config->initial_pages != 0)
 		fl->pages = kmem_zalloc(config->initial_pages * sizeof(*fl->pages),
 		    KM_SLEEP);
+	batch = config->initial_pages >= PVR_FREELIST_BATCH ?
+	    PVR_FREELIST_BATCH : 1;
 	while (fl->allocated < config->initial_pages) {
-		error = pvr_freelist_page_alloc(fl, &fl->pages[fl->allocated]);
+		count = MIN(batch, config->initial_pages - fl->allocated);
+		error = pvr_freelist_page_alloc(fl, &fl->pages[fl->allocated],
+		    count);
+		if (error == ENOMEM && count > 1) {
+			/* Contiguous pages are optional. Stop probing on pressure. */
+			batch = 1;
+			continue;
+		}
 		if (error != 0) {
 			pvr_freelist_release(fl);
 			return error;
 		}
-		fl->allocated++;
+		fl->allocated += count;
 	}
 	error = be->alloc(be->cookie, sizeof(*firmware), &fl->firmware);
 	if (error != 0) {
@@ -299,7 +322,7 @@ pvr_freelist_grow_prepare(struct pvr_freelist *fl,
 		memcpy(pages, fl->pages, fl->allocated * sizeof(*pages));
 	count = fl->allocated;
 	while (count < total) {
-		error = pvr_freelist_page_alloc(fl, &pages[count]);
+		error = pvr_freelist_page_alloc(fl, &pages[count], 1);
 		if (error != 0) {
 			/* No new PFN is visible. Existing page ownership is unchanged. */
 			while (count > fl->allocated)
