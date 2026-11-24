@@ -157,6 +157,9 @@ It does not replace kernel or physical-device testing.
   reports. Only a complete, structurally valid beacon from the associated AP
   on the selected channel refreshes the deadline; expiry calls
   `ieee80211_beacon_miss()` so net80211 probes and then scans.
+- Outside RUN, `rtwx` keeps `if_timer` armed while net80211 waits for an
+  AUTH or ASSOC reply. Without a reply, `ieee80211_watchdog()` returns the
+  station to SCAN. `ember/tests/rtwx-watchdog.py` checks this path.
 - On a matching channel-switch or Quiet announcement, `rtwx` pauses the MAC
   TX scheduler synchronously. Its state worker completes the required INIT,
   resets the rtw89 PCI rings, and starts a fresh scan. An explicit pending

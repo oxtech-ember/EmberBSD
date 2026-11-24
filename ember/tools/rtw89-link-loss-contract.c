@@ -88,6 +88,7 @@ struct ieee80211com {
 	enum ieee80211_state ic_state;
 	int ic_opmode;
 	uint16_t ic_bmisstimeout;
+	int ic_mgt_timer;
 	struct ifnet *ic_ifp;
 	struct ieee80211_node *ic_bss;
 	struct ieee80211_channel *ic_curchan;

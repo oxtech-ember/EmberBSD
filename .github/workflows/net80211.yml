@@ -21,6 +21,7 @@ name: Native net80211 crypto, scan, aggregation and WME contracts
       - 'ember/tools/aicwf-bip-contract.c'
       - 'ember/tools/bsd-sae-contract.*'
       - 'ember/tools/rtw89-link-loss-contract.*'
+      - 'ember/tests/rtwx-watchdog.*'
       - 'sys/dev/pci/rtw89/if_rtw89.c'
       - 'ember/tools/aicwf-vht-test.c'
       - 'ember/tools/aicwf-sta-contract.c'
@@ -87,6 +88,7 @@ name: Native net80211 crypto, scan, aggregation and WME contracts
       - 'ember/tools/aicwf-bip-contract.c'
       - 'ember/tools/bsd-sae-contract.*'
       - 'ember/tools/rtw89-link-loss-contract.*'
+      - 'ember/tests/rtwx-watchdog.*'
       - 'sys/dev/pci/rtw89/if_rtw89.c'
       - 'ember/tools/aicwf-vht-test.c'
       - 'ember/tools/aicwf-sta-contract.c'
@@ -173,6 +175,7 @@ jobs:
             /ember/tools/aicwf-bip-contract.c
             /ember/tools/bsd-sae-contract.*
             /ember/tools/rtw89-link-loss-contract.*
+            /ember/tests/rtwx-watchdog.*
             /sys/dev/pci/rtw89/if_rtw89.c
             /ember/tools/aicwf-vht-test.c
             /ember/tools/aicwf-sta-contract.c
@@ -277,9 +280,12 @@ jobs:
           python3 sys/net80211/tests/assoc-lifecycle.py --cc gcc \
             --build-dir "$RUNNER_TEMP/assoc-lifecycle-optimized" \
             --cflags="$WME_TEST_CFLAGS"
-          mkdir -p "$RUNNER_TEMP/ioctl"
+          mkdir -p "$RUNNER_TEMP/ioctl" "$RUNNER_TEMP/rtw89-link-loss"
           python3 sys/net80211/tests/ioctl.py --cc gcc --build-dir "$RUNNER_TEMP/ioctl"
           python3 sys/net80211/tests/sta-left.py --cc gcc --build-dir "$RUNNER_TEMP/sta-left"
+          CC=gcc python3 ember/tests/rtwx-watchdog.py . "$RUNNER_TEMP/rtwx-watchdog"
+          python3 ember/tools/rtw89-link-loss-contract.py --source-root "$PWD" \
+            --work-dir "$RUNNER_TEMP/rtw89-link-loss" --cc "$(command -v gcc)"
       - name: Analyze unoptimized actual source paths
         env:
           CC: gcc

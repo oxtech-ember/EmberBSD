@@ -825,8 +825,13 @@ rtw89_beacon_state(struct rtw89_softc *sc, enum ieee80211_state nstate)
 		sc->sc_beacon_active = true;
 		ic->ic_ifp->if_timer = 1;
 	} else {
+		/*
+		 * Retire only beacon supervision. net80211 arms if_timer for the
+		 * AUTH/ASSOC reply timeout; ieee80211_watchdog() must still run
+		 * it so a station without a reply returns to SCAN.
+		 */
 		sc->sc_beacon_active = false;
-		ic->ic_ifp->if_timer = 0;
+		ic->ic_ifp->if_timer = ic->ic_mgt_timer != 0;
 	}
 }
 
@@ -991,7 +996,7 @@ rtw89_newstate_task(struct work *wk, void *arg)
 		/* A rejected common transition may retire its own SAE cookie.
 		 * Do not publish requested RUN or disturb a queued successor. */
 		sc->sc_beacon_active = false;
-		ifp->if_timer = 0;
+		ifp->if_timer = ic->ic_mgt_timer != 0;
 		splx(s);
 		return;
 	}
