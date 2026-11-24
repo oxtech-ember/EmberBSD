@@ -12,6 +12,7 @@ typedef uint64_t bus_addr_t;
 typedef void *bus_space_tag_t;
 typedef uintptr_t bus_space_handle_t;
 typedef struct { unsigned unused; } kmutex_t;
+typedef int kcondvar_t;
 typedef size_t bus_size_t;
 typedef struct fake_tag { unsigned refs; bool parent; } *bus_dma_tag_t;
 typedef struct { uint64_t ds_addr, ds_len; unsigned id; } bus_dma_segment_t;

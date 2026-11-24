@@ -4,6 +4,7 @@
 #ifndef _SUN60I_A733_NPU_RUN_H
 #define _SUN60I_A733_NPU_RUN_H
 #include <sys/bus.h>
+#include <sys/condvar.h>
 #include <sys/mutex.h>
 struct clk;
 struct sun60i_a733_npu_dma;
@@ -18,6 +19,12 @@ struct sun60i_a733_npu_run_status {
 	uint32_t raw[2][A733_NPU_RUN_NREGS];
 	uint32_t irq_raw, irq_bits, irq_fault, irq_mask_readback;
 	uint32_t stale[2], terminal_status, terminal_idle[2], terminal_dma[2];
+	/* Read-only samples taken under the IRQ lock before masking on timeout. */
+	uint32_t timeout_valid, timeout_mask, timeout_idle, timeout_dma;
+	uint32_t timeout_mmu_control, timeout_mmu_root;
+	uint32_t timeout_command, timeout_trigger;
+	uint32_t timeout_fe_state, timeout_fe_state2, timeout_dma2;
+	uint32_t timeout_axi, timeout_mmu_fault, timeout_fault_va, timeout_ack;
 	uint64_t irq_count, irq_baseline;
 	uint32_t task_features[2][3], task_features_valid;
 	uint32_t task_feature_read_mask[2];
@@ -34,6 +41,7 @@ struct sun60i_a733_npu_run {
 	bus_space_handle_t bsh;
 	void *ih;
 	kmutex_t irq_lock;
+	kcondvar_t irq_cv;
 	bool lock_initialized, mapped, armed, task_retained;
 	uint32_t profile;
 	const struct sun60i_a733_npu_dma *bound_dma;

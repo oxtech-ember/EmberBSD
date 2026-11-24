@@ -38,8 +38,10 @@ sun60i_a733_npu_task_destroy(struct sun60i_a733_npu_task *t)
 		}
 		t->dma = NULL;
 	}
-	if (t->run.lock_initialized)
+	if (t->run.lock_initialized) {
+		cv_destroy(&t->run.irq_cv);
 		mutex_destroy(&t->run.irq_lock);
+	}
 	kmem_free(t, sizeof(*t));
 	return 0;
 }

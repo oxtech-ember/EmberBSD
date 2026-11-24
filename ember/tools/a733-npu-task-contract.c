@@ -15,6 +15,10 @@ typedef struct {
 	bool held;
 	int ipl;
 } kmutex_t;
+typedef int kcondvar_t;
+#define mutex_owned(m) ((m)->held)
+#define KASSERT(c) CHECK(c)
+#define __arraycount(a) (sizeof(a) / sizeof((a)[0]))
 typedef size_t bus_size_t;
 typedef struct fake_tag {
 	unsigned refs;
@@ -270,7 +274,7 @@ static const int cookie;
 static int bus_token, irq_token;
 static uint32_t regs[1024], write_offsets[64], write_values[64];
 static unsigned maps, unmaps, established, removed, proofs, peeks, pokes;
-static unsigned writes, ordinary_reads, barriers, delays, setters, retains;
+static unsigned writes, ordinary_reads, barriers, waits, setters, retains;
 static unsigned fail_proof, fail_peek, fail_poke;
 static bool fail_map, fail_irq, fail_set, fail_retain, bad_mask, no_irq;
 static bool in_irq, late_error, pending_irq, start_drained;
@@ -452,7 +456,7 @@ valid_offset(bus_size_t offset)
 {
 	static const unsigned allowed[] = {0, 4, 0x10, 0x14, 0x24, 0x30,
 	    0x388, 0x3a4,
-	0x20, 0x34, 0xa0, 0xa8, 0xe8, 0x3b4, 0x654, 0x664, 0x668, 0x66c, 0x90, 0x100,
+	0x20, 0x34, 0xa0, 0xa8, 0xe8, 0x3b4, 0x654, 0x664, 0x660, 0x00c, 0x380, 0x384, 0x668, 0x66c, 0x90, 0x100,
 	    0x104, 0x10c, 0x3a8, 0x414};
 	for (size_t i = 0; i < sizeof(allowed) / sizeof(allowed[0]); i++)
 		if (offset == allowed[i])
@@ -615,12 +619,50 @@ fdtbus_intr_disestablish(int phandle, void *ih)
 	    &irq_token);
 	removed++;
 }
-static void
-delay(unsigned us)
+static const int hz = 100;
+static unsigned ticks, late_irq_tick;
+
+static int
+getticks(void)
 {
-	CHECK(!in_irq && us == 1000);
-	delays++;
-	CHECK(delays <= 100);
+	return (int)ticks;
+}
+
+static void
+cv_init(kcondvar_t *cv, const char *name)
+{
+	CHECK(strcmp(name, "a733npu") == 0);
+	*cv = 1;
+}
+
+static void
+cv_destroy(kcondvar_t *cv)
+{
+	CHECK(*cv == 1);
+	*cv = 0;
+}
+
+static void
+cv_signal(kcondvar_t *cv)
+{
+	CHECK(*cv == 1 && in_irq && state.irq_lock.held);
+}
+
+static int
+cv_timedwait(kcondvar_t *cv, kmutex_t *lock, int ticks_left)
+{
+	CHECK(!in_irq && *cv == 1 && lock == &state.irq_lock && lock->held);
+	CHECK(ticks_left > 0 && ticks_left <= hz && ++waits <= (unsigned)hz);
+	if (late_irq_tick != 0 && late_irq_tick - ticks <= (unsigned)ticks_left) {
+		ticks = late_irq_tick;
+		late_irq_tick = 0;
+		pending_irq = true;
+	} else {
+		ticks += ticks_left;
+	}
+	mutex_exit(lock);
+	mutex_enter(lock);
+	return EWOULDBLOCK;
 }
 
 #include "sun60i_a733_npu_fe.c"
@@ -753,8 +795,9 @@ reset_bus(void)
 	memset(rstate, 0, sizeof(*rstate));
 	memset(regs, 0, sizeof(regs));
 	maps = unmaps = established = removed = proofs = peeks = pokes =
-	    writes = ordinary_reads = barriers = delays = setters = retains =
+	    writes = ordinary_reads = barriers = waits = setters = retains =
 	    0;
+	ticks = late_irq_tick = 0;
 	fail_proof = fail_peek = fail_poke = 0;
 	fail_map = fail_irq = fail_set = fail_retain = bad_mask = no_irq =
 	    in_irq = late_error = false;

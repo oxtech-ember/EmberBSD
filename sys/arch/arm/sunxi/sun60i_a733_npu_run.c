@@ -33,6 +33,7 @@
 #include <sys/cdefs.h>
 #include <sys/param.h>
 #include <sys/bus.h>
+#include <sys/kernel.h>
 #include <sys/mutex.h>
 #include <sys/systm.h>
 #include <dev/ofw/openfirm.h>
@@ -297,17 +298,18 @@ npu_run_irq(void *arg)
 		s->status.irq_fault = 1;
 	else
 		s->armed = false;
+	cv_signal(&s->irq_cv);
 	mutex_exit(&s->irq_lock);
 	return 1;
 }
 
 static int
-npu_run_mask(struct sun60i_a733_npu_run *s)
+npu_run_mask_locked(struct sun60i_a733_npu_run *s)
 {
 	uint32_t value = UINT32_MAX;
 	int error;
 
-	mutex_enter(&s->irq_lock);
+	KASSERT(mutex_owned(&s->irq_lock));
 	error = bus_space_poke_4(s->bst, s->bsh, 0x014, 0);
 	if (error == 0) {
 		bus_space_barrier(s->bst, s->bsh, 0x014, 4,
@@ -319,41 +321,106 @@ npu_run_mask(struct sun60i_a733_npu_run *s)
 		s->armed = false;
 	else
 		s->status.irq_fault = 1;
-	mutex_exit(&s->irq_lock);
 	return error != 0 ? EFAULT : value != 0 ? EIO : 0;
+}
+
+static int
+npu_run_mask(struct sun60i_a733_npu_run *s)
+{
+	int error;
+
+	mutex_enter(&s->irq_lock);
+	error = npu_run_mask_locked(s);
+	mutex_exit(&s->irq_lock);
+	return error;
+}
+
+static void
+npu_run_capture_timeout(struct sun60i_a733_npu_run *s)
+{
+	struct sun60i_a733_npu_run_status *st = &s->status;
+	const struct {
+		bus_size_t offset;
+		uint32_t *value;
+	} samples[] = {
+		{ 0x014, &st->timeout_mask },
+		{ 0x004, &st->timeout_idle },
+		{ 0x664, &st->timeout_dma },
+		{ 0x388, &st->timeout_mmu_control },
+		{ 0x3b4, &st->timeout_mmu_root },
+		{ 0x654, &st->timeout_command },
+		{ 0x3a4, &st->timeout_trigger },
+		{ 0x660, &st->timeout_fe_state },
+		{ 0x660, &st->timeout_fe_state2 },
+		{ 0x664, &st->timeout_dma2 },
+		{ 0x00c, &st->timeout_axi },
+		{ 0x384, &st->timeout_mmu_fault },
+	};
+
+	KASSERT(mutex_owned(&s->irq_lock));
+	for (size_t i = 0; i < __arraycount(samples); i++) {
+		if (bus_space_peek_4(s->bst, s->bsh, samples[i].offset,
+		    samples[i].value) == 0)
+			st->timeout_valid |= 1U << i;
+	}
+	/* VIPLite debug reads the fault address only for an active fault. */
+	if ((st->timeout_valid & (1U << 11)) != 0 && st->timeout_mmu_fault != 0 &&
+	    bus_space_peek_4(s->bst, s->bsh, 0x380, &st->timeout_fault_va) == 0)
+		st->timeout_valid |= 1U << 12;
 }
 
 static int
 npu_run_wait(struct sun60i_a733_npu_run *s, uint32_t va)
 {
-	for (unsigned poll = 0; poll < 100; poll++) {
-		bool fault, event;
+	struct sun60i_a733_npu_run_status *st = &s->status;
+	const unsigned start = getticks();
+	int error = 0;
 
-		mutex_enter(&s->irq_lock);
-		fault = s->status.irq_fault != 0;
-		event = s->status.irq_count > s->status.irq_baseline &&
-		    s->status.irq_bits == 0x10;
-		mutex_exit(&s->irq_lock);
-		if (fault)
-			return EIO;
+	mutex_enter(&s->irq_lock);
+	for (;;) {
+		bool event;
+		unsigned elapsed;
+
+		if (st->irq_fault != 0) {
+			error = EIO;
+			break;
+		}
+		event = st->irq_count > st->irq_baseline && st->irq_bits == 0x10;
 		if (event) {
 			for (size_t row = 0; row < 2; row++) {
 				if (bus_space_peek_4(s->bst, s->bsh, 0x004,
-				    &s->status.terminal_idle[row]) != 0 ||
+				    &st->terminal_idle[row]) != 0 ||
 				    bus_space_peek_4(s->bst, s->bsh, 0x664,
-				    &s->status.terminal_dma[row]) != 0)
-					return EFAULT;
+				    &st->terminal_dma[row]) != 0) {
+					error = EFAULT;
+					goto out;
+				}
 			}
-			if (s->status.terminal_idle[0] == 0x7fffffff &&
-			    s->status.terminal_idle[1] == 0x7fffffff &&
-			    s->status.terminal_dma[0] == s->status.terminal_dma[1] &&
-			    s->status.terminal_dma[1] >= va &&
-			    s->status.terminal_dma[1] - va < 4096)
-				return 0;
+			if (st->terminal_idle[0] == 0x7fffffff &&
+			    st->terminal_idle[1] == 0x7fffffff &&
+			    st->terminal_dma[0] == st->terminal_dma[1] &&
+			    st->terminal_dma[1] >= va &&
+			    st->terminal_dma[1] - va < 4096)
+				break;
 		}
-		delay(1000);
+		elapsed = (unsigned)getticks() - start;
+		if (elapsed >= (unsigned)hz) {
+			/* Preserve evidence, then disarm before releasing the ISR. */
+			npu_run_capture_timeout(s);
+			error = ETIMEDOUT;
+			if (npu_run_mask_locked(s) == 0 &&
+			    bus_space_peek_4(s->bst, s->bsh, 0x010,
+			    &st->timeout_ack) == 0)
+				st->timeout_valid |= 1U << 13;
+			break;
+		}
+		/* A fresh IRQ can precede the final idle state by one tick. */
+		(void)cv_timedwait(&s->irq_cv, &s->irq_lock,
+		    event ? 1 : (unsigned)hz - elapsed);
 	}
-	return ETIMEDOUT;
+out:
+	mutex_exit(&s->irq_lock);
+	return error;
 }
 
 void
@@ -526,6 +593,14 @@ sun60i_a733_npu_run_task_again(struct sun60i_a733_npu_run *s,
 	s->status.last_readback = s->status.irq_mask_readback = 0;
 	s->status.irq_raw = s->status.irq_bits = s->status.irq_fault = 0;
 	s->status.irq_baseline = s->status.irq_count;
+	s->status.timeout_valid = s->status.timeout_mask = 0;
+	s->status.timeout_idle = s->status.timeout_dma = 0;
+	s->status.timeout_mmu_control = s->status.timeout_mmu_root = 0;
+	s->status.timeout_command = s->status.timeout_trigger = 0;
+	s->status.timeout_fe_state = s->status.timeout_fe_state2 = 0;
+	s->status.timeout_dma2 = s->status.timeout_axi = 0;
+	s->status.timeout_mmu_fault = s->status.timeout_fault_va = 0;
+	s->status.timeout_ack = 0;
 	memset(s->status.stale, 0, sizeof(s->status.stale));
 	memset(s->status.terminal_idle, 0, sizeof(s->status.terminal_idle));
 	memset(s->status.terminal_dma, 0, sizeof(s->status.terminal_dma));
@@ -579,7 +654,7 @@ sun60i_a733_npu_run_task_again(struct sun60i_a733_npu_run *s,
 	mutex_exit(&s->irq_lock);
 	if (error == 0)
 		error = npu_run_wait(s, info.command_virtual);
-	if (enable_attempted) {
+	if (enable_attempted && error != ETIMEDOUT) {
 		mask_error = npu_run_mask(s);
 		if (error == 0)
 			error = mask_error;
@@ -641,6 +716,7 @@ npu_run_once(struct sun60i_a733_npu_run *s, bus_space_tag_t bst,
 		goto out;
 	s->bst = bst;
 	mutex_init(&s->irq_lock, MUTEX_DEFAULT, IPL_VM);
+	cv_init(&s->irq_cv, "a733npu");
 	s->lock_initialized = true;
 	error = bus_space_map(bst, 0x03600000, 0x1000, 0, &s->bsh);
 	if (error != 0)
@@ -734,9 +810,11 @@ npu_run_once(struct sun60i_a733_npu_run *s, bus_space_tag_t bst,
 	if (error == 0)
 		error = npu_run_wait(s, info.command_virtual);
 	mask_done = true;
-	mask_error = npu_run_mask(s);
-	if (error == 0)
-		error = mask_error;
+	if (error != ETIMEDOUT) {
+		mask_error = npu_run_mask(s);
+		if (error == 0)
+			error = mask_error;
+	}
 	if (error == 0) {
 		mutex_enter(&s->irq_lock);
 		if (bus_space_peek_4(bst, s->bsh, 0x010,

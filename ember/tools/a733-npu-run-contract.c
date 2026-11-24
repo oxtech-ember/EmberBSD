@@ -13,6 +13,7 @@ static unsigned checks;
  fprintf(stderr, "check %u failed at line %d: %s\n", checks, __LINE__, #c); exit(1); \
 } } while (0)
 #define KASSERT(c) CHECK(c)
+#define __arraycount(a) (sizeof(a) / sizeof((a)[0]))
 #define MUTEX_DEFAULT 0
 #define IPL_VM 5
 #define FDT_INTR_MPSAFE 1
@@ -23,6 +24,8 @@ typedef uintptr_t bus_space_handle_t;
 typedef size_t bus_size_t;
 typedef uint64_t bus_addr_t;
 typedef struct { bool held; int ipl; } kmutex_t;
+typedef int kcondvar_t;
+#define mutex_owned(m) ((m)->held)
 struct clk { unsigned id; };
 struct sun60i_a733_npu_dma { bool retained; size_t bytes; };
 struct sun60i_a733_npu_dma_info {
@@ -42,7 +45,7 @@ static const int cookie;
 static int bus_token, irq_token;
 static uint32_t regs[1024], write_offsets[64], values[64];
 static unsigned maps, unmaps, established, removed, proofs, peeks, pokes;
-static unsigned writes, ordinary_reads, barriers, delays, setters, retains;
+static unsigned writes, ordinary_reads, barriers, waits, setters, retains;
 static unsigned fail_proof, fail_peek, fail_poke;
 static bool fail_map, fail_irq, fail_set, fail_retain, bad_mask, no_irq;
 static bool in_irq, late_error, pending_irq, start_drained;
@@ -145,7 +148,7 @@ static void bus_space_unmap(bus_space_tag_t tag, bus_space_handle_t handle,
 static bool valid_offset(bus_size_t offset)
 {
  static const unsigned allowed[] = { 0,4,0x10,0x14,0x24,0x30,0x388,0x3a4,
-  0x3b4,0x654,0x664,0x668,0x66c,0x90,0x100,0x104,0x10c,0x3a8,0x414 };
+  0x3b4,0x654,0x664,0x668,0x66c,0x660,0x00c,0x380,0x384,0x90,0x100,0x104,0x10c,0x3a8,0x414 };
  for (size_t i = 0; i < sizeof(allowed)/sizeof(allowed[0]); i++)
   if (offset == allowed[i]) return true;
  return false;
@@ -164,7 +167,8 @@ static int bus_space_peek_4(bus_space_tag_t tag, bus_space_handle_t h,
  }
  if (offset == 0x14 && pokes && values[writes - 1] == 0) CHECK(mask_drained);
  if (offset == 0x664 && state.status.started && terminal_unstable && ++dma_reads % 2 == 0) *out ^= 8;
- if (offset == 0x10) { CHECK(state.status.publication_attempted && state.irq_lock.held); regs[4] = 0; }
+ if (offset == 0x10) { CHECK(state.status.publication_attempted && state.irq_lock.held &&
+     (!state.armed || !state.status.started)); regs[4] = 0; }
  return 0;
 }
 static void record_write(bus_size_t offset, uint32_t value)
@@ -242,8 +246,45 @@ static void *fdtbus_intr_establish_xname(int phandle, unsigned slot, int ipl,
 }
 static void fdtbus_intr_disestablish(int phandle, void *ih)
 { CHECK(!in_irq && !context.retained && phandle == 7 && ih == &irq_token); removed++; }
-static void delay(unsigned us)
-{ CHECK(!in_irq && us == 1000); delays++; CHECK(delays <= 100); }
+static const int hz = 100;
+static unsigned ticks, late_irq_tick;
+
+static int
+getticks(void)
+{
+	return (int)ticks;
+}
+
+static void
+cv_init(kcondvar_t *cv, const char *name)
+{
+	CHECK(strcmp(name, "a733npu") == 0);
+	*cv = 1;
+}
+
+static void
+cv_signal(kcondvar_t *cv)
+{
+	CHECK(*cv == 1 && in_irq && state.irq_lock.held);
+}
+
+static int
+cv_timedwait(kcondvar_t *cv, kmutex_t *lock, int ticks_left)
+{
+	CHECK(!in_irq && *cv == 1 && lock == &state.irq_lock && lock->held);
+	CHECK(ticks_left > 0 && ticks_left <= hz && ++waits <= (unsigned)hz);
+	if (late_irq_tick != 0 && late_irq_tick - ticks <= (unsigned)ticks_left) {
+		ticks = late_irq_tick;
+		late_irq_tick = 0;
+		pending_irq = true;
+	} else {
+		ticks += ticks_left;
+	}
+	mutex_exit(lock);
+	mutex_enter(lock);
+	return EWOULDBLOCK;
+}
+
 static int sun60i_a733_npu_dma_info(const struct sun60i_a733_npu_dma *m,
     struct sun60i_a733_npu_dma_info *out)
 {
@@ -331,7 +372,8 @@ sun60i_a733_npu_dma_task_rearm(struct sun60i_a733_npu_dma *m,
 static void reset(void)
 {
  memset(&state, 0, sizeof(state)); memset(regs, 0, sizeof(regs));
- maps=unmaps=established=removed=proofs=peeks=pokes=writes=ordinary_reads=barriers=delays=setters=retains=0;
+ maps=unmaps=established=removed=proofs=peeks=pokes=writes=ordinary_reads=barriers=waits=setters=retains=0;
+ ticks=late_irq_tick=0;
  fail_proof=fail_peek=fail_poke=0;
  fail_map=fail_irq=fail_set=fail_retain=bad_mask=no_irq=in_irq=late_error=false;
  pending_irq=start_drained=prestart_irq=clean_retain=false;
@@ -554,6 +596,23 @@ int main(void)
  reset(); irq_value=0; CHECK(run()==ETIMEDOUT && !state.status.terminal && state.status.irq_count==0);
  reset(); state.status.irq_count=17; no_irq=true;
  CHECK(run()==ETIMEDOUT && state.status.irq_baseline==17 && !state.status.terminal);
+ CHECK(state.status.timeout_valid==0x2fff && state.status.timeout_mask==0xc0000010 &&
+     state.status.timeout_idle==0x7fffffff && state.status.timeout_dma==terminal_address &&
+     state.status.irq_mask_readback==0 && !state.armed && ordinary_reads==0 &&
+     regs[0x10/4]==0 && state.status.timeout_ack==0x10 &&
+     state.status.timeout_mmu_control==0x21 &&
+     state.status.timeout_mmu_root==0x1001 && state.status.timeout_trigger==0x10200);
+ reset(); no_irq=true; regs[0x384/4]=6; regs[0x380/4]=0x01002000;
+ CHECK(run()==ETIMEDOUT && state.status.timeout_valid==0x3fff &&
+     state.status.timeout_mmu_fault==6 && state.status.timeout_fault_va==0x01002000);
+ reset(); no_irq=true; late_irq_tick=75;
+ CHECK(run()==0 && waits==1 && ticks==75 && state.status.irq_count==1 &&
+     state.status.timeout_valid==0);
+ reset(); no_irq=true; late_irq_tick=100;
+ CHECK(run()==0 && waits==1 && ticks==100 && state.status.irq_count==1);
+ reset(); no_irq=true; late_irq_tick=101;
+ CHECK(run()==ETIMEDOUT && ticks==100 && state.status.irq_count==0 &&
+     waits==1 && !state.armed && ordinary_reads==0);
  reset(); state.status.irq_count=UINT64_MAX;
  CHECK(run()==EIO && state.status.irq_count==UINT64_MAX && state.status.irq_fault);
  for (unsigned i=0; i<4; i++) {
@@ -562,9 +621,9 @@ int main(void)
   if (i==1) terminal_address=0x01000fff;
   if (i==2) terminal_address=0x01002000;
   if (i==3) terminal_address=0xffffffff;
-  CHECK(run()==ETIMEDOUT && !state.status.terminal && delays==100 && context.retained);
+  CHECK(run()==ETIMEDOUT && !state.status.terminal && ticks==(unsigned)hz && context.retained);
  }
- reset(); terminal_unstable=true; CHECK(run()==ETIMEDOUT && !state.status.terminal && delays==100);
+ reset(); terminal_unstable=true; CHECK(run()==ETIMEDOUT && !state.status.terminal && ticks==(unsigned)hz);
  reset(); fail_map=true; CHECK(run()==ENOMEM && !peeks && !writes);
  reset(); fail_irq=true; CHECK(run()!=0 && !writes && !unmaps && context.retained);
  reset(); fail_set=true; CHECK(run()!=0 && !writes && !context.retained);
@@ -573,7 +632,7 @@ int main(void)
  reset(); regs[5]=1; CHECK(run()==EBUSY && !writes && !retains);
  reset(); bad_mask=true; CHECK(run()!=0 && state.status.irq_fault && !state.status.terminal);
  reset(); late_error=true; CHECK(run()!=0 && state.status.terminal_status==0x40000000);
- reset(); no_irq=true; CHECK(run()==ETIMEDOUT && !state.status.terminal && delays<=100);
+ reset(); no_irq=true; CHECK(run()==ETIMEDOUT && !state.status.terminal && waits==1);
  reset(); irq_value=0x40000010; CHECK(run()!=0 && !state.status.terminal);
  for (unsigned i = 1; i <= 20; i++) { reset(); bad_route=i; CHECK(run()==EINVAL && !maps && !proofs && !writes && !retains && !established); }
  reset(); property_bytes=16; CHECK(run()!=0 && !maps && !proofs && !writes);

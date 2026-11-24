@@ -148,3 +148,30 @@ The separate [fixed native NN TASK contract](a733-npu-tiny-task.md) selects a
 closed image and performs numerical comparisons. Its bounded physical INT8 result
 has a separate [acceptance record](a733-npu-tiny-task.md#physical-acceptance).
 The accepted 40-byte FE result does not establish TASK success or general inference.
+
+
+## IRQ wait and timeout evidence
+
+Native FE and TASK runs wait on the NPU interrupt condition variable.
+The ISR records and masks each event before it wakes the waiter.
+A fresh event for the current run must carry only bit `0x10`.
+The waiter can then check that two idle and DMA program-counter samples agree.
+If the terminal registers are settling, it sleeps one tick before another
+pair of samples. These checks share a one-second deadline.
+
+At timeout, the driver records IRQ mask `0x014`, idle `0x004`, and FE DMA
+program counter `0x664` under the IRQ lock before it masks the device.
+It also samples MMU control `0x388`, MMU root `0x3b4`, command address
+`0x654`, and FE trigger `0x3a4` from the existing snapshot register set.
+Read the cached `run_timeout_*` or `task_run_timeout_*` sysctls.
+In `timeout_valid`, bits 0 through 6 mark successful reads in the
+order listed above. Bits 7 and 8 represent two FE state reads (`0x660`),
+bit 9 a second DMA PC, bit 10 AXI status (`0x00c`), and bit 11 MMU fault
+status (`0x384`). If MMU fault status is nonzero, bit 12 marks a valid read
+of the fault VA (`0x380`). These last registers follow the VIPLite
+debug register list at the source pin above. Register samples cannot supply a
+completion IRQ.
+The armed ISR owns destructive ACK reads. After a timeout confirms masking
+and disarms the ISR, the driver reads ACK once for diagnosis. Bit 13 marks
+this sample. It cannot convert a timeout into a completed run.
+A timeout keeps the run failed and retains the DMA context until reboot.

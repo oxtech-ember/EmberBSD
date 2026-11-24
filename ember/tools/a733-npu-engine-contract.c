@@ -12,6 +12,7 @@ typedef void *bus_space_tag_t;
 typedef void *bus_dma_tag_t;
 typedef uintptr_t bus_space_handle_t;
 typedef int kmutex_t;
+typedef int kcondvar_t;
 struct clk { int unused; };
 #include "sun60i_a733_npu_fe.h"
 #include "sun60i_a733_npu_nn.h"
@@ -684,7 +685,7 @@ task_cached_nodes(void)
 
 	reset();
 	sun60i_npu_sysctl_task_setup(&state, &root);
-	CHECK(node_count == 133 && setup_errors == 0);
+	CHECK(node_count == 148 && setup_errors == 0);
 	before_proofs = proofs;
 	before_snapshots = snapshots;
 	state.sc_run_lock = 0;
