@@ -153,8 +153,15 @@ struct hidmt_motion {
 #define HIDMT_GESTURE_END	0x04u
 #define HIDMT_GESTURE_CANCEL	0x08u
 
-/* Mean contact travel (contact units) before a gesture begins. */
-#define HIDMT_GESTURE_START	100
+/*
+ * Mean contact travel (contact units) before a gesture begins: about
+ * 1.3 mm on the ELAN 04f3:31fd pad (31 units/mm).  The first UPDATE
+ * carries this distance, so a desktop that follows the fingers jumps by
+ * it: keep it small, but well above the jitter of fingers at rest.
+ */
+#define HIDMT_GESTURE_START	40
+/* Frames after a click in which a swipe candidate keeps re-anchoring. */
+#define HIDMT_GESTURE_CLICK_SETTLE	3
 
 struct hidmt_gconf {
 	bool enable;
@@ -165,6 +172,7 @@ struct hidmt_gstate {
 	bool latched;			/* 3+ contacts seen, until all lift */
 	bool started;			/* BEGIN has been sent */
 	bool lifting;			/* swipe ended by a lift, until all lift */
+	unsigned click_settle;		/* frames to re-anchor after a click */
 	unsigned fingers;		/* 3 or 4 while a candidate exists */
 	int startx, starty, lastx, lasty;
 	/* Two-contact candidates arbitrate pinch against centroid scrolling. */

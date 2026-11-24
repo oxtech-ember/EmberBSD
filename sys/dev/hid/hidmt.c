@@ -980,6 +980,20 @@ hidmt_gesture_update(struct hidmt_gstate *gs, const struct hidmt_gconf *gc,
 	}
 	if (gs->lifting)
 		return;
+	if (!gs->started && (frame->buttons || gs->click_settle > 0)) {
+		/*
+		 * Pressing and releasing the switch move the contacts a
+		 * little: no swipe starts during a click or in the frames
+		 * just after it, and travel counts from there.
+		 */
+		if (frame->buttons)
+			gs->click_settle = HIDMT_GESTURE_CLICK_SETTLE;
+		else
+			gs->click_settle--;
+		gs->startx = gs->lastx = x;
+		gs->starty = gs->lasty = y;
+		return;
+	}
 	if (!gs->started) {
 		start = gc->start > 0 ? gc->start : HIDMT_GESTURE_START;
 		if (abs(x - gs->startx) < start && abs(y - gs->starty) < start)

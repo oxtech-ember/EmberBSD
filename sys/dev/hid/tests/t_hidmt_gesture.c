@@ -26,6 +26,7 @@ struct rig {
 	struct hidmt_gconf gc;
 	uint64_t t;
 	unsigned scan;
+	unsigned buttons;		/* forced into each frame when set */
 	/* Accumulated over the frames since the last rig_clear(). */
 	unsigned nbegin, nupdate, nend, ncancel, fingers;
 	int gdx, gdy, pdx, pdy, sx, sy, taps;
@@ -86,6 +87,8 @@ frame(struct rig *r, int n, const int *xy, const int *tip)
 		res = hidmt_assemble(&r->cfg, &r->as, b, 11, r->t, &f);
 	}
 	CHECK(res == HIDMT_ASM_READY);
+	if (r->buttons)
+		f.buttons = r->buttons;
 	hidmt_pointer_update_scroll(&r->p, &f, r->t, both, &r->sc, &m);
 	hidmt_gesture_update(&r->g, &r->gc, &f, &m);
 	r->pdx += m.dx; r->pdy += m.dy;
@@ -334,13 +337,50 @@ test_below_threshold(void)
 	rig_init(&r, true);
 	place(3, 1000, 1200, xy);
 	(void)frame(&r, 3, xy, NULL);
-	swipe(&r, 3, 10, 0, 8, xy);	/* 80 < HIDMT_GESTURE_START */
-	CHECK(80 < HIDMT_GESTURE_START);
+	swipe(&r, 3, 5, 0, 7, xy);	/* 35 < HIDMT_GESTURE_START */
+	CHECK(35 < HIDMT_GESTURE_START);
 	CHECK(r.nbegin == 0 && r.nupdate == 0 && r.nend == 0 &&
 	    r.ncancel == 0);
 	CHECK(r.pdx == 0 && r.pdy == 0 && r.sx == 0 && r.sy == 0);
 	lift(&r, 3, xy);
 	CHECK(r.nbegin == 0 && r.nend == 0 && r.ncancel == 0 && r.taps == 0);
+}
+
+/* The start threshold, and no swipe from a click with three fingers. */
+static void
+test_threshold_and_click(void)
+{
+	struct rig r;
+	int xy[8];
+
+	/* Exactly HIDMT_GESTURE_START of mean travel starts the swipe. */
+	rig_init(&r, true);
+	place(3, 1000, 1200, xy);
+	(void)frame(&r, 3, xy, NULL);
+	swipe(&r, 3, 1, 0, HIDMT_GESTURE_START - 1, xy);
+	CHECK(r.nbegin == 0);
+	swipe(&r, 3, 1, 0, 1, xy);
+	CHECK(r.nbegin == 1 && r.gdx == HIDMT_GESTURE_START);
+	lift(&r, 3, xy);
+
+	/* A click with three fingers moves them but starts no swipe. */
+	rig_init(&r, true);
+	place(3, 1000, 1200, xy);
+	(void)frame(&r, 3, xy, NULL);
+	r.buttons = 1;
+	swipe(&r, 3, 10, 5, 8, xy);
+	CHECK(r.nbegin == 0 && r.nupdate == 0);
+	/* The release rebound and the settle frames do not count. */
+	r.buttons = 0;
+	swipe(&r, 3, -30, 0, 1, xy);
+	swipe(&r, 3, 0, 0, HIDMT_GESTURE_CLICK_SETTLE - 1, xy);
+	CHECK(r.nbegin == 0);
+	swipe(&r, 3, 5, 0, 7, xy);
+	CHECK(r.nbegin == 0);
+	swipe(&r, 3, 5, 0, 2, xy);
+	CHECK(r.nbegin == 1 && r.gdx == 45);
+	lift(&r, 3, xy);
+	CHECK(r.nend == 1 && r.ncancel == 0);
 }
 
 /* Same frames through the scroll policy alone and with gestures enabled. */
@@ -419,6 +459,7 @@ main(void)
 	test_slow_swipe_every_frame();
 	test_count_change();
 	test_below_threshold();
+	test_threshold_and_click();
 	test_one_two_fingers_unchanged();
 	test_disabled();
 	printf("hidmt gesture: %u checks passed, 0 failed\n", npass);

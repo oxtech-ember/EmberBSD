@@ -149,7 +149,7 @@ count(unsigned phase)
 	return n;
 }
 
-/* Fingers placed, then moved far enough for BEGIN (100 units mean travel). */
+/* Fingers placed, then moved far enough for BEGIN (HIDMT_GESTURE_START). */
 static void
 begin_swipe(void)
 {
