@@ -90,7 +90,8 @@ unsigned int eqos_debug;	/* Default value */
 #define	TX_DESC_SIZE		(TX_DESC_COUNT * DESC_ALIGN)
 #define	RX_DESC_COUNT		EQOS_DMA_DESC_COUNT
 #define	RX_DESC_SIZE		(RX_DESC_COUNT * DESC_ALIGN)
-#define	MII_BUSY_RETRY		1000
+#define	EQOS_MDIO_POLL_US	10
+#define	EQOS_MDIO_TIMEOUT_US	20000
 
 #define	DESC_OFF(n)		((n) * sizeof(struct eqos_dma_desc))
 #define	TX_SKIP(n, o)		(((n) + (o)) % TX_DESC_COUNT)
@@ -126,69 +127,79 @@ static int	eqos_sysctl_rx_end_handler(SYSCTLFN_PROTO);
 static int	eqos_sysctl_debug_handler(SYSCTLFN_PROTO);
 #endif
 
+/* Both waits share the polling budget for one transaction. */
+static bool
+eqos_mdio_idle(struct eqos_softc *sc, unsigned int *retries)
+{
+
+	while ((RD4(sc, GMAC_MAC_MDIO_ADDRESS) & GMAC_MAC_MDIO_ADDRESS_GB) != 0) {
+		if (*retries == 0)
+			return false;
+		(*retries)--;
+		delay(EQOS_MDIO_POLL_US);
+	}
+	return true;
+}
+
+static int
+eqos_mdio_access(device_t dev, int phy, int reg, uint16_t data,
+    uint16_t *result)
+{
+	struct eqos_softc * const sc = device_private(dev);
+	unsigned int retries = EQOS_MDIO_TIMEOUT_US / EQOS_MDIO_POLL_US;
+	const bus_size_t size = GMAC_MAC_MDIO_DATA - GMAC_MAC_MDIO_ADDRESS + 4;
+	uint32_t addr;
+
+	/* A previous command may still be active after a timeout. */
+	if (!eqos_mdio_idle(sc, &retries))
+		goto timeout;
+	bus_space_barrier(sc->sc_bst, sc->sc_bsh, GMAC_MAC_MDIO_ADDRESS, size,
+	    BUS_SPACE_BARRIER_READ);
+	addr = sc->sc_clock_range |
+	    (phy << GMAC_MAC_MDIO_ADDRESS_PA_SHIFT) |
+	    (reg << GMAC_MAC_MDIO_ADDRESS_RDA_SHIFT) | GMAC_MAC_MDIO_ADDRESS_GB;
+	if (result != NULL) {
+		addr |= GMAC_MAC_MDIO_ADDRESS_GOC_READ;
+	} else {
+		WR4(sc, GMAC_MAC_MDIO_DATA, data);
+		bus_space_barrier(sc->sc_bst, sc->sc_bsh, GMAC_MAC_MDIO_ADDRESS,
+		    size, BUS_SPACE_BARRIER_WRITE);
+		addr |= GMAC_MAC_MDIO_ADDRESS_GOC_WRITE;
+	}
+	WR4(sc, GMAC_MAC_MDIO_ADDRESS, addr);
+	bus_space_barrier(sc->sc_bst, sc->sc_bsh, GMAC_MAC_MDIO_ADDRESS, size,
+	    BUS_SPACE_BARRIER_READ | BUS_SPACE_BARRIER_WRITE);
+
+	/* The controller clears GB when the command completes. */
+	if (!eqos_mdio_idle(sc, &retries))
+		goto timeout;
+	if (result != NULL) {
+		bus_space_barrier(sc->sc_bst, sc->sc_bsh, GMAC_MAC_MDIO_ADDRESS,
+		    size, BUS_SPACE_BARRIER_READ);
+		*result = RD4(sc, GMAC_MAC_MDIO_DATA) & 0xffff;
+	}
+	return 0;
+
+timeout:
+	device_printf(dev, "phy %s timeout, phy=%d reg=%d\n",
+	    result != NULL ? "read" : "write", phy, reg);
+	return ETIMEDOUT;
+}
+
 static int
 eqos_mii_readreg(device_t dev, int phy, int reg, uint16_t *val)
 {
-	struct eqos_softc * const sc = device_private(dev);
-	uint32_t addr;
-	int retry;
 
-	addr = sc->sc_clock_range |
-	    (phy << GMAC_MAC_MDIO_ADDRESS_PA_SHIFT) |
-	    (reg << GMAC_MAC_MDIO_ADDRESS_RDA_SHIFT) |
-	    GMAC_MAC_MDIO_ADDRESS_GOC_READ | GMAC_MAC_MDIO_ADDRESS_GB;
-	WR4(sc, GMAC_MAC_MDIO_ADDRESS, addr);
-
-	delay(10000);
-
-	for (retry = MII_BUSY_RETRY; retry > 0; retry--) {
-		addr = RD4(sc, GMAC_MAC_MDIO_ADDRESS);
-		if ((addr & GMAC_MAC_MDIO_ADDRESS_GB) == 0) {
-			*val = RD4(sc, GMAC_MAC_MDIO_DATA) & 0xFFFF;
-			break;
-		}
-		delay(10);
-	}
-	if (retry == 0) {
-		device_printf(dev, "phy read timeout, phy=%d reg=%d\n",
-		    phy, reg);
-		return ETIMEDOUT;
-	}
-
-	return 0;
+	if (val == NULL)
+		return EINVAL;
+	return eqos_mdio_access(dev, phy, reg, 0, val);
 }
 
 static int
 eqos_mii_writereg(device_t dev, int phy, int reg, uint16_t val)
 {
-	struct eqos_softc * const sc = device_private(dev);
-	uint32_t addr;
-	int retry;
 
-	WR4(sc, GMAC_MAC_MDIO_DATA, val);
-
-	addr = sc->sc_clock_range |
-	    (phy << GMAC_MAC_MDIO_ADDRESS_PA_SHIFT) |
-	    (reg << GMAC_MAC_MDIO_ADDRESS_RDA_SHIFT) |
-	    GMAC_MAC_MDIO_ADDRESS_GOC_WRITE | GMAC_MAC_MDIO_ADDRESS_GB;
-	WR4(sc, GMAC_MAC_MDIO_ADDRESS, addr);
-
-	delay(10000);
-
-	for (retry = MII_BUSY_RETRY; retry > 0; retry--) {
-		addr = RD4(sc, GMAC_MAC_MDIO_ADDRESS);
-		if ((addr & GMAC_MAC_MDIO_ADDRESS_GB) == 0) {
-			break;
-		}
-		delay(10);
-	}
-	if (retry == 0) {
-		device_printf(dev, "phy write timeout, phy=%d reg=%d\n",
-		    phy, reg);
-		return ETIMEDOUT;
-	}
-
-	return 0;
+	return eqos_mdio_access(dev, phy, reg, val, NULL);
 }
 
 static void
