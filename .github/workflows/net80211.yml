@@ -277,6 +277,9 @@ jobs:
           python3 sys/net80211/tests/assoc-lifecycle.py --cc gcc \
             --build-dir "$RUNNER_TEMP/assoc-lifecycle-optimized" \
             --cflags="$WME_TEST_CFLAGS"
+          mkdir -p "$RUNNER_TEMP/ioctl"
+          python3 sys/net80211/tests/ioctl.py --cc gcc --build-dir "$RUNNER_TEMP/ioctl"
+          python3 sys/net80211/tests/sta-left.py --cc gcc --build-dir "$RUNNER_TEMP/sta-left"
       - name: Analyze unoptimized actual source paths
         env:
           CC: gcc

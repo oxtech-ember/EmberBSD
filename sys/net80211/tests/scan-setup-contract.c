@@ -14,6 +14,7 @@ typedef uint8_t u_int8_t;
 #define IEEE80211_S_AUTH 2
 #define IEEE80211_S_ASSOC 3
 #define IEEE80211_S_RUN 4
+#define IEEE80211_FEXT_STA_LEFT 0x00000010
 #define IFF_UP 1
 #define IS_UP(ic) (((ic)->ic_ifp->if_flags & IFF_UP) != 0)
 
@@ -28,6 +29,8 @@ struct ieee80211_node {
 struct ieee80211com {
 	int ic_opmode;
 	int ic_state;
+	uint32_t ic_flags_ext;
+	int ic_mgt_timer;
 	struct ifnet *ic_ifp;
 	struct ieee80211_node *ic_bss;
 	u_int8_t ic_chan_active[IEEE80211_CHAN_BYTES];
@@ -71,14 +74,42 @@ main(void)
 	const u_int8_t requested[IEEE80211_CHAN_BYTES] = { 0x33, 0x44 };
 	const u_int8_t original[IEEE80211_CHAN_BYTES] = { 0x11, 0x22 };
 
+	/*
+	 * An exchange: a frame waits for its reply, or the owner (for
+	 * example FullMAC firmware) runs a join without net80211 frames.
+	 * Only STA_LEFT without a waiting frame permits the scan.
+	 */
+	for (int state = IEEE80211_S_AUTH; state <= IEEE80211_S_ASSOC; state++) {
+		for (int variant = 0; variant < 3; variant++) {
+			ic.ic_state = state;
+			ic.ic_flags_ext = variant == 2 ? IEEE80211_FEXT_STA_LEFT : 0;
+			ic.ic_mgt_timer = variant == 1 ? 0 : 1;
+			assert(ieee80211_startscan(&ic, requested) == EBUSY);
+			assert(ic.ic_state == state);
+			assert(memcmp(ic.ic_chan_active, original,
+			    sizeof(ic.ic_chan_active)) == 0);
+			assert(leave_calls == 0 && newstate_calls == 0);
+		}
+	}
+
+	/*
+	 * Manual roaming: a deauthentication (AUTH) or disassociation
+	 * (ASSOC) in RUN left the BSS. The supplicant scan must start.
+	 */
 	for (int state = IEEE80211_S_AUTH; state <= IEEE80211_S_ASSOC; state++) {
 		ic.ic_state = state;
-		assert(ieee80211_startscan(&ic, requested) == EBUSY);
-		assert(ic.ic_state == state);
-		assert(memcmp(ic.ic_chan_active, original,
+		ic.ic_flags_ext = IEEE80211_FEXT_STA_LEFT;
+		ic.ic_mgt_timer = 0;
+		assert(ieee80211_startscan(&ic, requested) == 0);
+		assert(ic.ic_state == IEEE80211_S_SCAN);
+		assert(memcmp(ic.ic_chan_active, requested,
 		    sizeof(ic.ic_chan_active)) == 0);
-		assert(leave_calls == 0 && newstate_calls == 0);
+		assert(leave_calls == 0);
+		memcpy(ic.ic_chan_active, original, sizeof(original));
 	}
+	assert(newstate_calls == 2);
+	newstate_calls = 0;
+	ic.ic_flags_ext = 0;
 
 	ic.ic_state = IEEE80211_S_INIT;
 	assert(ieee80211_startscan(&ic, requested) == 0);

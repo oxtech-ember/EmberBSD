@@ -491,10 +491,17 @@ ieee80211_setupscan(struct ieee80211com *ic, const u_int8_t chanlist[])
 	 */
 	if (!IS_UP(ic))
 		return EINVAL;
-	/* Do not disturb an association that is authenticating or associating. */
+	/*
+	 * Do not disturb an authentication or association exchange. With
+	 * manual roaming, a deauthentication or disassociation in RUN leaves
+	 * the station in AUTH or ASSOC with no exchange and no frame that
+	 * waits for a reply. The supplicant must then be able to scan.
+	 */
 	if (ic->ic_opmode == IEEE80211_M_STA &&
 	    (ic->ic_state == IEEE80211_S_AUTH ||
-	    ic->ic_state == IEEE80211_S_ASSOC))
+	    ic->ic_state == IEEE80211_S_ASSOC) &&
+	    ((ic->ic_flags_ext & IEEE80211_FEXT_STA_LEFT) == 0 ||
+	    ic->ic_mgt_timer != 0))
 		return EBUSY;
 	/* A scan request can retain the active set in place. */
 	if (chanlist != ic->ic_chan_active)

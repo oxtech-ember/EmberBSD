@@ -137,6 +137,18 @@ the legacy S_SCAN transition behind that drain, and retires it at a terminal
 event or successful firmware DOWN acknowledgement. The aicwf adapter keeps its
 single native scan busy until the firmware completion indication.
 
+## Foreground scan requests
+
+A station scan request (`IEEE80211_IOC_SCAN_REQ` and the `wi` scan requests)
+returns `EBUSY` in AUTH and ASSOC. These states normally hold an exchange: a
+frame waits for its reply, or the driver firmware runs the join. With manual
+roaming, a deauthentication or disassociation in RUN leaves the BSS and stops
+in AUTH or ASSOC with no exchange. `ieee80211_newstate()` then sets
+`IEEE80211_FEXT_STA_LEFT`, so the supplicant scan starts. More
+deauthentication or disassociation frames keep the flag. A transition to
+INIT, SCAN or RUN, or a new `ieee80211_sta_join()`, clears it.
+`tests/scan-setup-contract.c` and `tests/sta-left.py` check these cases.
+
 ## Association lifecycle ABI
 
 The versioned MLME request and BSS ASSOC/REASSOC/DISASSOC epoch payload are

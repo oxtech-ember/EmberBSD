@@ -896,6 +896,8 @@ ieee80211_sta_join(struct ieee80211com *ic, struct ieee80211_node *selbs)
 	error = ieee80211_assoc_epoch_assign(ic, selbs);
 	if (error != 0)
 		return 0;
+	/* A new join owns AUTH and ASSOC even when a driver sets ic_state. */
+	ic->ic_flags_ext &= ~IEEE80211_FEXT_STA_LEFT;
 
 	if (ic->ic_opmode == IEEE80211_M_IBSS) {
 		struct ieee80211_node_table *nt;

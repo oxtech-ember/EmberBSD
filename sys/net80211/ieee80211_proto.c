@@ -1032,6 +1032,19 @@ sta_deauth(void *arg, struct ieee80211_node *ni)
 }
 #endif /* !IEEE80211_NO_HOSTAP */
 
+/*
+ * A station that left its BSS with manual roaming keeps STA_LEFT while
+ * further deauthentication or disassociation frames move it inside AUTH
+ * and ASSOC. INIT, SCAN and RUN end the wait for the supplicant.
+ */
+static void
+ieee80211_sta_left_transition(struct ieee80211com *ic,
+    enum ieee80211_state nstate)
+{
+	if (nstate != IEEE80211_S_AUTH && nstate != IEEE80211_S_ASSOC)
+		ic->ic_flags_ext &= ~IEEE80211_FEXT_STA_LEFT;
+}
+
 static int
 ieee80211_newstate(struct ieee80211com *ic, enum ieee80211_state nstate, int arg)
 {
@@ -1050,6 +1063,7 @@ ieee80211_newstate(struct ieee80211com *ic, enum ieee80211_state nstate, int arg
 	IEEE80211_DPRINTF(ic, IEEE80211_MSG_STATE, "%s: %s -> %s\n", __func__,
 		ieee80211_state_name[ostate], ieee80211_state_name[nstate]);
 	ic->ic_state = nstate;			/* state transition */
+	ieee80211_sta_left_transition(ic, nstate);
 	ni = ic->ic_bss;			/* NB: no reference held */
 	if (ni != NULL && nstate != IEEE80211_S_ASSOC &&
 	    nstate != IEEE80211_S_RUN)
@@ -1194,6 +1208,9 @@ ieee80211_newstate(struct ieee80211com *ic, enum ieee80211_state nstate, int arg
 					/* try to reauth */
 					IEEE80211_SEND_MGMT(ic, ni,
 					    IEEE80211_FC0_SUBTYPE_AUTH, 1);
+				} else {
+					/* The supplicant selects the next BSS. */
+					ic->ic_flags_ext |= IEEE80211_FEXT_STA_LEFT;
 				}
 				break;
 			}
@@ -1223,6 +1240,9 @@ ieee80211_newstate(struct ieee80211com *ic, enum ieee80211_state nstate, int arg
 				}
 				IEEE80211_SEND_MGMT(ic, ni,
 				    IEEE80211_FC0_SUBTYPE_ASSOC_REQ, 1);
+			} else {
+				/* The supplicant selects the next BSS. */
+				ic->ic_flags_ext |= IEEE80211_FEXT_STA_LEFT;
 			}
 			break;
 		}
