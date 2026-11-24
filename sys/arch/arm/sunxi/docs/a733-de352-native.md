@@ -372,7 +372,7 @@ the cause of that timeout.
 
 ## Cached external update diagnostics
 
-`hw.sun60ide0.update_trace` returns a 312-byte native-endian version 4 record
+`hw.sun60ide0.update_trace` returns a 384-byte native-endian version 5 record
 under the DE lock. It performs no hardware access. The first eight
 `uint32_t` words are version, valid bits, update phase, RCQ submit phase,
 result, register, expected value and observed value. Four more `uint32_t`
@@ -395,7 +395,7 @@ status words as `submit_trace`, then a reserved zero. Sample counts include
 successful reads. The elapsed microseconds cover each attempted wait, and
 status AND starts at all ones. The fields come from the normal RCQ
 command and status path. Reading this record adds no MMIO.
-The final 136 bytes describe one read-only snapshot at an external RCQ
+The next 136 bytes describe one read-only snapshot at an external RCQ
 finish timeout. Two words give the attempt flag and read-valid bitmap.
 Two words give old and new queue addresses. Two eight-word arrays give
 the old and new list values for OVL and BLD, in register order.
@@ -410,6 +410,20 @@ copy reached these registers even if the poll missed the finish flag.
 Agreement with the old list shows no new copy at the time of this sample.
 An identical or mixed list cannot settle that distinction. The snapshot
 does not retry, change the timeout result, or release either list.
+
+The final 72 bytes describe the TV0 retirement-timeout sample.
+Two `uint64_t` words give the raw IRQ sequence before and after the sample.
+Four `uint32_t` words give the attempt flag and the results of the first IRQ
+count, register sample, and last IRQ count. Check each result before use.
+Polling-only output returns EOPNOTSUPP for the two IRQ count reads.
+The ten remaining words use the ordinary output sample format. Check the
+valid bits before comparing GINT0 (word 3) or the two TV_DEBUG words
+(6 and 7). The output owner delays at least 1 ms between the TV_DEBUG
+reads. This record is separate from the cached normal observation above.
+The timed-out handoff keeps both lists, even if a later sample sees more
+IRQs. The timeout sample adds no write or interrupt acknowledgment.
+The DE uses the interpolated monotonic uptime for deadlines and completion
+timestamps. The timecounter determines its resolution.
 A zero wait phase means the update did not enter the wait. Valid
 bit 0 means an external update started; bit 1 means its result is complete.
 Update phases are 0 none, 1 preparation, 2 output start, 3 old-list check,

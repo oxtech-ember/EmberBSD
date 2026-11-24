@@ -81,7 +81,7 @@ static int cell_override, property_length, translated, bad_base, wrong_compatibl
 static unsigned clock_puts;
 static void *active_softc;
 
-static void getnanouptime(struct timespec *t) { tick+=1000;t->tv_sec=tick/1000000000;t->tv_nsec=tick%1000000000; }
+static void nanouptime(struct timespec *t) { tick+=1000;t->tv_sec=tick/1000000000;t->tv_nsec=tick%1000000000; }
 static void
 delay(unsigned us)
 {
@@ -679,7 +679,7 @@ static void scanout_checks(void)
   case 8: suppress_rcq_finish=true;expected=ETIMEDOUT;break;
   }
   CHECK(sun60i_a733_de352_submit(client,&input[1],&done)==expected);
-  CHECK(sc.update_trace.version == 4 && sc.update_trace.operation == UO_FRAME);
+  CHECK(sc.update_trace.version == 5 && sc.update_trace.operation == UO_FRAME);
   const struct de352_rcq_timeout *timeout = &sc.update_trace.timeout;
   if (fault == 7 || fault == 8) {
    CHECK(timeout->attempted == 1 && timeout->valid == 0x1fff);
@@ -716,7 +716,7 @@ plane_disable_checks(void)
  struct sun60i_a733_de352_completion done, saved;
  struct frame_fixture f;
  struct sun60i_a733_de352_frame frame;
- for (unsigned failure=0; failure<5; failure++) {
+ for (unsigned failure=0; failure<6; failure++) {
   init(&sc);de352_provider=&sc;CHECK(de352_run(&sc)==0);sc.stage=1;
   CHECK(sun60i_a733_de352_get_state(1,&state)==0);
   CHECK(sun60i_a733_de352_acquire(1,&sc,&client)==0);
@@ -728,14 +728,22 @@ plane_disable_checks(void)
   if(failure==3)corrupt_copy_reg=0x1c1000;
   if(failure==4)no_finish=true;
   if(failure==0)delay_rcq_finish=true;
+  const uint64_t late_irqs[] = {sequence, sequence, sequence + 1, sequence + 2};
+  if (failure == 5) {
+   no_vblank = true;
+   irq_script = late_irqs;
+   irq_samples = __arraycount(late_irqs);
+   irq_index = 0;
+   irq_sample_pause_ns = DE352_TIMEOUT_NS;
+  }
   unsigned previous_requests=rcq_requests;
   int error=sun60i_a733_de352_disable_plane(client,&done);
-  CHECK(sc.update_trace.version == 4 && sc.update_trace.valid == 3);
+  CHECK(sc.update_trace.version == 5 && sc.update_trace.valid == 3);
   CHECK(sc.update_trace.operation == UO_DISABLE);
   CHECK(sc.update_trace.result==(uint32_t)error);
   if(failure==1) CHECK(sc.update_trace.phase==UT_SUBMIT&&
       sc.update_trace.submit_phase==ST_QUEUE);
-  if (failure == 2) {
+  if (failure == 2 || failure == 5) {
    CHECK(sc.update_trace.phase == UT_VBLANK &&
        sc.update_trace.submit_phase == ST_DONE);
    CHECK(sc.update_trace.elapsed_ns >= DE352_TIMEOUT_NS);
@@ -746,6 +754,21 @@ plane_disable_checks(void)
        sc.update_trace.tv0.debug == 0x40000000 &&
        sc.update_trace.tv0.underflow_pending == 1 &&
        sc.update_trace.tv0.underflow_events == 3);
+   const struct de352_tv0_timeout *t = &sc.update_trace.tv0_timeout;
+   CHECK(output_samples == 1 && t->attempted == 1 && t->sample_error == 0);
+   CHECK(t->sample.valid == 0xff && t->sample.words[6] == 10 &&
+       t->sample.words[7] == 74);
+   if (failure == 5) {
+    CHECK(t->before_error == 0 && t->after_error == 0);
+    CHECK(t->raw_before == late_irqs[2] && t->raw_after == late_irqs[3]);
+    CHECK(irq_index == irq_samples);
+    irq_script = NULL;
+    irq_sample_pause_ns = 0;
+   } else {
+    CHECK(t->before_error == EOPNOTSUPP && t->after_error == EOPNOTSUPP);
+   }
+  } else {
+   CHECK(sc.update_trace.tv0_timeout.attempted == 0);
   }
   if (failure == 0 || failure == 4) {
    const struct de352_rcq_trace *rcq = &sc.update_trace.rcq;
@@ -1165,6 +1188,7 @@ int main(void)
  init(&sc);CHECK(de352_run(&sc)==0);CHECK(sc.step==10&&sc.retained&&sc.dma&&sc.dma->published&&sc.vblank==2&&releases==0&&faults==0);
  CHECK(de[0x281004/4]==0xff000000);
  CHECK(sc.submit_trace.version==1&&sc.submit_trace.valid==3&&sc.submit_trace.phase==ST_DONE&&sc.submit_trace.result==0);
+ CHECK(sc.submit_trace.rcq.poll_us > 0 && sc.submit_trace.rcq.poll_us < 10000);
  CHECK(sc.submit_trace.rcq.request_busy>=1&&sc.submit_trace.rcq.poll_samples>=1&&sc.submit_trace.regs_valid==0&&output_samples==0);CHECK(de352_run(&sc)==EBUSY);reboot_fixture(&sc);
  for(unsigned i=0;i<7;i++){init(&sc);clocks[0][i]^=1;CHECK(de352_run(&sc)==EBUSY&&reads==0&&writes==0&&begins==0&&releases==1&&power_releases==1);}
  for(unsigned i=0;i<7;i++){init(&sc);clocks[0][i]=clocks[1][i]=0;CHECK(de352_run(&sc)==EOPNOTSUPP&&reads==0&&writes==0&&releases==1&&power_releases==1);}

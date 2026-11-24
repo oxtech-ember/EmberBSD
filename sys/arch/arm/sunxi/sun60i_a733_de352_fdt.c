@@ -126,6 +126,12 @@ struct de352_rcq_timeout {
 	uint32_t old_words[RCQ_COPY_WORDS], new_words[RCQ_COPY_WORDS];
 	uint32_t observed[RCQ_TIMEOUT_REGS], reserved;
 };
+struct de352_tv0_timeout {
+	uint64_t raw_before, raw_after;
+	uint32_t attempted, before_error, sample_error, after_error;
+	struct sun60i_a733_output_sample sample;
+};
+
 struct de352_update_trace {
 	uint32_t version, valid, phase, submit_phase, result;
 	uint32_t reg, expected, observed;
@@ -136,8 +142,9 @@ struct de352_update_trace {
 	struct de352_rcq_trace rcq;
 	uint32_t reserved;
 	struct de352_rcq_timeout timeout;
+	struct de352_tv0_timeout tv0_timeout;
 };
-CTASSERT(sizeof(struct de352_update_trace) == 78 * sizeof(uint32_t));
+CTASSERT(sizeof(struct de352_update_trace) == 96 * sizeof(uint32_t));
 static const uint32_t de352_submit_regs[ST_NREGS] = {
 	0x8100, 0x8104, 0x8108, 0x810c, 0x8110, 0x8114, 0x8118, 0x811c,
 	0x8010, 0x804c
@@ -218,7 +225,7 @@ static uint64_t
 de352_now(void)
 {
 	struct timespec ts;
-	getnanouptime(&ts);
+	nanouptime(&ts);
 	return (uint64_t)ts.tv_sec * UINT64_C(1000000000) + ts.tv_nsec;
 }
 
@@ -1942,6 +1949,21 @@ deadline:
 	}
 }
 
+/* Sample after the wait has failed, before the owner latches the fault. */
+static void
+de352_sample_tv0_timeout(struct sun60i_de352_softc *sc)
+{
+	struct de352_tv0_timeout *t = &sc->update_trace.tv0_timeout;
+
+	t->attempted = 1;
+	t->before_error = sun60i_a733_output_sample_vblank_irq(
+	    sc->output_phandle, sc, &t->raw_before);
+	t->sample_error = sun60i_a733_output_sample(sc->output_phandle, sc,
+	    &t->sample);
+	t->after_error = sun60i_a733_output_sample_vblank_irq(
+	    sc->output_phandle, sc, &t->raw_after);
+}
+
 static void
 de352_frame_drop(struct de352_frame *frame, bool retired)
 {
@@ -1998,7 +2020,7 @@ de352_update(struct sun60i_a733_de352_client *client,
 	}
 	client->busy = true;
 	sc->update_trace = (struct de352_update_trace){
-		.version = 4, .valid = 1, .phase = UT_PREPARE,
+		.version = 5, .valid = 1, .phase = UT_PREPARE,
 		.rcq.status_and = UINT32_MAX,
 		.reg = UINT32_MAX,
 		.operation = stop ? UO_STOP : frame == NULL ? UO_DISABLE : UO_FRAME
@@ -2036,9 +2058,11 @@ de352_update(struct sun60i_a733_de352_client *client,
 		if (error == 0) {
 			sc->update_trace.phase = UT_VBLANK;
 			error = de352_replacement_vblank(sc, &completion);
-			if (error == ETIMEDOUT)
+			if (error == ETIMEDOUT) {
 				(void)sun60i_a733_output_cached_tv0_trace(
 				    sc->output_phandle, &sc->update_trace.tv0);
+				de352_sample_tv0_timeout(sc);
+			}
 		}
 		if (error == 0) {
 			sc->update_trace.phase = UT_MEMORY;
