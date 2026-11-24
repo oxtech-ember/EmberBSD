@@ -425,8 +425,12 @@ if (values["--host-prefix"] != root or
         values["--compiler-family"] != os.environ.get("EMBER_HOST_COMPILER_FAMILY", "clang") or
         values["--cwd"] != root + "/src" or
         values["--bindings"] != os.environ["TEST_OUT"] + "/native-check-commands" or
-        values["--netbsd-asan-resource-dir"] != os.environ.get("EMBER_NATIVE_ASAN_RESOURCE_DIR", "") or
-        sorted(roles) != ["awk", "ruby"]):
+        values["--netbsd-asan-resource-dir"] != os.environ.get("EMBER_NATIVE_ASAN_RESOURCE_DIR", "")):
+    raise SystemExit(81)
+# Artifact checks run Python only; the separate source suite still uses Ruby and AWK.
+expected_roles = {"python": [], "sh": ["awk", "ruby"]}
+if role not in expected_roles or sorted(roles) != expected_roles[role]:
+    print(f"unexpected required native roles for {role}: {roles}", file=sys.stderr)
     raise SystemExit(81)
 # Model the SDK's strict reuse contract for caller-owned compiler bindings.
 bindings = Path(values["--bindings"])

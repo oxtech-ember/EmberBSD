@@ -147,18 +147,17 @@ run_native_os() {
         --compiler-family "$host_family" --source "$src" \
         --routing "$out/native-build-tools" --cwd "$(pwd -P)" "$@"
 }
-run_native_check() {
-    role=$1
-    log=$2
-    shift 2
+run_artifact_check() {
+    log=$1
+    shift
     # Preserve the wrapper's overwrite behavior while the SDK creates the
     # current check log exclusively. Only our two named output logs reach here.
     rm -f "$log"
     "$python" "$native_check" --host-prefix "$host_prefix" \
-        --compiler-family "$host_family" --required-role ruby --required-role awk \
+        --compiler-family "$host_family" \
         --cppflag="-I$host_prefix/include" --ldflag="-L$host_prefix/lib" \
         --ldflag="-Wl,-rpath,$host_prefix/lib" \
-        --tool "$role" --cwd "$src" --bindings "$out/native-check-commands" \
+        --tool python --cwd "$src" --bindings "$out/native-check-commands" \
         --log "$log" -- "$@"
 }
 jobs=$(PYTHONPATH="$sdk_source/src" "$python" -B -c '
@@ -254,7 +253,7 @@ run_cpp -P -xassembler-with-cpp -I include -I arch/arm64/boot/dts/allwinner \
     arch/arm64/boot/dts/allwinner/sun50i-a133-ys-m33.dts > "$out/a133-ys-m33.dts"
 run_native_os --capture -- "$dtc" -I dts -O dtb -o "$stage/sun50i-a133-ys-m33.dtb" \
     "$out/a133-ys-m33.dts" 2> "$out/a133-ys-m33-dtb.log"
-run_native_check python "$out/dtb-modes.log" \
+run_artifact_check "$out/dtb-modes.log" \
     "$src/ember/tools/a733-boot-modes-contract.py" "$stage"
 for module in $modules; do
     cd "$src/sys/modules/$module"
@@ -276,7 +275,7 @@ for module in $modules; do
     registered="$registered $(cd "$src/sys/modules/$module" && run_make -V REPRO_EXTERNAL_SOURCE_VARS \
         EMBER_KERNEL_CONFIG="$config" EMBER_KERNEL_OBJDIR="$kernel_obj" $selected)"
 done
-run_native_check python "$out/shared-sources.log" \
+run_artifact_check "$out/shared-sources.log" \
     "$src/ember/tools/shared-sources.py" check-kernel "$src/ember/shared-sources.json" \
     "$config" $registered
 set +f
