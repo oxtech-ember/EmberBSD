@@ -45,6 +45,7 @@ struct fdt_attach_args { int faa_phandle; bus_space_tag_t faa_bst; bus_dma_tag_t
 #define be32toh(x) __builtin_bswap32(x)
 
 static uint64_t tick, delay_pause_ns;
+static int hz = 100;
 static int reads, writes, space_maps, space_unmaps, releases, faults, begins;
 static int power_error, power_releases, ccu_release_error, pck_release_error, ccu_faults;
 static int reserve_error, memory_error, begin_error, mode_error, prepare_error, start_error;
@@ -206,7 +207,7 @@ struct vblank_sample {
 };
 static const struct vblank_sample *vblank_script;
 static size_t vblank_samples, vblank_index;
-static uint64_t baseline_pause_ns;
+static uint64_t baseline_pause_ns, next_observation_pause_ns;
 
 int sun60i_a733_output_observed_vblank(int node,const void *owner,uint64_t *out)
 {
@@ -217,6 +218,8 @@ int sun60i_a733_output_observed_vblank(int node,const void *owner,uint64_t *out)
 		delay_pause_ns = sample->pause_on_delay_ns;
 		if (vblank_index == 1)
 			tick += baseline_pause_ns;
+		else if (vblank_index == 2)
+			tick += next_observation_pause_ns;
 		*out = sample->sequence;
 		return sample->error;
 	}
@@ -588,7 +591,7 @@ replacement_irq_checks(void)
 		{{40, 42}, {{40, 0, ENOENT}, {42, 0, 0}}, 2, 2,
 		    DE352_TIMEOUT_NS + 1000, 42, 0},
 		/* One IRQ at expiry does not authorize DMA retirement. */
-		{{40, 41, 41}, {{40, 0, ENOENT}}, 3, 1,
+		{{40, 41, 41}, {{40, 0, ENOENT}, {41, 0, ENOENT}}, 3, 2,
 		    DE352_TIMEOUT_NS + 1000, 0, ETIMEDOUT},
 		/* Untested progress is discarded after the health check. */
 		{{40, 42, 43, 44}, {{40, 0, 0}, {42, 0, ENOENT}, {44, 0, 0}},
@@ -623,7 +626,7 @@ replacement_irq_checks(void)
 			CHECK(done.observed_sequence == test->completion);
 			if (test->expected == ETIMEDOUT) {
 				CHECK(sc.update_trace.last_sequence == 41);
-				CHECK(sc.update_trace.wait_samples == 1);
+				CHECK(sc.update_trace.wait_samples == 2);
 			}
 			vblank_script = NULL;
 			irq_script = NULL;
@@ -634,6 +637,108 @@ replacement_irq_checks(void)
 		    irq_cv_calls != 0 && irq_kpauses == 0);
 	}
 	irq_cv_supported = false;
+}
+
+static void
+replacement_extra_checks(void)
+{
+	struct sun60i_a733_output_mode bound = mode;
+
+	bound.htotal = bound.vtotal = UINT32_MAX;
+	CHECK(de352_replacement_extra(&bound) == 0);
+	bound = mode;
+	bound.pixel_clock_hz = 1;
+	CHECK(de352_replacement_extra(&bound) == 50000000);
+	bound.pixel_clock_hz = 0;
+	CHECK(de352_replacement_extra(&bound) == 0);
+
+	const struct extra_case {
+		uint64_t raw[4];
+		struct vblank_sample observed[3];
+		size_t nr, nv;
+		uint64_t sleep_ns;
+		int expected;
+	} cases[] = {
+		/* Zero progress never enters the extra window. */
+		{{40, 40}, {{40, 0, ENOENT}}, 2, 1, 1, ETIMEDOUT},
+		/* Final raw +1 and full +1, followed by +2 inside the cap. */
+		{{41, 41, 42}, {{40, 0, ENOENT}, {41, 0, 0}, {42, 0, 0}},
+		    3, 3, 1000000, 0},
+		/* Full validation can observe an IRQ after the final raw sample. */
+		{{41, 41}, {{40, 0, ENOENT}, {42, 0, 0}},
+		    2, 2, 1, 0},
+		/* An unvalidated advance cannot restart or extend the window. */
+		{{41, 41, 42},
+		    {{40, 0, ENOENT}, {41, 0, 0}, {42, 0, ENOENT}},
+		    3, 3, 1000000, ETIMEDOUT},
+		/* An IRQ first visible after the absolute cap does not retire. */
+		{{41, 41, 42}, {{40, 0, ENOENT}, {41, 0, 0}},
+		    3, 2, 27000000, ETIMEDOUT},
+		/* A delayed ordinary final +2 still uses the original proof. */
+		{{41, 42}, {{40, 0, ENOENT}, {42, 0, 0}},
+		    2, 2, 1, 0},
+		/* A delayed new full +2 misses the extra path's cap. */
+		{{41, 41}, {{40, 0, ENOENT}, {42, 0, 0}},
+		    2, 2, 1, ETIMEDOUT},
+		/* Regressions retain even when the sampled raw count advances. */
+		{{41, 41}, {{40, 0, ENOENT}, {39, 0, 0}},
+		    2, 2, 1, EPROTO},
+		/* A baseline close to wrap cannot admit an impossible +2. */
+		{{UINT64_MAX, UINT64_MAX},
+		    {{UINT64_MAX-1, 0, ENOENT}}, 2, 1, 1, ETIMEDOUT},
+	};
+	for (unsigned use_cv = 0; use_cv < 2; use_cv++) {
+		for (size_t i = 0; i < __arraycount(cases); i++) {
+			const struct extra_case *test = &cases[i];
+			struct sun60i_a733_de352_completion done = {0};
+			struct sun60i_de352_softc sc;
+
+			init(&sc);
+			CHECK(de352_run(&sc) == 0);
+			CHECK(de352_replacement_extra(&sc.mode) == 26683334);
+			irq_cv_supported = use_cv != 0;
+			irq_script = test->raw;
+			irq_samples = test->nr;
+			irq_index = 0;
+			/* Only the test's last pause occurs in the extra window. */
+			irq_sleep_ns = test->sleep_ns;
+			irq_sample_pause_ns = DE352_TIMEOUT_NS;
+			next_observation_pause_ns = (i == 5 || i == 6) ?
+			    27000000 : 0;
+			vblank_script = test->observed;
+			vblank_samples = test->nv;
+			vblank_index = 0;
+			CHECK(de352_replacement_vblank(&sc, &done) ==
+			    test->expected);
+			CHECK(irq_index == irq_samples &&
+			    vblank_index == vblank_samples);
+			CHECK(done.observed_sequence ==
+			    (test->expected == 0 ? 42u : 0u));
+			irq_script = NULL;
+			irq_sample_pause_ns = 0;
+			irq_cv_supported = false;
+			vblank_script = NULL;
+			next_observation_pause_ns = 0;
+			reboot_fixture(&sc);
+		}
+	}
+	/* A late full +1 in the polling path cannot extend its deadline. */
+	const struct vblank_sample polled[] = {
+		{40, 0, ENOENT}, {40, DE352_TIMEOUT_NS, ENOENT},
+		{41, 0, 0},
+	};
+	struct sun60i_a733_de352_completion done = {0};
+	struct sun60i_de352_softc sc;
+
+	init(&sc);
+	CHECK(de352_run(&sc) == 0);
+	vblank_script = polled;
+	vblank_samples = __arraycount(polled);
+	vblank_index = 0;
+	CHECK(de352_replacement_vblank(&sc, &done) == ETIMEDOUT);
+	CHECK(done.observed_sequence == 0 && vblank_index == vblank_samples);
+	vblank_script = NULL;
+	reboot_fixture(&sc);
 }
 
 static void scanout_checks(void)
@@ -741,7 +846,7 @@ plane_disable_checks(void)
  struct sun60i_a733_de352_completion done, saved;
  struct frame_fixture f;
  struct sun60i_a733_de352_frame frame;
- for (unsigned failure=0; failure<6; failure++) {
+ for (unsigned failure=0; failure<7; failure++) {
   init(&sc);de352_provider=&sc;CHECK(de352_run(&sc)==0);sc.stage=1;
   CHECK(sun60i_a733_de352_get_state(1,&state)==0);
   CHECK(sun60i_a733_de352_acquire(1,&sc,&client)==0);
@@ -761,6 +866,23 @@ plane_disable_checks(void)
    irq_index = 0;
    irq_sample_pause_ns = DE352_TIMEOUT_NS;
   }
+  const uint64_t expired_extra_irqs[] = {
+   sequence + 1, sequence + 1, sequence + 1, sequence + 2, sequence + 3
+  };
+  const struct vblank_sample extra_observed[] = {
+   {sequence, 0, ENOENT}, {sequence + 1, 0, 0}
+  };
+  if (failure == 6) {
+   irq_script = expired_extra_irqs;
+   irq_samples = __arraycount(expired_extra_irqs);
+   irq_index = 0;
+   irq_sample_pause_ns = DE352_TIMEOUT_NS;
+   irq_cv_supported = true;
+   irq_sleep_ns = 27000000;
+   vblank_script = extra_observed;
+   vblank_samples = __arraycount(extra_observed);
+   vblank_index = 0;
+  }
   unsigned previous_requests=rcq_requests;
   int error=sun60i_a733_de352_disable_plane(client,&done);
   CHECK(sc.update_trace.version == 5 && sc.update_trace.valid == 3);
@@ -768,7 +890,7 @@ plane_disable_checks(void)
   CHECK(sc.update_trace.result==(uint32_t)error);
   if(failure==1) CHECK(sc.update_trace.phase==UT_SUBMIT&&
       sc.update_trace.submit_phase==ST_QUEUE);
-  if (failure == 2 || failure == 5) {
+  if (failure == 2 || failure == 5 || failure == 6) {
    CHECK(sc.update_trace.phase == UT_VBLANK &&
        sc.update_trace.submit_phase == ST_DONE);
    CHECK(sc.update_trace.elapsed_ns >= DE352_TIMEOUT_NS);
@@ -789,6 +911,16 @@ plane_disable_checks(void)
     CHECK(irq_index == irq_samples);
     irq_script = NULL;
     irq_sample_pause_ns = 0;
+   } else if (failure == 6) {
+    CHECK(t->before_error == 0 && t->after_error == 0);
+    CHECK(t->raw_before == expired_extra_irqs[3] &&
+        t->raw_after == expired_extra_irqs[4]);
+    CHECK(irq_index == irq_samples && vblank_index == vblank_samples);
+    CHECK(sc.update_trace.last_validated == extra_observed[1].sequence);
+    irq_script = NULL;
+    irq_sample_pause_ns = 0;
+    irq_cv_supported = false;
+    vblank_script = NULL;
    } else {
     CHECK(t->before_error == EOPNOTSUPP && t->after_error == EOPNOTSUPP);
    }
@@ -1194,6 +1326,7 @@ int main(void)
 {
  replacement_wait_checks();
  replacement_irq_checks();
+	replacement_extra_checks();
  run_trace_checks();
  guard_checks();
  cold_global_checks();

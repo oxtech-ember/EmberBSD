@@ -1862,6 +1862,26 @@ de352_replace_ready(struct sun60i_de352_softc *sc)
 	return 0;
 }
 
+/* Bound the extra chance to one mode period and one scheduler tick. */
+static uint64_t
+de352_replacement_extra(const struct sun60i_a733_output_mode *mode)
+{
+	const uint64_t second = UINT64_C(1000000000);
+	const uint64_t cap = UINT64_C(50000000);
+	uint64_t pixels, ns, quantum;
+
+	pixels = (uint64_t)mode->htotal * mode->vtotal;
+	if (pixels == 0 || pixels > UINT64_MAX / second ||
+	    mode->pixel_clock_hz == 0 || hz <= 0)
+		return 0;
+	ns = pixels * second;
+	ns = ns / mode->pixel_clock_hz + (ns % mode->pixel_clock_hz != 0);
+	quantum = second / hz + (second % hz != 0);
+	if (ns >= cap || quantum >= cap - ns)
+		return cap;
+	return ns + quantum;
+}
+
 /* Samples newer than the post-RCQ baseline retire the old storage. */
 static int
 de352_replacement_vblank(struct sun60i_de352_softc *sc,
@@ -1869,7 +1889,8 @@ de352_replacement_vblank(struct sun60i_de352_softc *sc,
 {
 	struct de352_update_trace *trace = &sc->update_trace;
 	uint64_t baseline, last, sequence, start, raw;
-	bool irq, final_irq_sampled = false;
+	uint64_t limit = DE352_TIMEOUT_NS, extra;
+	bool irq, final_irq_sampled = false, extra_probe = false;
 	int error;
 
 	trace->wait_phase = UW_BASELINE;
@@ -1894,12 +1915,18 @@ de352_replacement_vblank(struct sun60i_de352_softc *sc,
 	if (error != 0 && error != EOPNOTSUPP)
 		return error;
 	irq = error == 0;
+	extra = irq ? de352_replacement_extra(&sc->mode) : 0;
 	for (;;) {
+		if (limit != DE352_TIMEOUT_NS) {
+			trace->elapsed_ns = de352_now() - start;
+			if (trace->elapsed_ns > limit)
+				return ETIMEDOUT;
+		}
 		if (irq) {
 			if (raw < trace->last_sequence)
 				return EPROTO;
 			trace->last_sequence = raw;
-			if (raw - baseline < 2)
+			if (raw - baseline < 2 && !extra_probe)
 				goto deadline;
 		}
 		trace->wait_samples++;
@@ -1917,12 +1944,29 @@ de352_replacement_vblank(struct sun60i_de352_softc *sc,
 		if (error == 0)
 			trace->last_validated = sequence;
 		if (error == 0 && sequence - baseline >= 2) {
+			uint64_t now = de352_now();
+
+			if (extra_probe || limit != DE352_TIMEOUT_NS) {
+				trace->elapsed_ns = now - start;
+				if (trace->elapsed_ns > DE352_TIMEOUT_NS + extra)
+					return ETIMEDOUT;
+			}
 			completion->observed_sequence = sequence;
-			completion->observed_time_ns = de352_now();
+			completion->observed_time_ns = now;
 			return 0;
+		}
+		if (extra_probe) {
+			trace->elapsed_ns = de352_now() - start;
+			if (error != 0 || sequence - baseline != 1 ||
+			    trace->elapsed_ns >= DE352_TIMEOUT_NS + extra)
+				return ETIMEDOUT;
+			limit = DE352_TIMEOUT_NS + extra;
+			extra_probe = false;
 		}
 		/* An unvalidated advance (for example underflow) starts a new epoch. */
 		if (error == ENOENT && sequence > last) {
+			if (limit != DE352_TIMEOUT_NS)
+				return ETIMEDOUT;
 			baseline = sequence;
 			trace->baseline = baseline;
 		}
@@ -1930,17 +1974,26 @@ de352_replacement_vblank(struct sun60i_de352_softc *sc,
 deadline:
 		/* Always check for accumulated IRQs before declaring expiry. */
 		trace->elapsed_ns = de352_now() - start;
-		if (trace->elapsed_ns >= DE352_TIMEOUT_NS) {
-			if (!irq || final_irq_sampled)
+		if (trace->elapsed_ns >= limit) {
+			if (limit != DE352_TIMEOUT_NS || !irq)
 				return ETIMEDOUT;
+			if (final_irq_sampled) {
+				if (extra == 0 || raw - baseline != 1 ||
+				    baseline > UINT64_MAX - 2 ||
+				    baseline != trace->initial_baseline ||
+				    trace->elapsed_ns >= DE352_TIMEOUT_NS + extra)
+					return ETIMEDOUT;
+				extra_probe = true;
+				continue;
+			}
 			/* The worker may have been descheduled after sampling. */
 			final_irq_sampled = true;
 		} else if (irq) {
 			if (baseline <= UINT64_MAX - 2 &&
-			    start <= UINT64_MAX - DE352_TIMEOUT_NS) {
+			    start <= UINT64_MAX - limit) {
 				error = sun60i_a733_output_wait_vblank_irq(
 				    sc->output_phandle, sc, baseline + 2,
-				    start + DE352_TIMEOUT_NS, &raw);
+				    start + limit, &raw);
 				if (error == 0)
 					continue;
 				if (error != EOPNOTSUPP)

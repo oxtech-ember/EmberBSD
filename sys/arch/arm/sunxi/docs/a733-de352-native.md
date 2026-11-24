@@ -204,7 +204,19 @@ deadline. The raw wait reads no registers or rails. An IRQ provider without
 a wait callback uses the one-tick sleep and raw sample. After two counted
 IRQs the worker performs the full observation before retiring the old buffer. A count advance without validation replaces the
 baseline. On expiry, the worker takes one final IRQ-only sample to cover
-scheduling delays between a sample and the deadline check. Without an IRQ, it uses ordinary poll observations. The completion time is the software
+scheduling delays between a sample and the deadline check. Without an IRQ,
+it uses ordinary poll observations and the original cutoff. At the IRQ
+cutoff, a final raw sample exactly one advance beyond the
+initial post-RCQ baseline permits a fresh full observation. If that
+observation validates only one advance, it grants one extra window. The
+window expires one nominal mode period plus one scheduler tick after the
+original cutoff, with at most 50 ms extra. Full validation from this new
+path must finish within the same cap, even if it observes two advances on
+the first try. An unvalidated advance in the extra window ends the wait.
+If the ordinary final raw sample already has two advances, the existing full
+validation after a scheduling delay still applies. A passive timeout sample
+never completes an update.
+The completion time is the software
 observation time.
 
 Only that proof retires the previous external frame. The provider performs
