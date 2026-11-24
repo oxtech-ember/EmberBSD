@@ -359,7 +359,7 @@ test_queue_full(void)
 		if (gesture_phases[i] == WSMOUSE_GESTURE_UPDATE)
 			sum1 += gesture_args[i][1];
 	CHECK(count(WSMOUSE_GESTURE_UPDATE) == u0 + 1);
-	CHECK(sum1 - sum0 >= 29 && sum1 - sum0 <= 31);	/* 240 units / 8 */
+	CHECK(sum1 - sum0 == 240);	/* contact units, nothing lost */
 }
 
 static void
