@@ -164,6 +164,7 @@ struct hidmt_gconf {
 struct hidmt_gstate {
 	bool latched;			/* 3+ contacts seen, until all lift */
 	bool started;			/* BEGIN has been sent */
+	bool lifting;			/* swipe ended by a lift, until all lift */
 	unsigned fingers;		/* 3 or 4 while a candidate exists */
 	int startx, starty, lastx, lasty, remx, remy;
 	/* Two-contact candidates arbitrate pinch against centroid scrolling. */

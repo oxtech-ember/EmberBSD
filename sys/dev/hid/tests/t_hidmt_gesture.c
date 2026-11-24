@@ -237,6 +237,51 @@ test_count_change(void)
 	lift(&r, 4, xy);
 	CHECK(r.nend == 1 && r.ncancel == 1);
 
+	/* 4 -> 3 -> 0 while lifting: one end, no cancel, no new swipe. */
+	rig_init(&r, true);
+	place(4, 500, 1200, xy);
+	(void)frame(&r, 4, xy, NULL);
+	swipe(&r, 4, 20, 0, 20, xy);
+	CHECK(r.nbegin == 1 && r.fingers == 4 && r.ncancel == 0);
+	rig_clear(&r);
+	swipe(&r, 3, 30, 0, 10, xy);
+	CHECK(r.nend == 1 && r.ncancel == 0 && r.nbegin == 0 &&
+	    r.nupdate == 0);
+	lift(&r, 3, xy);
+	CHECK(r.nend == 1 && r.ncancel == 0 && r.nbegin == 0);
+
+	/* 4 -> 3 -> 4 and 4 -> 3 -> 2 -> 3 while lifting: no new swipe. */
+	rig_init(&r, true);
+	place(4, 500, 1200, xy);
+	(void)frame(&r, 4, xy, NULL);
+	swipe(&r, 4, 20, 0, 20, xy);
+	rig_clear(&r);
+	swipe(&r, 3, 30, 0, 10, xy);
+	swipe(&r, 4, 30, 0, 10, xy);
+	CHECK(r.nend == 1 && r.ncancel == 0 && r.nbegin == 0 &&
+	    r.nupdate == 0);
+	rig_init(&r, true);
+	place(4, 500, 1200, xy);
+	(void)frame(&r, 4, xy, NULL);
+	swipe(&r, 4, 20, 0, 20, xy);
+	rig_clear(&r);
+	swipe(&r, 3, 30, 0, 10, xy);
+	swipe(&r, 2, 30, 0, 3, xy);
+	swipe(&r, 3, 30, 0, 10, xy);
+	CHECK(r.nend == 1 && r.ncancel == 0 && r.nbegin == 0 &&
+	    r.nupdate == 0);
+
+	/* 3 -> 2 -> 3 while lifting: no new swipe. */
+	rig_init(&r, true);
+	place(3, 1000, 1200, xy);
+	(void)frame(&r, 3, xy, NULL);
+	swipe(&r, 3, 20, 0, 10, xy);
+	rig_clear(&r);
+	swipe(&r, 2, 30, 0, 3, xy);
+	swipe(&r, 3, 30, 0, 10, xy);
+	CHECK(r.nend == 1 && r.ncancel == 0 && r.nbegin == 0 &&
+	    r.nupdate == 0);
+
 	/* 3 -> 2 -> 1 -> 0 while lifting: one end, no pointer or scroll. */
 	rig_init(&r, true);
 	place(3, 1000, 1200, xy);

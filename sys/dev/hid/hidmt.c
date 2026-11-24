@@ -890,9 +890,9 @@ hidmt_pinch_update(struct hidmt_gstate *gs,
  * last finger does not jerk it. A gesture begins once the mean of the
  * contacts has travelled gc->start; BEGIN and the first UPDATE come in one
  * frame, so the start distance is not lost. Fewer fingers or all lifted end
- * the gesture (END); more fingers cancel it (CANCEL), a new candidate then
- * starts from the new position. A gesture that never reached the threshold
- * produces no events.
+ * the gesture (END), and no new gesture starts until all fingers lift; more
+ * fingers cancel it (CANCEL), a new candidate then starts from the new
+ * position. A gesture that never reached the threshold produces no events.
  */
 void
 hidmt_gesture_update(struct hidmt_gstate *gs, const struct hidmt_gconf *gc,
@@ -943,9 +943,11 @@ hidmt_gesture_update(struct hidmt_gstate *gs, const struct hidmt_gconf *gc,
 	if (n < 3 || n > 4) {
 		if (!gs->latched)
 			return;
-		if (gs->started)
-			motion->gesture |= n < 3 ? HIDMT_GESTURE_END :
-			    HIDMT_GESTURE_CANCEL;
+		if (gs->started && n < 3) {
+			motion->gesture |= HIDMT_GESTURE_END;
+			gs->lifting = true;
+		} else if (gs->started)
+			motion->gesture |= HIDMT_GESTURE_CANCEL;
 		gs->started = false;
 		gs->fingers = 0;
 		hidmt_gesture_quiet(motion);
@@ -960,7 +962,15 @@ hidmt_gesture_update(struct hidmt_gstate *gs, const struct hidmt_gconf *gc,
 	gs->latched = true;
 	hidmt_gesture_quiet(motion);
 	if (gs->fingers != n) {
-		if (gs->started)
+		/*
+		 * Fingers seldom lift at the same moment: a smaller count ends
+		 * the swipe, and no new one starts until all fingers lift. An
+		 * added finger cancels it.
+		 */
+		if (gs->started && n < gs->fingers) {
+			motion->gesture |= HIDMT_GESTURE_END;
+			gs->lifting = true;
+		} else if (gs->started)
 			motion->gesture |= HIDMT_GESTURE_CANCEL;
 		gs->started = false;
 		gs->fingers = n;
@@ -969,6 +979,8 @@ hidmt_gesture_update(struct hidmt_gstate *gs, const struct hidmt_gconf *gc,
 		gs->remx = gs->remy = 0;
 		return;
 	}
+	if (gs->lifting)
+		return;
 	if (!gs->started) {
 		start = gc->start > 0 ? gc->start : HIDMT_GESTURE_START;
 		if (abs(x - gs->startx) < start && abs(y - gs->starty) < start)
