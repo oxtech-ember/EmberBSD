@@ -19,6 +19,7 @@ The OS does not require an AI agent, a model provider or a particular graphical 
 - Read the [Developer Guide](https://github.com/oxtech-ember/EmberBSD-Docs) for architecture, modularity, component boundaries and configuration.
 - Select hardware and check its limits in [DevBoards](https://github.com/oxtech-ember/EmberBSD-DevBoards).
 - Install and configure the OS with [Installation and updates](https://github.com/oxtech-ember/EmberBSD-Docs/blob/main/configuration/installation-and-updates.md) and the [Service and application configuration](https://github.com/oxtech-ember/EmberBSD-Docs/blob/main/configuration/services-and-applications.md).
+- [Update an installed system](ember/tools/docs/installed-system-update.md) with the signed channel and the installation profile for your machine.
 - Build components with the [build guide](README.ember.md). Use [SDK](https://github.com/oxtech-ember/EmberBSD-SDK) for shared workspaces and release tooling.
 - Develop a driver through [CONTRIBUTING](CONTRIBUTING.md), the [kernel guide](ember/development/kernel.md) and [adding a board](ember/development/adding-a-board.md).
 - Choose a destination using [source and documentation ownership](CONTRIBUTING.md#documentation-ownership).

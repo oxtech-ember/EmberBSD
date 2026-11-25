@@ -6,6 +6,8 @@ services. It does not install a desktop, camera software or OpenCV.
 Previously installed applications and local configuration are preserved.
 This is an update procedure, not a general installation image.
 
+For published binaries, start with [updating an installed system](installed-system-update.md). Follow the build instructions below when producing new sets.
+
 ## Build a pinned source revision
 
 Use a clean export of a recorded EmberBSD commit. Keep build files outside
