@@ -10,6 +10,7 @@ import json
 import os
 from pathlib import Path
 import re
+import secrets
 import shutil
 import signal
 import stat
@@ -63,6 +64,18 @@ def save(path, value):
                 os.close(fd)
         finally:
             pending.unlink(missing_ok=True)
+
+
+def boot_identity():
+    # clearcritlocal removes this file at boot before LOGIN. The service lock
+    # serializes its creation. Clock corrections cannot change the token.
+    path = PIDFILE.parent / 'ember-os-update.boot'
+    if not path.exists():
+        save(path, secrets.token_hex(16))
+    token = read(trusted_file(path))
+    require(isinstance(token, str) and re.fullmatch('[0-9a-f]{32}', token),
+            'invalid OS update boot identity')
+    return token
 
 
 def run(*command):
@@ -160,7 +173,7 @@ def cycle(config, stopping):
         require(previous is not None and status['next'] == other, 'unrecognized pending boot')
         require(status['prepared'] == dict(slot=other, sha256=previous['sha256']),
                 'pending boot differs from the recorded OS attempt')
-        boot = run('/sbin/sysctl', '-n', 'kern.boottime')
+        boot = boot_identity()
         require(isinstance(previous.get('boot'), str) and previous['boot'], 'missing attempt boot identity')
         if stopping.is_set():
             return
@@ -201,8 +214,7 @@ def cycle(config, stopping):
             if stopping.is_set():
                 return
             # Record the floor in the old root before firmware can consume the trial.
-            boot = run('/sbin/sysctl', '-n', 'kern.boottime')
-            require(boot, 'missing boot identity')
+            boot = boot_identity()
             save(attempt, dict(boot=boot, profile=profile, slot=other, generation=update['generation'],
                                os_commit=update['os_commit'], sha256=digest))
             try:

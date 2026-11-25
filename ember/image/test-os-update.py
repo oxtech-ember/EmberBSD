@@ -33,7 +33,11 @@ class ServiceTests(unittest.TestCase):
         self.stop = threading.Event()
         self.events = []
         self.bad = None
-        self.boot_id = 1
+        self.run_dir = Path(temp) / 'run'
+        self.run_dir.mkdir()
+        self.enterContext(patch.object(service, 'PIDFILE', self.run_dir / 'ember_os_update.pid'))
+        self.enterContext(patch.object(service, 'trusted_file', side_effect=lambda path: path))
+        self.wall_clock = 1
         self.stop_at = None
         self.active_kernel = '1' * 40
         self.latest = self.release(2)
@@ -61,7 +65,7 @@ class ServiceTests(unittest.TestCase):
     def run_command(self, program, cmd, *args):
         if program == '/sbin/sysctl':
             if args == ('kern.boottime',):
-                return str(self.boot_id)
+                return str(self.wall_clock)
             return 'EmberBSD:' + self.active_kernel
         self.assertEqual(program, '/slot')
         if cmd == 'status':
@@ -113,7 +117,7 @@ class ServiceTests(unittest.TestCase):
         self.boot()
 
     def boot(self):
-        self.boot_id += 1
+        (self.run_dir / 'ember-os-update.boot').unlink(missing_ok=True)
         target = self.status['next']
         slot = target or self.status['confirmed']
         self.status.update(running=slot, next=None, trial=target is not None)
@@ -238,6 +242,7 @@ class ServiceTests(unittest.TestCase):
         attempt = service.read(self.roots['A'] / 'attempt.json')
         self.assertEqual(attempt['sha256'], self.status['prepared']['sha256'])
         self.stop.clear()
+        self.wall_clock += 3600
         self.tick()
         self.assertEqual(self.events[-1], 'reboot')
 
@@ -245,7 +250,7 @@ class ServiceTests(unittest.TestCase):
         self.stop_at = 'arm'
         self.tick()
         self.stop.clear()
-        self.boot_id += 1
+        (self.run_dir / 'ember-os-update.boot').unlink(missing_ok=True)
         self.bad = 'cancel'
         with self.assertRaises(ValueError):
             self.tick()

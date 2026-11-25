@@ -56,6 +56,7 @@ To run one pass in the foreground, stop the service and run `/usr/libexec/ember-
 A pass can initiate a reboot. A process lock prevents concurrent OS update passes.
 A stop request lets the current operation finish and prevents the next activation step.
 If an attempt is already armed, the pending entry stays in the loader. A later ordinary reboot consumes it.
+The service uses a private token under `/var/run`. System startup clears the token before LOGIN; clock adjustments preserve it.
 On service restart in the same boot, the updater checks the prepared digest against its saved attempt before requesting the reboot.
 If the old root boots again with that entry still armed, the updater cancels it and keeps the running system available.
 An error clearing the entry retries cancellation without requesting another reboot.
