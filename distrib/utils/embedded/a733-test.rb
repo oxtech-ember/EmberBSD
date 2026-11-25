@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: BSD-2-Clause
 # Origin: EmberBSD contributors (AI-assisted).
 # Run the real mkimage/profile with image-tool doubles and a selected mtree.
+require 'digest'
 require 'fileutils'
 require 'json'
 require 'open3'
@@ -47,9 +48,17 @@ if ARGV.first == '--tool'
       File.open(image, 'a') { |f| f.truncate(300 * 1024 * 1024) }
     else
       image, boot = ARGV[-2..-1]
-      %w[netbsd.img boot.scr dtb/allwinner/sun60i-a733-orangepi-zero3w.dtb
-         dtb/allwinner/sun60i-a733-orangepi-zero4.dtb
-         dtb/allwinner/sun60i-a733-orangepi-zero3w-diagnostic.dtb].each do |name|
+      names = %w[netbsd.img boot.scr dtb/allwinner/sun60i-a733-orangepi-zero3w.dtb dtb/allwinner/sun60i-a733-orangepi-zero4.dtb]
+      if ENV['A733_TEST_UPDATE']
+        names += %w[slotboot.scr boot.scr.uimg]
+        {'osgood.dat' => 'A', 'osback.dat' => 'A', 'osnext.dat' => '-'}.each do |file, value|
+          abort "wrong initial #{file}" unless File.binread(File.join(boot, file)) == value
+        end
+        abort 'unexpected prepared slot' if File.exist?(File.join(boot, 'osplan.dat'))
+      else
+        names << 'dtb/allwinner/sun60i-a733-orangepi-zero3w-diagnostic.dtb'
+      end
+      names.each do |name|
         abort "missing FAT file #{name}" unless File.file?(File.join(boot, name))
       end
       File.write(image, '')
@@ -75,6 +84,7 @@ options = {}
 OptionParser.new do |p|
   p.banner = 'Usage: ruby a733-test.rb (--mtree /absolute/nbmtree | --mock-mtree) [--boot0 FILE --boot-package FILE]'
   p.on('--mtree PATH') { |v| options[:mtree] = File.expand_path(v) }
+  p.on('--update-python PATH') { |v| options[:update_python] = File.expand_path(v) }
   p.on('--mock-mtree') { options[:mock_mtree] = true }
   p.on('--boot0 PATH') { |v| options[:boot0] = File.expand_path(v) }
   p.on('--boot-package PATH') { |v| options[:package] = File.expand_path(v) }
@@ -182,6 +192,52 @@ Dir.mktmpdir('a733-image-test-') do |work|
   check(calls.any? { |tool, args| tool == 'gpt' && args.include?('create') && args[-2..-1] == ['-p', '16'] }, 'wrong GPT table size')
   check(calls.any? { |tool, args| tool == 'fdisk' && args.include?('12/65536/524288') && args.include?('-0') }, 'wrong hybrid FAT partition')
   check(calls.any? { |tool, args| tool == 'gpt' && args.include?('netbsd-root') && args.include?('589824') }, 'wrong root partition')
+
+  if options[:update_python]
+    revision = '1' * 40
+    tag = "EmberBSD:#{revision}\n\0NetBSD 11.1 (EMBER64)".b
+    File.open(File.join(kernel, 'netbsd'), 'ab') { |file| file.write(tag) }
+    File.open(File.join(kernel, 'netbsd.img'), 'ab') { |file| file.write(tag) }
+    FileUtils.mkdir_p(File.join(kernel, 'modules'))
+    %w[bcm2712btcom bcmexpgpio rp1wmcodec rpi5button].each do |name|
+      File.write(File.join(kernel, 'modules', name + '.kmod'), name)
+    end
+    %w[usr/local/libexec usr/local/etc usr/pkg/bin].each { |name| FileUtils.mkdir_p(File.join(overlay, name)) }
+    File.write(File.join(overlay, 'usr/local/libexec/ember-sdk.pyz'), "print('fetch-os-update')")
+    File.binwrite(File.join(overlay, 'usr/pkg/bin/python3.15'), "\x7fELF\x02\x01".b + "\0" * 12 + "\xb7\x00".b)
+    target = {arch: 'aarch64', triplet: 'aarch64--netbsd', abi: 'netbsd-11', runtime: 'libc++'}
+    File.write(File.join(overlay, 'usr/local/etc/ember-sdk.json'),
+               JSON.generate({repositories: {native: {install_mode: 'native', target: target}}}))
+    archive = File.join(work, 'etc.tar.xz')
+    File.write(archive, 'verified etc fixture')
+    update_env = env.merge('A733_UPDATE_PYTHON' => options[:update_python], 'A733_UPDATE_OS_COMMIT' => revision,
+                           'A733_UPDATE_ETC' => archive, 'A733_UPDATE_ETC_SHA256' => Digest::SHA256.file(archive).hexdigest,
+                           'A733_TEST_UPDATE' => '1')
+    update_command = command.map { |arg| arg == 'a733' ? 'a733-update' : arg }
+    result, state = Open3.capture2e(update_env, *update_command)
+    check(state.success?, "two-slot mkimage failed:\n#{result}")
+    additions = File.readlines(log).map { |line| JSON.parse(line) }.select { |tool, args| tool == 'gpt' && args.include?('add') }
+    a, b = additions.last(2).map(&:last)
+    root_sector = ->(args, flag) { Integer(args.fetch(args.index(flag) + 1)) }
+    check(a.include?('netbsd-root') && b.include?('ember-root-b'), 'wrong root labels')
+    check(root_sector.call(a, '-s') == root_sector.call(b, '-s') &&
+          root_sector.call(a, '-b') + root_sector.call(a, '-s') == root_sector.call(b, '-b'), 'slots overlap or differ in size')
+    meta = File.read(spec)
+    %w[usr/libexec/ember-os-update usr/libexec/ember-os-slot etc/ember-os-health etc/rc.d/ember_os_update
+       etc/rc.conf.d/ember_os_update etc/rc.conf.d/resize_root etc/rc.conf.d/resize_gpt
+       var/db/ember-os-update/release.json var/db/ember-os-update/etc.tar.xz].each do |path|
+      check(meta.include?("./#{path} "), "two-slot root omits #{path}")
+    end
+    result, state = Open3.capture2e(update_env.merge('A733_UPDATE_ETC_SHA256' => '0' * 64), *update_command)
+    check(!state.success? && result.include?('SHA-256 mismatch'), 'wrong baseline etc accepted')
+    File.write(image, 'keep the previous image')
+    File.chmod(0640, image)
+    result, state = Open3.capture2e(update_env, *update_command[0...-1], '-s', '16', image)
+    check(!state.success? && result.include?('too small'), 'short image accepted')
+    check(File.binread(image) == 'keep the previous image' && File.stat(image).mode & 0777 == 0640,
+          'rejected slot size changed the previous image')
+    check(Dir.glob(image + '.??????').empty?, 'rejected image left a staging file')
+  end
 
   # Every rejected input must leave an existing output and the tool log intact.
   reject = lambda do |message|

@@ -85,6 +85,7 @@ the existing `mkimage` cleanup trap.
 ```sh
 ruby distrib/utils/embedded/a733-test.rb --mock-mtree
 ruby distrib/utils/embedded/a733-test.rb --mtree "$tools/nbmtree" \
+    --update-python "$HOST_PREFIX/bin/python3.15" \
     --boot0 "$assets/boot0.bin" --boot-package "$assets/boot-package.bin"
 ```
 
@@ -108,3 +109,56 @@ files and private-key permissions with explicit local expectations. It reads
 the completed image without mounting it and does not print file contents.
 Its real `nbmakefs` fixtures cover metadata, bytes, and malformed-input refusal.
 It is not a filesystem integrity check or physical startup acceptance.
+
+## Zero 3W two-slot image
+
+Select `-h a733-update` for the stock EMBER64 minimal no-LDAP profile with development tools.
+Use the matching native boot bundle. Supply `modules/NAME.kmod` for its four modules under `-K`.
+The update profile uses the normal Zero 3W and Zero 4 DTBs. Its automatic boot selection is qualified per board.
+
+Prepare the [native package update layer](../../../ember/image/README.md#package-updates-on-a-running-system) for aarch64.
+Use an SDK client with `fetch-os-update` in that layer. Merge the site's network configuration and required device firmware into the layer.
+Pass it as `-c`. A new installation needs its normal network and SSH settings before it can reach the release channel.
+
+Supply the selected source commit and the original etc archive for that installation.
+Take its SHA-256 from the authenticated SDK release record. This archive supplies the defaults for later three-way configuration merges.
+Use the host Python from the SDK:
+
+```sh
+export A733_UPDATE_PYTHON="$HOST_PREFIX/bin/python3.15"
+export A733_UPDATE_OS_COMMIT="$OS_COMMIT"
+export A733_UPDATE_ETC="$SIGNED_ETC_ARCHIVE"
+export A733_UPDATE_ETC_SHA256="$SIGNED_ETC_SHA256"
+sh distrib/utils/embedded/mkimage -h a733-update -S "$OS_SOURCE" \
+    -D "$DESTDIR" -K "$KERNEL_DIRECTORY" -c "$NATIVE_LAYER" "$IMAGE"
+```
+
+The builder creates equal FFS wedges named `netbsd-root` and `ember-root-b` after the EFI partition.
+A holds the initial system with space for a download. B stays empty until preparation of the first trial.
+The profile disables automatic resizing of the GPT and root. Supply `-s MIB` to reserve a larger whole image.
+The builder rejects a size below the two-slot minimum.
+It replaces an existing output only after the complete image is ready.
+
+The stock health check validates the installed SSH configuration and host keys, the running SSH service and a local default route.
+Set `A733_UPDATE_HEALTH` to an executable for the image's own application to replace this check.
+It must return zero only when the application can use its saved configuration and data.
+The check runs locally and does not contact S3.
+Read the [installed OS service contract](../../../ember/tools/docs/automatic-system-update.md) for confirmation and rollback.
+
+### Enable an already provisioned card
+
+Use this operation only on an installed slot A with the same dedicated A, B and EFI wedges.
+Keep its normal `boot.scr`. The live operation checks the active model, layout, kernel and SDK.
+It checks the baseline archive against the digest from the verified release before writing new files.
+It preserves existing site files outside the listed profile configuration.
+Supply the OS source tree containing the two-slot support on the device, then run as root:
+
+```sh
+/usr/pkg/bin/python3.15 -I "$OS_SOURCE/ember/image/provision-a733-update.py" \
+    --live --os-commit "$OS_COMMIT" --etc-archive "$SIGNED_ETC_ARCHIVE" \
+    --etc-sha256 "$SIGNED_ETC_SHA256" --mkubootimage /usr/bin/mkubootimage
+```
+
+The bootstrap writes the current generation as zero, installs the one-shot loader, then enables `ember_os_update` for subsequent boots.
+Use `--health /path/to/check` to install a site-specific probe. Run `/etc/rc.d/ember_os_update start` to start the first pass now.
+An in-progress installation or another boot entry must be resolved before provisioning this profile.

@@ -78,9 +78,11 @@ tmp="$(mktemp -d "${TMPDIR:-/tmp}/$PROG.XXXXXX")"
 mnt="${tmp}/mnt"
 mkdir -p "${mnt}/etc" "${mnt}/dev"
 
+staged_image=
 trap "cleanup" 0 1 2 3 15
 
 cleanup() {
+	[ -z "$staged_image" ] || rm -f "$staged_image" "$staged_image.gz"
 	case "$tmp" in
 	"${TMPDIR:-/tmp}/$PROG."*)	rm -fr "$tmp";;
 	esac
@@ -112,8 +114,7 @@ prepare_root_overlay() {
 }
 
 getsize() {
-	set -- $(ls -l $1)
-	echo $5
+	wc -c < "$1"
 }
 
 getsectors() {
@@ -246,6 +247,7 @@ fi
 resize=false
 gpt=false
 gpt_hybrid=false
+gpt_peer_label=
 fsize=8192
 bsize=65536
 ffsversion=1
@@ -310,6 +312,16 @@ esac
 
 validate_inputs
 
+if [ -n "$gpt_peer_label" ]; then
+	# Build a complete new image before replacing the caller's last image.
+	output_image=$image
+	$compress && output_image="$image.gz"
+	[ ! -L "$output_image" ] && { [ ! -e "$output_image" ] || [ -f "$output_image" ]; } ||
+	    fail "Output must be an ordinary image file"
+	staged_image=$(mktemp "${output_image}.XXXXXX") || fail "Cannot stage output image"
+	image=$staged_image
+fi
+
 if [ -z "${bootonly}" ]; then
 	echo ${bar} configuring sets ${bar}
 	(cat "${release}/etc/mtree/NetBSD.dist"
@@ -356,7 +368,7 @@ if [ -n "${msdosid}" ]; then
 	${MAKEFS} -N ${release}/etc -t msdos \
 	    -o "volume_label=NETBSD${fat_opt}${volume_opt}" ${timestamp_opt} \
 	    -O $((${init} / 2))m -s $((${boot} / 2))m \
-	    ${image} ${mnt}/boot
+	    "${image}" ${mnt}/boot
 fi
 
 if [ -z "${bootonly}" ]; then
@@ -366,7 +378,25 @@ if [ -z "${bootonly}" ]; then
 	${MAKEFS} -rx ${endian} -N ${release}/etc -t ffs \
 	    -O ${ffsoffset} ${timestamp_opt} \
 	    -o d=4096,f=${fsize},b=${bsize},v=${ffsversion} -b $((${extra}))m \
-	    -F "$tmp/selected_sets" ${image} "$@"
+	    -F "$tmp/selected_sets" "${image}" "$@"
+fi
+
+# Reserve a second root of the same size. The updater initializes its FFS.
+if [ -n "$gpt_peer_label" ]; then
+	ffsstart="$(getsectors "$ffsoffset")"
+	end="$(getsize "$image")"
+	rootsecs=$(( ((end + 511) / 512 - ffsstart + 8191) / 8192 * 8192 ))
+	[ "$rootsecs" -gt 0 ] || fail "Empty initial slot"
+	if [ "$size" != 0 ]; then
+		# -s specifies the complete image size in MiB.
+		available=$(( (size * 2048 - ffsstart - 2048) / 16384 * 8192 ))
+		[ "$available" -ge "$rootsecs" ] || fail "Requested image is too small for both slots"
+		rootsecs=$available
+	else
+		size=$(( (ffsstart + 2 * rootsecs + 2048) / 2048 ))
+	fi
+	dd if=/dev/zero of="$image" bs=512 count=1 seek=$((size * 2048 - 1)) conv=notrunc 2>/dev/null
+	size=$((size * 1048576))
 fi
 
 if [ "${size}" = 0 ]; then
@@ -392,47 +422,52 @@ if $gpt; then
 	ffsstart="$(getsectors ${ffsoffset})"
 
 	echo ${bar} Clearing existing partitions ${bar}
-	${GPT} ${gpt_flags} ${image} destroy || true
+	${GPT} ${gpt_flags} "${image}" destroy || true
 
 	echo ${bar} Creating partitions ${bar}
-	${GPT} ${gpt_flags} ${image} create ${gpt_create_flags}
-	${GPT} ${gpt_flags} ${image} add -b ${initsecs} -s ${bootsecs} -l ${gpt_label_boot:-EFI} -t ${gpt_boot_type:-efi}
-	${GPT} ${gpt_flags} ${image} set -a required -i 1
-	${GPT} ${gpt_flags} ${image} add -a 4m -b ${ffsstart} -l ${gpt_label_ffs:-netbsd-root} -t ffs
-	${GPT} ${gpt_flags} ${image} show
+	${GPT} ${gpt_flags} "${image}" create ${gpt_create_flags}
+	${GPT} ${gpt_flags} "${image}" add -b ${initsecs} -s ${bootsecs} -l ${gpt_label_boot:-EFI} -t ${gpt_boot_type:-efi}
+	${GPT} ${gpt_flags} "${image}" set -a required -i 1
+	set --
+	[ -z "$gpt_peer_label" ] || set -- -s "$rootsecs"
+	${GPT} ${gpt_flags} "${image}" add -a 4m -b ${ffsstart} "$@" -l ${gpt_label_ffs:-netbsd-root} -t ffs
+	if [ -n "$gpt_peer_label" ]; then
+		${GPT} ${gpt_flags} "${image}" add -b $((ffsstart + rootsecs)) -s "$rootsecs" -l "$gpt_peer_label" -t ffs
+	fi
+	${GPT} ${gpt_flags} "${image}" show
 	if $gpt_hybrid; then
 		echo ${bar} Creating hybrid MBR ${bar}
-		${FDISK} -f -g -u -0 -a -s ${msdosid}/${initsecs}/${bootsecs} -F ${image}
-		${FDISK} -f -g -u -3 -s 238/1/$((${initsecs} - 1)) -F ${image}
-		${FDISK} -F ${image}
+		${FDISK} -f -g -u -0 -a -s ${msdosid}/${initsecs}/${bootsecs} -F "${image}"
+		${FDISK} -f -g -u -3 -s 238/1/$((${initsecs} - 1)) -F "${image}"
+		${FDISK} -F "${image}"
 	fi
 else
 	if [ -n "${msdosid}" ]; then
 		echo ${bar} Running fdisk ${bar}
 		initsecs=$((${init} * 1024))
 		bootsecs=$((${boot} * 1024))
-		${FDISK} -f -i ${image}
-		${FDISK} -f -a -u -0 -s ${msdosid}/${initsecs}/${bootsecs} -F ${image}
+		${FDISK} -f -i "${image}"
+		${FDISK} -f -a -u -0 -s ${msdosid}/${initsecs}/${bootsecs} -F "${image}"
 		if [ -z "${bootonly}" ]; then
 			ffsstart="$(getsectors ${ffsoffset})"
 			imagesize="$(getsize "${image}")"
 			imagesecs="$(getsectors ${imagesize})"
 			ffssize="$(expr ${imagesecs} - ${ffsstart})"
-			${FDISK} -f -u -1 -s 169/${ffsstart}/${ffssize} -F ${image}
+			${FDISK} -f -u -1 -s 169/${ffsstart}/${ffssize} -F "${image}"
 		fi
 
 		echo ${bar} Adding label ${bar}
 		make_label > ${tmp}/label
-		${DISKLABEL} -m -R -F ${image} ${tmp}/label
+		${DISKLABEL} -m -R -F "${image}" ${tmp}/label
 	elif [ -n "${netbsdid}" ]; then
 		echo ${bar} Adding label ${bar}
 		make_label > ${tmp}/label
-		${DISKLABEL} -m -R -F ${image} ${tmp}/label
+		${DISKLABEL} -m -R -F "${image}" ${tmp}/label
 
 		echo ${bar} Running fdisk ${bar}
-		${FDISK} -f -i ${image}
-		${FDISK} -f -a -u -0 -s 169/${init} ${image}
-		${INSTALLBOOT} -f -v ${image} ${release}/usr/mdec/bootxx_ffsv1
+		${FDISK} -f -i "${image}"
+		${FDISK} -f -a -u -0 -s 169/${init} "${image}"
+		${INSTALLBOOT} -f -v "${image}" ${release}/usr/mdec/bootxx_ffsv1
 	fi
 fi
 
@@ -441,8 +476,14 @@ finalize_image
 if $compress; then
 	echo ${bar} Compressing image ${bar}
 	rm -f "${image}.gz"
-	${GZIP_CMD} -n -9 ${image}
+	${GZIP_CMD} -n -9 "${image}"
 	image="${image}.gz"
 fi
 
-echo ${bar} Image is ${image} ${bar}
+if [ -n "$staged_image" ]; then
+	mv -f "$image" "$output_image" || fail "Cannot publish image file"
+	image=$output_image
+	staged_image=
+fi
+
+echo ${bar} Image is "${image}" ${bar}

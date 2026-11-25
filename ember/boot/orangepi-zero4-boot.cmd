@@ -53,9 +53,35 @@ elif test "${ember_boot_mode}" = npu-observe; then
     fi
     setenv fdtname sun60i-a733-orangepi-zero4-npu-observe.dtb
 fi
+# The two-slot loader sets ember_slot only on provisioned normal images.
+if test -n "${ember_slot}"; then
+    if test "${ember_boot_mode}" != normal; then exit 1; fi
+    if test "${fdtname}" != sun60i-a733-orangepi-zero3w.dtb; then exit 1; fi
+    if test "${ember_slot}" = B; then
+        setenv bootargs "root=NAME=ember-root-b"
+        setenv prefix "${prefix}os-b/"
+    elif test "${ember_slot}" != A; then
+        exit 1
+    fi
+fi
+if test "${ember_trial}" = yes; then
+    if test -z "${ember_slot}"; then exit 1; fi
+    # Configure the A733 system-reset watchdog for a 16-second handoff.
+    mw.l 0x02050010 0x16aa0001
+    mw.l 0x02050014 0x16aa00b1
+    mw.l 0x0205000c 0x14af
+    setexpr.l mode *0x02050014 \& 1
+    setexpr.l config *0x02050010 \& 3
+    if test "${mode}" != 1 -o "${config}" != 1; then exit 1; fi
+fi
 # Never enter the kernel with stale memory after a failed load or FDT command.
 load ${devtype} ${devnum}:${distro_bootpart} ${fdt_addr_r} ${prefix}dtb/allwinner/${fdtname} || exit 1
 fdt addr ${fdt_addr_r} || exit 1
 fdt resize 8192 || exit 1
 load ${devtype} ${devnum}:${distro_bootpart} 0x44000000 ${prefix}netbsd.img || exit 1
+if test "${ember_trial}" = yes; then
+    if test -z "${ember_slot}"; then exit 1; fi
+    fdt set /chosen emberbsd,trial-watchdog || exit 1
+    mw.l 0x0205000c 0x14af
+fi
 booti 0x44000000 - ${fdt_addr_r}

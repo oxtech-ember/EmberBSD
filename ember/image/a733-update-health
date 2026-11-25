@@ -1,0 +1,15 @@
+#!/bin/sh
+# SPDX-License-Identifier: BSD-2-Clause
+# The headless profile uses the installed SSH service and its saved configuration.
+set -eu
+/usr/sbin/sshd -t
+/etc/rc.d/sshd status >/dev/null
+for family in -inet -inet6; do
+    if /sbin/route -n get "$family" default 2>/dev/null |
+        /usr/bin/awk '$1 == "interface:" && $2 !~ /^lo[0-9]+$/ { found = 1 } END { exit !found }'
+    then
+        exit 0
+    fi
+done
+echo "No default route through a network interface." >&2
+exit 1
