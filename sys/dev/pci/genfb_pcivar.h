@@ -31,6 +31,8 @@
 
 #include <dev/wsfb/genfbvar.h>
 
+struct pci_genfb_panel;
+
 struct range {
 	bus_addr_t offset;
 	bus_size_t size;
@@ -49,7 +51,9 @@ struct pci_genfb_softc {
 	struct range sc_ranges[8];
 	int sc_ranges_used;
 	int sc_want_wsfb;
+	const struct pci_genfb_panel *sc_panel;
 	bus_space_handle_t sc_panel_pwm;
+	int sc_panel_level;		/* level of suspend, or -1 */
 	struct genfb_parameter_callback sc_panel_brightness;
 };
 

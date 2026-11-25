@@ -199,6 +199,7 @@ run sh "$src/ember/tests/bwfm-key-epoch.sh" "$src"
 run sh "$src/ember/tests/drm2-linux-compat.sh"
 run "$python" "$src/ember/tools/efidrm-commit-tail-contract.py"
 run sh "$src/ember/tests/efidrm-kver.sh"
+run sh "$src/ember/tests/genfb-pci-pwm.sh"
 if [ "$mode" = all ]; then
     run "$python" "$src/ember/tools/btuart-contract.py" "$src/sys/dev/bluetooth/btuart.c"
     run "$python" "$src/ember/tools/bluetooth-control-contract.py" "$src/ember/tools/bluetooth-control.c"

@@ -83,6 +83,8 @@ ember/tests/efidrm-kver.sh sys/conf/newvers.sh
 ember/tests/efidrm-kver.sh sys/conf/osrelease.sh
 ember/tests/efidrm-kver.sh sys/modules/efidrm/kver.awk
 ember/tests/efidrm-kver.sh sys/sys/param.h
+ember/tests/genfb-pci-pwm.sh ember/tools/genfb-pci-pwm-contract.c
+ember/tests/genfb-pci-pwm.sh sys/dev/pci/genfb_pci.c
 ember/tools/a733-accelerator-clock-contract.sh ember/tools/a733-accelerator-clock-fixture.c
 ember/tools/a733-accelerator-clock-contract.sh ember/tools/a733-ccu-rmw-contract.py
 ember/tools/a733-accelerator-clock-contract.sh ember/tools/a733-display-isolation-fixture.h

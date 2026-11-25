@@ -67,6 +67,8 @@ static paddr_t	pci_genfb_mmap(void *, void *, off_t, int);
 static int	pci_genfb_borrow(void *, bus_addr_t, bus_space_handle_t *);
 static int	pci_genfb_drm_print(void *, const char *);
 static bool	pci_genfb_shutdown(device_t, int);
+static bool	pci_genfb_suspend(device_t, const pmf_qual_t *);
+static bool	pci_genfb_resume(device_t, const pmf_qual_t *);
 
 CFATTACH_DECL_NEW(genfb_pci, sizeof(struct pci_genfb_softc),
     pci_genfb_match, pci_genfb_attach, NULL, NULL);
@@ -93,19 +95,105 @@ pci_genfb_match(device_t parent, cfdata_t match, void *aux)
 	return 0;
 }
 
+/* BEGIN PANEL PWM CONTRACT */
 /*
- * Firmware leaves PWM0 running on the Vector 17 HX AI A2XWJG.  Its VBT
- * selects display DDI, controller 0, with an 8-bit level range of 6..255.
- * Only the duty cycle belongs to this provider; firmware owns the period,
- * polarity and enable bits.  Offsets follow intel_backlight_regs.h.
+ * Panel brightness through the Intel backlight PWM that firmware leaves
+ * running.  Only the duty cycle belongs to this provider; firmware owns
+ * the period, polarity and enable bits.  Offsets follow the BXT_BLC_PWM_*
+ * registers of intel_backlight_regs.h: one block for each controller.
  */
-#define	ARL_PWM0_CTL	0xc8250
+#define	ARL_PWM_CTL	0xc8250
 #define	ARL_PWM_PERIOD	4
 #define	ARL_PWM_DUTY	8
-#define	ARL_PWM1_CTL	0x100
-#define	ARL_PWM_MAPSIZE	(ARL_PWM1_CTL + sizeof(uint32_t))
+#define	ARL_PWM_STRIDE	0x100
+#define	ARL_PWM_MAPSIZE	(ARL_PWM_STRIDE + ARL_PWM_DUTY + sizeof(uint32_t))
 #define	ARL_PWM_ENABLE	__BIT(31)
 #define	ARL_PWM_INVERT	__BIT(29)
+
+/*
+ * The panels of this provider.  The controller and the lowest level of
+ * the 8-bit range come from the VBT of the model.  The DMI prefixes are
+ * the same as in the libopeninput keyboard hwdb (svnMicro-Star*,
+ * pnVector17HXAI*); the PCI subsystem ID identifies the board.
+ */
+struct pci_genfb_panel {
+	pcireg_t	pp_id;		/* display controller */
+	pcireg_t	pp_subsys;	/* PCI subsystem */
+	const char	*pp_vendor;	/* DMI system vendor prefix */
+	const char	*pp_product;	/* DMI system product prefix */
+	unsigned	pp_controller;	/* VBT backlight controller, 0 or 1 */
+	unsigned	pp_min;		/* VBT lowest level, of 255 */
+};
+
+static const struct pci_genfb_panel pci_genfb_panels[] = {
+	/* Vector 17 HX AI A2XWJG: display DDI, controller 0, 6..255. */
+	{ PCI_ID_CODE(PCI_VENDOR_INTEL, 0x7d67),
+	  PCI_ID_CODE(PCI_VENDOR_MSI, 0x149c),
+	  "Micro-Star", "Vector 17 HX AI", 0, 6 },
+};
+
+static bool
+pci_genfb_prefix(const char *s, const char *prefix)
+{
+
+	return s != NULL && strncmp(s, prefix, strlen(prefix)) == 0;
+}
+
+static const struct pci_genfb_panel *
+pci_genfb_panel_lookup(pcireg_t id, pcireg_t subsys, const char *vendor,
+    const char *product)
+{
+	const struct pci_genfb_panel *pp;
+	size_t i;
+
+	for (i = 0; i < __arraycount(pci_genfb_panels); i++) {
+		pp = &pci_genfb_panels[i];
+		if (pp->pp_id == id && pp->pp_subsys == subsys &&
+		    pci_genfb_prefix(vendor, pp->pp_vendor) &&
+		    pci_genfb_prefix(product, pp->pp_product))
+			return pp;
+	}
+	return NULL;
+}
+
+/*
+ * Brightness 0..255 maps onto the duty cycles from the lowest level to
+ * the full period, so that each value gives a different duty cycle.
+ */
+static uint32_t
+pci_genfb_pwm_floor(uint32_t period, unsigned min)
+{
+
+	return ((uint64_t)period * min + 127) / 255;
+}
+
+/* A shorter period cannot give 256 different duty cycles. */
+static bool
+pci_genfb_pwm_usable(uint32_t period, unsigned min)
+{
+
+	return period != UINT32_MAX &&
+	    period - pci_genfb_pwm_floor(period, min) >= 255;
+}
+
+static uint32_t
+pci_genfb_pwm_duty(uint32_t period, unsigned min, int value)
+{
+	uint32_t lo = pci_genfb_pwm_floor(period, min);
+
+	return lo + ((uint64_t)(period - lo) * value + 127) / 255;
+}
+
+static int
+pci_genfb_pwm_level(uint32_t period, unsigned min, uint32_t duty)
+{
+	uint32_t lo = pci_genfb_pwm_floor(period, min);
+
+	if (duty <= lo)
+		return 0;
+	return ((uint64_t)(duty - lo) * 255 + (period - lo) / 2) /
+	    (period - lo);
+}
 
 static int
 pci_genfb_pwm_state(struct pci_genfb_softc *sc, uint32_t *period,
@@ -113,15 +201,19 @@ pci_genfb_pwm_state(struct pci_genfb_softc *sc, uint32_t *period,
 {
 	bus_space_tag_t t = sc->sc_memt;
 	bus_space_handle_t h = sc->sc_panel_pwm;
-	uint32_t ctl = bus_space_read_4(t, h, 0);
+	unsigned c = sc->sc_panel->pp_controller;
+	bus_size_t base = c * ARL_PWM_STRIDE;
+	bus_size_t other = (1 - c) * ARL_PWM_STRIDE;
+	uint32_t ctl = bus_space_read_4(t, h, base);
 
 	if ((ctl & (ARL_PWM_ENABLE | ARL_PWM_INVERT)) != ARL_PWM_ENABLE ||
-	    (bus_space_read_4(t, h, ARL_PWM1_CTL) & ARL_PWM_ENABLE) != 0)
+	    (bus_space_read_4(t, h, other) & ARL_PWM_ENABLE) != 0)
 		return ENXIO;
 
-	*period = bus_space_read_4(t, h, ARL_PWM_PERIOD);
-	*duty = bus_space_read_4(t, h, ARL_PWM_DUTY);
-	if (*period == 0 || *period == UINT32_MAX || *duty > *period)
+	*period = bus_space_read_4(t, h, base + ARL_PWM_PERIOD);
+	*duty = bus_space_read_4(t, h, base + ARL_PWM_DUTY);
+	if (!pci_genfb_pwm_usable(*period, sc->sc_panel->pp_min) ||
+	    *duty > *period)
 		return ENXIO;
 	return 0;
 }
@@ -134,10 +226,15 @@ pci_genfb_pwm_get(void *cookie, int *value)
 	int error = pci_genfb_pwm_state(sc, &period, &duty);
 
 	if (error == 0)
-		*value = ((uint64_t)duty * 255 + period / 2) / period;
+		*value = pci_genfb_pwm_level(period, sc->sc_panel->pp_min,
+		    duty);
 	return error;
 }
 
+/*
+ * The duty register is double-buffered: the new value takes effect at
+ * the next period.  A read-back is not a check of the write.
+ */
 static int
 pci_genfb_pwm_set(void *cookie, int value)
 {
@@ -149,13 +246,46 @@ pci_genfb_pwm_set(void *cookie, int value)
 		return error;
 	if (value < 0 || value > 255)
 		return EINVAL;
-	duty = ((uint64_t)period * MAX(value, 6) + 127) / 255;
-	bus_space_write_4(sc->sc_memt, sc->sc_panel_pwm, ARL_PWM_DUTY, duty);
-	bus_space_barrier(sc->sc_memt, sc->sc_panel_pwm, ARL_PWM_DUTY,
-	    sizeof(duty), BUS_SPACE_BARRIER_READ | BUS_SPACE_BARRIER_WRITE);
-	return bus_space_read_4(sc->sc_memt, sc->sc_panel_pwm, ARL_PWM_DUTY)
-	    == duty ? 0 : EIO;
+	duty = pci_genfb_pwm_duty(period, sc->sc_panel->pp_min, value);
+	bus_space_write_4(sc->sc_memt, sc->sc_panel_pwm,
+	    sc->sc_panel->pp_controller * ARL_PWM_STRIDE + ARL_PWM_DUTY, duty);
+	return 0;
 }
+
+/*
+ * Firmware does not keep the panel level across S3.  Keep the level of
+ * suspend and set it again on resume.
+ */
+static bool
+pci_genfb_suspend(device_t self, const pmf_qual_t *qual)
+{
+	struct pci_genfb_softc *sc = device_private(self);
+	struct genfb_pmf_callback *pmfcb = sc->sc_gen.sc_pmfcb;
+
+	if (pmfcb != NULL && pmfcb->gpc_suspend != NULL &&
+	    !pmfcb->gpc_suspend(self, qual))
+		return false;
+	if (sc->sc_panel != NULL &&
+	    pci_genfb_pwm_get(sc, &sc->sc_panel_level) != 0)
+		sc->sc_panel_level = -1;
+	return true;
+}
+
+static bool
+pci_genfb_resume(device_t self, const pmf_qual_t *qual)
+{
+	struct pci_genfb_softc *sc = device_private(self);
+	struct genfb_pmf_callback *pmfcb = sc->sc_gen.sc_pmfcb;
+
+	if (pmfcb != NULL && pmfcb->gpc_resume != NULL &&
+	    !pmfcb->gpc_resume(self, qual))
+		return false;
+	if (sc->sc_panel != NULL && sc->sc_panel_level >= 0 &&
+	    pci_genfb_pwm_set(sc, sc->sc_panel_level) != 0)
+		aprint_error_dev(self, "panel brightness not restored\n");
+	return true;
+}
+/* END PANEL PWM CONTRACT */
 
 static void
 pci_genfb_panel_brightness(struct pci_genfb_softc *sc,
@@ -163,34 +293,37 @@ pci_genfb_panel_brightness(struct pci_genfb_softc *sc,
 {
 	prop_dictionary_t dict = device_properties(sc->sc_gen.sc_dev);
 	struct genfb_parameter_callback *cb = &sc->sc_panel_brightness;
-	const char *product;
+	const struct pci_genfb_panel *pp;
 	bool console = false;
 	int value;
 
-	if (pa->pa_id != PCI_ID_CODE(PCI_VENDOR_INTEL, 0x7d67) ||
-	    pci_conf_read(pa->pa_pc, pa->pa_tag, PCI_SUBSYS_ID_REG) !=
-	    PCI_ID_CODE(PCI_VENDOR_MSI, 0x149c) ||
-	    prop_dictionary_get(dict, "brightness_callback") != NULL ||
+	if (prop_dictionary_get(dict, "brightness_callback") != NULL ||
 	    !prop_dictionary_get_bool(dict, "is_console", &console) || !console)
 		return;
-	product = pmf_get_platform("system-product");
-	if (product == NULL || strcmp(product, "Vector 17 HX AI A2XWJG") != 0)
+	pp = pci_genfb_panel_lookup(pa->pa_id,
+	    pci_conf_read(pa->pa_pc, pa->pa_tag, PCI_SUBSYS_ID_REG),
+	    pmf_get_platform("system-vendor"),
+	    pmf_get_platform("system-product"));
+	if (pp == NULL)
 		return;
 	if (pci_mapreg_submap(pa, PCI_MAPREG_START,
 	    PCI_MAPREG_TYPE_MEM | PCI_MAPREG_MEM_TYPE_64BIT, 0,
-	    ARL_PWM_MAPSIZE, ARL_PWM0_CTL, NULL, &sc->sc_panel_pwm,
+	    ARL_PWM_MAPSIZE, ARL_PWM_CTL, NULL, &sc->sc_panel_pwm,
 	    NULL, NULL) != 0)
 		return;
+	sc->sc_panel = pp;
+	sc->sc_panel_level = -1;
 	cb->gpc_cookie = sc;
 	cb->gpc_get_parameter = pci_genfb_pwm_get;
 	cb->gpc_set_parameter = pci_genfb_pwm_set;
 	if (pci_genfb_pwm_get(sc, &value) == 0 &&
 	    prop_dictionary_set_uint64(dict, "brightness_callback",
 	    (uintptr_t)cb)) {
-		aprint_normal_dev(sc->sc_gen.sc_dev,
-		    "Intel panel PWM0 brightness (%d/255)\n", value);
+		aprint_normal_dev(sc->sc_gen.sc_dev, "Intel panel PWM%u "
+		    "brightness (%d/255)\n", pp->pp_controller, value);
 		return;
 	}
+	sc->sc_panel = NULL;
 	bus_space_unmap(sc->sc_memt, sc->sc_panel_pwm, ARL_PWM_MAPSIZE);
 }
 
@@ -217,15 +350,12 @@ pci_genfb_attach(device_t parent, device_t self, void *aux)
 	pci_genfb_panel_brightness(sc, pa);
 	genfb_init(&sc->sc_gen);
 
-	/* firmware / MD code responsible for restoring the display */
-	if (sc->sc_gen.sc_pmfcb == NULL)
-		pmf_device_register1(self, NULL, NULL,
-		    pci_genfb_shutdown);
-	else
-		pmf_device_register1(self,
-		    sc->sc_gen.sc_pmfcb->gpc_suspend,
-		    sc->sc_gen.sc_pmfcb->gpc_resume,
-		    pci_genfb_shutdown);
+	/*
+	 * Firmware or MD code restores the display; this driver restores
+	 * the panel level.
+	 */
+	pmf_device_register1(self, pci_genfb_suspend, pci_genfb_resume,
+	    pci_genfb_shutdown);
 
 	if ((sc->sc_gen.sc_width == 0) || (sc->sc_gen.sc_fbsize == 0)) {
 		aprint_debug_dev(self, "not configured by firmware\n");

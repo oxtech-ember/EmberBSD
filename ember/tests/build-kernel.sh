@@ -153,16 +153,18 @@ if [ "${FAIL_AT:-}" = network-contract ] || [ "${FAIL_AT:-}" = "${0##*/}" ]; the
 fi
 SH
 done
-cat > "$work/src/ember/tests/efidrm-kver.sh" <<'SH'
+for contract in efidrm-kver genfb-pci-pwm; do
+cat > "$work/src/ember/tests/$contract.sh" <<'SH'
 #!/bin/sh
 set -eu
-echo "efidrm-contract ${0##*/}" >> "$TEST_LOG"
+echo "display-contract ${0##*/}" >> "$TEST_LOG"
 test "$#" -eq 0
 if [ "${FAIL_AT:-}" = "${0##*/}" ]; then
     echo "injected contract failure: ${0##*/}" >&2
     exit 1
 fi
 SH
+done
 ruby_without_source='bcm2712-v3d-prime simplefb drm-hotplug bcm2712-v3d-bo-stats'
 ruby_with_source='drm-gem-fb bcmv3d-resv bcmv3d-read bcmv3d-vblank
 bcmv3d-vblank-native bcmv3d-flip bcmv3d-scanout bcmv3d-job-resv
@@ -582,7 +584,7 @@ count_contracts() {
     test "$(grep -c '^gpu-contract ' "$TEST_LOG")" -eq 42
     test "$(grep -c '^ruby-contract ' "$TEST_LOG")" -eq 15
     test "$(grep -c '^network-contract ' "$TEST_LOG")" -eq 9
-    test "$(grep -c '^efidrm-contract ' "$TEST_LOG")" -eq 1
+    test "$(grep -c '^display-contract ' "$TEST_LOG")" -eq 2
 }
 # The build runs only its DTB boot-mode contract and the shared source check.
 # check-kernel.sh then runs the source contracts: $1 Python contracts on
@@ -818,7 +820,7 @@ for failure in $root_argument_failures contract a733-contract \
     drm-scheduler-contract.sh gpu-contract drm-sync-file-contract.sh drm-syncobj-flatten-contract.sh bcm2712-display-contract.sh \
     bcm2712-display-irq-contract.sh bcm2712-display-hsm-contract.sh bcm2712-display-dvp-contract.sh dmabuf-map dmabuf-lifetime dmabuf-array dmabuf-sync ruby-contract simplefb-contract.rb drm-hotplug-contract.rb \
     bcm2712-v3d-prime-contract.rb bcm2712-v3d-bo-stats-contract.rb network-contract cemac-stop.sh bwfm-link-check.sh \
-    aicwf-sta.sh aicwf-vht.sh drm2-linux-compat.sh efidrm-kver.sh; do
+    aicwf-sta.sh aicwf-vht.sh drm2-linux-compat.sh efidrm-kver.sh genfb-pci-pwm.sh; do
     : > "$TEST_LOG"
     if FAIL_AT=$failure sh "$work/src/ember/check-kernel.sh" "$TEST_OUT" > "$work/run.log" 2>&1; then
         echo "accepted contract failure: $failure" >&2; exit 1
@@ -858,8 +860,8 @@ for failure in $root_argument_failures contract a733-contract \
         grep -Fq "network-contract $failure " "$TEST_LOG"
         grep -Fq "injected contract failure: $failure" "$TEST_OUT/contracts.log"
         ;;
-    efidrm-kver.sh)
-        grep -Fxq "efidrm-contract $failure" "$TEST_LOG"
+    efidrm-kver.sh|genfb-pci-pwm.sh)
+        grep -Fxq "display-contract $failure" "$TEST_LOG"
         grep -Fq "injected contract failure: $failure" "$TEST_OUT/contracts.log"
         ;;
     aicwf-sta.sh|aicwf-vht.sh)
@@ -1118,7 +1120,7 @@ if sh "$work/src/ember/check-kernel.sh" "$TEST_OUT" no-such-commit > "$work/run.
     echo 'accepted an unknown base commit' >&2; exit 1
 fi
 grep -q 'unknown base commit: no-such-commit' "$work/run.log"
-contract_lines() { grep -Ec '^(contract|a733-contract|gpu-contract|ruby-contract|network-contract|pvr-query-contract|efidrm-contract) ' "$TEST_LOG" || :; }
+contract_lines() { grep -Ec '^(contract|a733-contract|gpu-contract|ruby-contract|network-contract|pvr-query-contract|display-contract) ' "$TEST_LOG" || :; }
 # No contract reads a change outside the recorded inputs.
 printf 'note\n' > "$work/src/NOTES"
 : > "$TEST_LOG"
