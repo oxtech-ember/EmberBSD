@@ -60,6 +60,18 @@ if (
         fi
     done
     test -x "$work/mkdep/host-mkdep"
+    cat > "$work/mkdep/min-version.c" <<'EOF'
+#if __ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ == 130000
+#include "min-version.h"
+#endif
+EOF
+    touch "$work/mkdep/min-version.h"
+    if ! "$work/mkdep/host-mkdep" -f "$work/mkdep/min-version.d" -- \
+        -isysroot "$sdk" -mmacosx-version-min=13.0 "$work/mkdep/min-version.c" ||
+        ! grep -Fq 'min-version.h' "$work/mkdep/min-version.d"; then
+        echo 'FAIL: host-mkdep lost the Darwin deployment target' >&2
+        failures=$((failures + 1))
+    fi
 else
     cat "$work/configure.log" >&2
     echo 'FAIL: host-mkdep configure cannot use the selected GCC16 and SDK' >&2

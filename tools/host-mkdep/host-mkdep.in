@@ -168,7 +168,7 @@ else
 				cppargs=${cppargs%x}
 				;;
 
-		-no-cpp-precomp)	# This is a Darwin-specific option.
+		-no-cpp-precomp|-mmacosx-version-min=*)	# Darwin CPP options.
 				set -- "$@" "$1"
 				shift
 				cppargs=${cppargs%x}
