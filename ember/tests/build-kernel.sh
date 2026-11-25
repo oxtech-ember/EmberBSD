@@ -1157,5 +1157,17 @@ printf '# changed\n' >> "$work/src/ember/tools/kernel-contracts.sh"
 : > "$TEST_LOG"
 sh "$work/src/ember/check-kernel.sh" "$TEST_OUT" HEAD > "$work/run.log" 2>&1
 count_contracts 16
-echo 'PASS: cross/native routing, AArch64 and amd64 targets, refreshed kernel identity, retained objects, matched module headers, external tools, base/A733/GPU/Ruby/CEMAC/Wi-Fi contract dispatch and selection, failure cleanup'
+# --outputs prints the kernel files of a target and builds nothing.
+test "$(sh "$work/src/ember/build-kernel.sh" --outputs)" = 'netbsd-EMBER64
+netbsd-EMBER64.img'
+test "$(EMBER_KERNEL_TARGET=amd64 sh "$work/src/ember/build-kernel.sh" --outputs GENERIC_ARL)" = netbsd-GENERIC_ARL
+test "$(sh "$work/src/ember/build-kernel.sh" --outputs "$work/trials/EMBER64_TRIAL")" = 'netbsd-EMBER64_TRIAL
+netbsd-EMBER64_TRIAL.img'
+if EMBER_KERNEL_TARGET=riscv32 sh "$work/src/ember/build-kernel.sh" --outputs > "$work/run.log" 2>&1; then
+    echo 'FAIL: --outputs accepted an unknown target' >&2; exit 1
+fi
+if sh "$work/src/ember/build-kernel.sh" --outputs 'bad name' > "$work/run.log" 2>&1; then
+    echo 'FAIL: --outputs accepted an invalid configuration' >&2; exit 1
+fi
+echo 'PASS: cross/native routing, AArch64 and amd64 targets, --outputs, refreshed kernel identity, retained objects, matched module headers, external tools, base/A733/GPU/Ruby/CEMAC/Wi-Fi contract dispatch and selection, failure cleanup'
 echo 'MODEL ONLY: SDK build and check boundaries used controlled fixtures; no production kernel, module, CPP, or DTC build ran.'

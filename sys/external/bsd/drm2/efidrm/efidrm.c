@@ -61,9 +61,11 @@ __KERNEL_RCSID(0, "$NetBSD$");
 /*
  * Optional build guard.  A loadable module is accepted by any kernel of the
  * same __NetBSD_Version__, even a different build.  With EMBER_KERNEL_OBJDIR,
- * the module Makefile writes efidrm_kver.h with the version string of that
- * kernel (EFIDRM_KERNEL_VERSION); the module then refuses to attach to any
- * other kernel instead of risking a struct-layout mismatch.
+ * the module Makefile writes efidrm_kver.h with the version and buildinfo
+ * strings of that kernel (EFIDRM_KERNEL_VERSION, EFIDRM_KERNEL_BUILDINFO);
+ * the module then refuses to attach to any other kernel instead of risking a
+ * struct-layout mismatch.  Two MKREPRO builds of one commit share the version
+ * string; BUILDINFO tells them apart.
  */
 #if defined(__has_include)
 #if __has_include("efidrm_kver.h")
@@ -1105,9 +1107,11 @@ efidrm_modcmd(modcmd_t cmd, void *arg)
 	case MODULE_CMD_INIT:
 #ifdef EFIDRM_KERNEL_VERSION
 		if (strncmp(version, EFIDRM_KERNEL_VERSION,
-		    sizeof(EFIDRM_KERNEL_VERSION) - 1) != 0) {
-			printf("efidrm: built for kernel \"%s\", refusing to "
-			    "load into another kernel\n", EFIDRM_KERNEL_VERSION);
+		    sizeof(EFIDRM_KERNEL_VERSION) - 1) != 0 ||
+		    strcmp(buildinfo, EFIDRM_KERNEL_BUILDINFO) != 0) {
+			printf("efidrm: built for kernel \"%s\" (%s), refusing "
+			    "to load into another kernel\n", EFIDRM_KERNEL_VERSION,
+			    EFIDRM_KERNEL_BUILDINFO);
 			return ENOEXEC;
 		}
 #endif

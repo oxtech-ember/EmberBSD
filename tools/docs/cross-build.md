@@ -52,10 +52,13 @@ and the kernel configuration's generated headers under `out/obj/kernels`.
 The modules of the target use the same make wrapper, target settings and
 kernel headers: the four board modules for `aarch64`, `efidrm` and `usbverbose`
 for `amd64`. The `efidrm` module of a selected kernel refuses to load into a
-kernel with another version string. The portable kernel contract
-`ember/tests/efidrm-kver.sh` checks this guard with the version strings
-that `sys/conf/newvers.sh` writes. For `aarch64` only, the wrapper also
-publishes `netbsd-CONFIG.img` and the board DTBs. DTBs use the target
+kernel with another version or `BUILDINFO` string: two `MKREPRO` builds of one
+commit share the version string. The portable kernel contract
+`ember/tests/efidrm-kver.sh` checks this guard with the strings that
+`sys/conf/newvers.sh` writes. For `aarch64` only, the wrapper also
+publishes `netbsd-CONFIG.img` and the board DTBs.
+`build-kernel.sh --outputs [CONFIG]` prints the kernel files of a build for
+`EMBER_KERNEL_TARGET`, one per line, and builds nothing; the SDK plan reads them. DTBs use the target
 preprocessor and the native Ports `dtc` selected by the OS routing contract.
 `build.sh -u` reuses tools and object files for repeated builds. Before each
 cross build, the wrapper removes only the selected configuration's generated

@@ -19,21 +19,33 @@ run_cpp() (
     set -- $cpp "$@"
     run_native_os --capture -- "$@"
 )
-[ "$#" -ge 1 ] && [ "$#" -le 2 ] || fail 'usage: build-kernel.sh ABSOLUTE_OUTPUT [CONFIG | ABSOLUTE_CONFIG_PATH]'
+[ "$#" -ge 1 ] && [ "$#" -le 2 ] ||
+    fail 'usage: build-kernel.sh ABSOLUTE_OUTPUT [CONFIG | ABSOLUTE_CONFIG_PATH] | --outputs [CONFIG]'
 out=$1
 # EMBER_KERNEL_TARGET names the SDK target of the kernel: aarch64 or amd64.
 target=${EMBER_KERNEL_TARGET:-aarch64}
 case "$target" in
 aarch64)
-    machine=evbarm arch=aarch64 default_config=EMBER64
+    # kernel_image: the build also publishes netbsd-CONFIG.img.
+    machine=evbarm arch=aarch64 default_config=EMBER64 kernel_image=yes
     # The board modules built against each kernel.
     modules='bcm2712btcom bcmexpgpio rp1wmcodec rpi5button' ;;
 amd64)
-    machine=amd64 arch=x86_64 default_config=GENERIC
+    machine=amd64 arch=x86_64 default_config=GENERIC kernel_image=no
     # The UEFI display and USB description modules built against each kernel.
     modules='efidrm usbverbose' ;;
 *) fail 'EMBER_KERNEL_TARGET must be aarch64 or amd64' ;;
 esac
+# --outputs [CONFIG]: print the kernel files of a build for this target, one
+# per line, and build nothing. The SDK plan reads them.
+if [ "$out" = --outputs ]; then
+    config=${2:-$default_config}
+    config=${config##*/}
+    case "$config" in ''|*[!A-Za-z0-9_]*) fail 'invalid kernel configuration' ;; esac
+    printf 'netbsd-%s\n' "$config"
+    [ "$kernel_image" = no ] || printf 'netbsd-%s.img\n' "$config"
+    exit 0
+fi
 # CONFIG names a configuration of sys/arch/MACHINE/conf. A local trial
 # configuration is given by its absolute path.
 conf_dir="$src/sys/arch/$machine/conf"
@@ -259,10 +271,10 @@ PATH="$out/native-build-tools:$host_prefix/bin:$host_prefix/sbin:$host_prefix/gn
 export PATH
 make="$out/tools/bin/nbmake-$machine"
 cp "$kernel_obj/netbsd" "$stage/netbsd-$config"
+[ "$kernel_image" = no ] || cp "$kernel_obj/netbsd.img" "$stage/netbsd-$config.img"
 if [ "$target" = aarch64 ]; then
     cpp=$(run_make -C "$src" -V '${CPP}')
     dtc=$(run_make -C "$src" -V '${TOOL_DTC}')
-    cp "$kernel_obj/netbsd.img" "$stage/netbsd-$config.img"
     cd "$src/sys/external/gpl2/dts/dist"
     run_cpp -P -xassembler-with-cpp -I include -I arch/arm/boot/dts \
         arch/arm/boot/dts/bcm2837-rpi-zero-2-w.dts > "$out/zero-2.dts"
