@@ -594,6 +594,7 @@ do_timerfd_settime(struct lwp *l, int fd, int flags,
     register_t *retval)
 {
 	struct itimerspec value = *new_value;
+	bool expired;
 	file_t *fp;
 	int error;
 
@@ -644,6 +645,25 @@ do_timerfd_settime(struct lwp *l, int fd, int flags,
 		    &it->it_time.it_value);
 	}
 
+	/*
+	 * A monotonic one-shot already in the past has elapsed. Cancel the
+	 * old callout and report the expiration under the same itimer lock.
+	 * Re-evaluate the deadline if halting the old callout drops the lock.
+	 */
+	expired = false;
+	if (it->it_clockid == CLOCK_MONOTONIC &&
+	    (flags & TFD_TIMER_ABSTIME) != 0 &&
+	    timespecisset(&it->it_time.it_value) &&
+	    !timespecisset(&it->it_time.it_interval)) {
+		struct timespec now;
+
+		nanouptime(&now);
+		if (timespeccmp(&it->it_time.it_value, &now, <=)) {
+			timespecclear(&it->it_time.it_value);
+			expired = true;
+		}
+	}
+
 	error = itimer_settime(it);
 	if (error == ERESTART) {
 		goto restart;
@@ -657,6 +677,9 @@ do_timerfd_settime(struct lwp *l, int fd, int flags,
 		tfd->tfd_cancelled = false;
 		tfd->tfd_cancel_on_set = !!(flags & TFD_TIMER_CANCEL_ON_SET);
 	}
+
+	if (expired)
+		timerfd_fire(it);
 
 	getnanotime(&tfd->tfd_mtime);
 	itimer_unlock();

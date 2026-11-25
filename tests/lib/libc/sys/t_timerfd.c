@@ -267,14 +267,7 @@ ATF_TC_BODY(timerfd_past, tc)
 	timespecadd(&then, &its.it_value, &its.it_value);
 	RL(timerfd_settime(fd, TFD_TIMER_ABSTIME, &its, NULL));
 
-	/*
-	 * Wait for one tick to pass.
-	 *
-	 * XXX Having to do this seems silly, but it matches Linux, so.
-	 */
-	RL(clock_nanosleep(CLOCK_MONOTONIC, 0, &(const struct timespec){0, 1},
-		NULL));
-
+	/* The monotonic one-shot has already expired on return. */
 	RL(timerfd_read(fd, &val));
 	RL(clock_gettime(CLOCK_MONOTONIC, &now));
 	ATF_REQUIRE(check_value_against_bounds(val, 1, 1));
