@@ -8,6 +8,21 @@ This is an update procedure, not a general installation image.
 
 For published binaries, start with [updating an installed system](installed-system-update.md). Follow the build instructions below when producing new sets.
 
+## Published minimal userland sets
+
+The signed release `2026.11.25-os-aarch64-minimal-noldap-e120f07b` contains these evbarm/AArch64 sets.
+They were built with `MKLDAP=no` from OS revision `e120f07b8276e317e7bcb549de2816d0b49f5d84`.
+These userland IDs are independent of the board boot loader.
+
+| Signed artifact ID | Use | Bytes | SHA-256 |
+| --- | --- | ---: | --- |
+| `os-base-aarch64-minimal-noldap-e120f07b8276e317` | Programs, libraries and services | 36051308 | `2de64b1a75a7fe5206f7c68dbe52e494ac6a6381c208d3083110aebb34990c0d` |
+| `os-etc-aarch64-minimal-noldap-e120f07b8276e317` | Defaults to merge | 504580 | `5e45d5c1f45a88388da4c2fa3c871c6ed7c21cbb148bbe8e9db1d5794c72d4f2` |
+| `os-comp-aarch64-minimal-noldap-e120f07b8276e317` | Optional development files | 17342080 | `1156c8213d29f49728da93879a8cd21d4d20c27acdb4fddb46c39a56f824c62e` |
+
+Fetch the sets required by the installed profile. Compare each verified artifact record with the table.
+Select the matching kernel, modules and boot files separately for the actual machine.
+
 ## Build a pinned source revision
 
 Use a clean export of a recorded EmberBSD commit. Keep build files outside
