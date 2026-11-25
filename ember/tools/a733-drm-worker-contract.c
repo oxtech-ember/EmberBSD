@@ -71,6 +71,7 @@ struct drm_atomic_state {
 };
 struct drm_device {
 	void *dev_private;
+	bool event_lock;
 };
 struct sun60i_a733_output_mode {
 	uint32_t hdisplay, vdisplay;
@@ -238,7 +239,7 @@ static int drm_crtc_vblank_get(struct drm_crtc *c){
 	return vblank_get_error;
 }
 static void drm_crtc_vblank_put(struct drm_crtc *c){
-	CHECK(c == &current->crtc && vblank_gets > vblank_puts && events == 1);
+	CHECK(c == &current->crtc && vblank_gets > vblank_puts && events == 0);
 	vblank_puts++;
 }
 static uint64_t drm_crtc_vblank_count_and_time(struct drm_crtc *c, ktime_t *t){
@@ -247,14 +248,18 @@ static uint64_t drm_crtc_vblank_count_and_time(struct drm_crtc *c, ktime_t *t){
 	*t = INT64_C(987654321000);
 	return UINT64_C(0x100000005);
 }
+struct drm_pending_vblank_event { int unused; };
+static struct drm_pending_vblank_event pending_output_event;
+#define spin_lock_irqsave(lock, flags) do { (flags)=0; CHECK(!*(lock)); *(lock)=true; } while (0)
+#define spin_unlock_irqrestore(lock, flags) do { (void)(flags); CHECK(*(lock)); *(lock)=false; } while (0)
 static void
-a733_commit_event(struct a733_drm *sc, struct drm_crtc_state *s, uint64_t sequence, uint64_t time_ns, int error)
+a733_commit_event(struct a733_drm *sc, struct drm_pending_vblank_event *event, uint64_t sequence, uint64_t time_ns, int error)
 {
 	CHECK(sc == current && !sc->lock && !modeset_lock);
-	CHECK(vblank_puts == 0);
+	CHECK(vblank_puts == vblank_gets && !sc->busy && cleanup_done == 1 && state_puts == 1);
+	CHECK(event == &pending_output_event || event == NULL);
 	events++;
 	event_error = error;
-	s->event = NULL;
 	step('E');
 	if (!error && vblank_gets)
 		CHECK(sequence == UINT64_C(0x100000005) && time_ns == UINT64_C(987654321000));
@@ -360,7 +365,7 @@ reset(struct a733_drm *sc, struct drm_device *dev, struct drm_atomic_state *stat
 	memset(sc, 0, sizeof(*sc));
 	memset(state, 0, sizeof(*state));
 	*dev = (struct drm_device){
-		sc
+		.dev_private = sc
 	};
 	sc->dev = dev;
 	sc->native.mode = (struct sun60i_a733_output_mode){
@@ -383,7 +388,7 @@ reset(struct a733_drm *sc, struct drm_device *dev, struct drm_atomic_state *stat
 	state->crtc = (struct drm_crtc_state){
 		true, true, {
 			1
-		}, state
+		}, &pending_output_event
 	};
 	state->plane = (struct drm_plane_state){
 		.fb = &fb->base,.crtc = &sc->crtc,.src_w = 640u << 16,.src_h = 480u << 16,.crtc_w = 640,.crtc_h = 480,.rotation = 1
@@ -481,7 +486,7 @@ main(void)
 			} else {
 				CHECK(queued == 1 && events == 1 && event_error == expected && sc.fault == expected);
 				CHECK(hw_done == 1 && cleaned == 1 && cleanup_done == 1 && state_puts == 1);
-				CHECK(strcmp(order, submitted ? "SEHCDP" : "EHCDP") == 0);
+				CHECK(strcmp(order, submitted ? "SHCDPE" : "HCDPE") == 0);
 				CHECK(retained_reads == ((scenario == 0 || scenario == 8 || scenario == 10) ? 1u : 0u));
 				CHECK(object.refs == 1 + retained_reads);
 				bool fenced = scenario < 4 || scenario > 7;

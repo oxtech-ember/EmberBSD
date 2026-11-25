@@ -16,6 +16,7 @@ struct dma_fence {
 	unsigned refs;
 };
 struct drm_pending_event {
+	bool linked;
 	struct dma_fence *fence;
 	struct completion *completion;
 	void (*completion_release) (struct completion *);
@@ -46,6 +47,7 @@ struct sun60i_a733_de352_completion {
 	uint64_t observed_sequence, observed_time_ns;
 };
 static struct drm_pending_vblank_event observed;
+static unsigned delivered;
 static bool *held_lock;
 #define spin_lock_irqsave(p,f) do { (f)=0; CHECK(!*(p)); *(p)=true; held_lock=(p); } while (0)
 #define spin_unlock_irqrestore(p,f) do { (void)(f); CHECK(*(p)); *(p)=false; } while (0)
@@ -88,7 +90,10 @@ drm_send_event_locked(struct drm_device *dev, struct drm_pending_event *event)
 		dma_fence_signal(event->fence);
 		event->fence->refs--;
 	}
-	observed = *(struct drm_pending_vblank_event *)event;
+	if (event->linked) {
+		delivered++;
+		observed = *(struct drm_pending_vblank_event *)event;
+	}
 	free(event);
 }
 static void
@@ -112,11 +117,12 @@ main(void)
 	const uint64_t sequence = UINT64_C(0x1000004d2), time_ns = UINT64_C(555123456789);
 	const int errors[] = {0, EIO, ETIMEDOUT, ENOMEM, ENXIO, EBUSY};
 	for (unsigned e = 0; e < sizeof(errors) / sizeof(errors[0]); e++)
-		for (unsigned flags = 0; flags < 4; flags++) {
+		for (unsigned flags = 0; flags < 8; flags++) {
 			struct completion completion = {false};
 			struct dma_fence fence = {0, 1};
 			struct drm_crtc_state state = {calloc(1, sizeof(*state.event))};
 			CHECK(state.event);
+			state.event->base.linked = !(flags & 4);
 			if (flags & 1) {
 				state.event->base.completion = &completion;
 				state.event->base.completion_release = release_completion;
@@ -125,25 +131,28 @@ main(void)
 				state.event->base.fence = &fence;
 			unsigned oldsent = sent, oldcancelled = cancelled,
 			         oldcompleted = completed, oldreleased = released,
-			         oldsignal = signalled;
-			a733_commit_event(&sc, &state, sequence, time_ns, errors[e]);
+			         oldsignal = signalled, olddelivered = delivered;
+			struct drm_pending_vblank_event *event = state.event;
+			state.event = NULL;
+			a733_commit_event(&sc, event, sequence, time_ns, errors[e]);
 			CHECK(state.event == NULL && !dev.event_lock);
 			CHECK(completed == oldcompleted + ((flags & 1) != 0) && released == oldreleased + ((flags & 1) != 0));
 			CHECK(signalled == oldsignal + ((flags & 2) != 0));
+			CHECK(delivered == olddelivered + (errors[e] == 0 && !(flags & 4)));
 			if (errors[e]) {
 				CHECK(sent == oldsent && cancelled == oldcancelled + 1);
 				if (flags & 2)
 					CHECK(fence.status == -errors[e] && fence.refs == 0);
 			} else {
 				CHECK(sent == oldsent + 1 && cancelled == oldcancelled);
-				CHECK(observed.pipe == 3 && observed.event.vbl.sequence == 1234 && observed.event.vbl.tv_sec == 555 && observed.event.vbl.tv_usec == 123456);
+				if (!(flags & 4))
+					CHECK(observed.pipe == 3 && observed.event.vbl.sequence == 1234 && observed.event.vbl.tv_sec == 555 && observed.event.vbl.tv_usec == 123456);
 				if (flags & 2)
 					CHECK(fence.status == 1 && fence.refs == 0);
 			}
 		}
-	struct drm_crtc_state empty = {NULL};
 	unsigned oldsent = sent, oldcancelled = cancelled;
-	a733_commit_event(&sc, &empty, sequence, time_ns, EIO);
+	a733_commit_event(&sc, NULL, sequence, time_ns, EIO);
 	CHECK(sent == oldsent && cancelled == oldcancelled && !dev.event_lock);
 	printf("PASS %u output event checks\n", checks);
 	return 0;

@@ -27,10 +27,9 @@ struct a733_commit {
 
 /* Complete the output event. Never signal the retained scanout READ fence. */
 static void
-a733_commit_event(struct a733_drm *sc, struct drm_crtc_state *state,
+a733_commit_event(struct a733_drm *sc, struct drm_pending_vblank_event *event,
     uint64_t sequence, uint64_t time_ns, int error)
 {
-	struct drm_pending_vblank_event *event = state->event;
 	struct drm_pending_event *base;
 	unsigned long flags;
 
@@ -38,7 +37,6 @@ a733_commit_event(struct a733_drm *sc, struct drm_crtc_state *state,
 		return;
 	base = &event->base;
 	spin_lock_irqsave(&sc->dev->event_lock, flags);
-	state->event = NULL;
 	if (error == 0) {
 		event->pipe = drm_crtc_index(&sc->crtc);
 		event->event.vbl.sequence = (uint32_t)sequence;
@@ -86,6 +84,8 @@ a733_drm_work(struct work *work, void *cookie)
 	struct drm_atomic_state *state = job->state;
 	struct drm_plane_state *plane;
 	struct drm_crtc_state *crtc;
+	struct drm_pending_vblank_event *event;
+	unsigned long flags;
 	struct sun60i_a733_de352_completion done = {0};
 	uint64_t sequence = 0, time_ns = 0;
 	ktime_t time;
@@ -142,13 +142,22 @@ a733_drm_work(struct work *work, void *cookie)
 			sc->fault = error;
 		mutex_exit(&sc->lock);
 	}
-	a733_commit_event(sc, crtc, sequence, time_ns, error);
 	if (vblank_ref)
 		drm_crtc_vblank_put(&sc->crtc);
 	if (error == 0 && !crtc->active && sc->vblank_on) {
 		drm_crtc_vblank_off(&sc->crtc);
 		sc->vblank_on = false;
 	}
+	/*
+	 * Close can unlink the pending event under event_lock. The worker
+	 * still owns it and its completion reference until send or cancel.
+	 * Consume the CRTC pointer before hw_done, but deliver the event
+	 * after cleanup and reopening admission for the next flip.
+	 */
+	spin_lock_irqsave(&sc->dev->event_lock, flags);
+	event = crtc->event;
+	crtc->event = NULL;
+	spin_unlock_irqrestore(&sc->dev->event_lock, flags);
 	drm_atomic_helper_commit_hw_done(state);
 	drm_atomic_helper_cleanup_planes(sc->dev, state);
 	drm_atomic_helper_commit_cleanup_done(state);
@@ -156,6 +165,7 @@ a733_drm_work(struct work *work, void *cookie)
 	mutex_enter(&sc->lock);
 	sc->busy = false;
 	mutex_exit(&sc->lock);
+	a733_commit_event(sc, event, sequence, time_ns, error);
 	if (job->nonblock) {
 		destroy_completion(&job->done);
 		kmem_free(job, sizeof(*job));
