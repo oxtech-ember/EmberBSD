@@ -259,7 +259,8 @@ sunxi_wdt_attach(device_t parent, device_t self, void *aux)
 	enum sunxi_wdt_type type;
 	bus_addr_t addr;
 	bus_size_t size;
-	uint32_t mode;
+	uint32_t mode, cfg;
+	bool handoff = false;
 
 	if (fdtbus_get_reg(phandle, 0, &addr, &size) != 0) {
 		aprint_error(": couldn't get registers\n");
@@ -310,7 +311,18 @@ sunxi_wdt_attach(device_t parent, device_t self, void *aux)
 		sc->sc_smw.smw_setmode = sun20i_wdt_setmode;
 		sc->sc_smw.smw_tickle = sun6i_wdt_tickle;
 
-		/* Disable watchdog */
+		if (OF_getproplen(OF_finddevice("/chosen"),
+		    "emberbsd,trial-watchdog") == 0) {
+			mode = WDT_READ(sc, WDT_REG(sc, SUN6I_WDT_MODE_REG));
+			cfg = WDT_READ(sc, WDT_REG(sc, SUN6I_WDT_CFG_REG));
+			handoff = (mode & SUN6I_WDT_MODE_EN) != 0 &&
+			    __SHIFTOUT(cfg, SUN6I_WDT_CFG_CONFIG) ==
+			    SUN6I_WDT_CFG_CONFIG_SYS;
+			if (!handoff)
+				aprint_error_dev(self,
+				    "trial watchdog is not armed for reset\n");
+			break;
+		}
 		mode = __SHIFTIN(SUNXI_WDT_KEY_FIELD_V, SUNXI_WDT_KEY_FIELD);
 		WDT_WRITE(sc, WDT_REG(sc, SUN6I_WDT_MODE_REG), mode);
 		break;
@@ -323,6 +335,11 @@ sunxi_wdt_attach(device_t parent, device_t self, void *aux)
 	if (sysmon_wdog_register(&sc->sc_smw) != 0) {
 		aprint_error_dev(self,
 		    "couldn't register with sysmon\n");
+	} else if (handoff) {
+		if (sysmon_wdog_boot_handoff(&sc->sc_smw) != 0)
+			aprint_error_dev(self, "trial watchdog handoff failed\n");
+		else
+			aprint_normal_dev(self, "accepted trial boot watchdog\n");
 	}
 }
 

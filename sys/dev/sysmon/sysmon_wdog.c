@@ -55,6 +55,7 @@ __KERNEL_RCSID(0, "$NetBSD: sysmon_wdog.c,v 1.30 2021/12/31 11:05:41 riastradh E
 #include <sys/proc.h>
 #include <sys/module.h>
 #include <sys/once.h>
+#include <sys/time.h>
 
 #include <dev/sysmon/sysmonvar.h>
 
@@ -65,6 +66,8 @@ static kmutex_t sysmon_wdog_list_mtx, sysmon_wdog_mtx;
 static kcondvar_t sysmon_wdog_cv;
 static struct sysmon_wdog *sysmon_armed_wdog;
 static callout_t sysmon_wdog_callout;
+/* Nonzero while a loader-armed timer bounds a trial boot. */
+static time_t sysmon_wdog_boot_deadline;
 static void *sysmon_wdog_sdhook;
 static void *sysmon_wdog_cphook;
 
@@ -268,7 +271,9 @@ sysmonioctl_wdog(dev_t dev, u_long cmd, void *data, int flag, struct lwp *l)
 		}
 
 		mutex_enter(&sysmon_wdog_mtx);
-		if ((smw = sysmon_armed_wdog) != NULL) {
+		if (sysmon_wdog_boot_deadline != 0) {
+			error = EBUSY;
+		} else if ((smw = sysmon_armed_wdog) != NULL) {
 			error = (*smw->smw_tickle)(smw);
 			if (error == 0)
 				smw->smw_tickler = l->l_proc->p_pid;
@@ -348,9 +353,34 @@ sysmon_wdog_register(struct sysmon_wdog *smw)
 }
 
 /*
- * sysmon_wdog_unregister:
- *
- *	Unregister a watchdog device.
+ * Adopt a registered hardware timer that the boot loader already armed.
+ */
+int
+sysmon_wdog_boot_handoff(struct sysmon_wdog *smw)
+{
+	int error;
+
+	/*
+	 * External mode leaves the timer running during a polling loop or a
+	 * kernel stall. Only the callout below feeds it until confirmation.
+	 */
+	mutex_enter(&sysmon_wdog_mtx);
+	error = (*smw->smw_tickle)(smw);
+	if (error == 0)
+		error = sysmon_wdog_setmode(smw, WDOG_MODE_ETICKLE,
+		    smw->smw_period);
+	if (error == 0) {
+		sysmon_wdog_boot_deadline = time_uptime + 120;
+		callout_reset(&sysmon_wdog_callout,
+		    WDOG_PERIOD_TO_TICKS(smw->smw_period) / 2,
+		    sysmon_wdog_ktickle, NULL);
+	}
+	mutex_exit(&sysmon_wdog_mtx);
+	return error;
+}
+
+/*
+ * Unregister a watchdog device.
  */
 int
 sysmon_wdog_unregister(struct sysmon_wdog *smw)
@@ -462,6 +492,11 @@ sysmon_wdog_setmode(struct sysmon_wdog *smw, int mode, u_int period)
 			error = EINVAL;
 			goto out;
 		}
+		if (sysmon_wdog_boot_deadline != 0 &&
+		    time_uptime >= sysmon_wdog_boot_deadline) {
+			error = ETIMEDOUT;
+			goto out;
+		}
 		break;
 
 	case WDOG_MODE_KTICKLE:
@@ -489,8 +524,10 @@ sysmon_wdog_setmode(struct sysmon_wdog *smw, int mode, u_int period)
 			sysmon_armed_wdog = NULL;
 			smw->smw_tickler = (pid_t) -1;
 			sysmon_wdog_release(smw);
-			if ((omode & WDOG_MODE_MASK) == WDOG_MODE_KTICKLE)
+			if ((omode & WDOG_MODE_MASK) == WDOG_MODE_KTICKLE ||
+			    sysmon_wdog_boot_deadline != 0)
 				callout_stop(&sysmon_wdog_callout);
+			sysmon_wdog_boot_deadline = 0;
 		} else {
 			sysmon_armed_wdog = smw;
 			sysmon_wdog_ref(smw);
@@ -515,7 +552,10 @@ sysmon_wdog_ktickle(void *arg)
 	struct sysmon_wdog *smw;
 
 	mutex_enter(&sysmon_wdog_mtx);
-	if ((smw = sysmon_armed_wdog) != NULL) {
+	smw = sysmon_armed_wdog;
+	if (smw != NULL && ((smw->smw_mode & WDOG_MODE_MASK) ==
+	    WDOG_MODE_KTICKLE || (sysmon_wdog_boot_deadline != 0 &&
+	    time_uptime < sysmon_wdog_boot_deadline))) {
 		if ((*smw->smw_tickle)(smw) != 0) {
 			printf("WARNING: KERNEL TICKLE OF WATCHDOG %s "
 			    "FAILED!\n", smw->smw_name);
@@ -544,7 +584,8 @@ sysmon_wdog_shutdown(void *arg)
 	 * XXX Locking here?  I don't think it's necessary.
 	 */
 
-	if ((smw = sysmon_armed_wdog) != NULL) {
+	if ((smw = sysmon_armed_wdog) != NULL &&
+	    sysmon_wdog_boot_deadline == 0) {
 		if (sysmon_wdog_setmode(smw, WDOG_MODE_DISARMED,
 		    smw->smw_period))
 			printf("WARNING: FAILED TO SHUTDOWN WATCHDOG %s!\n",

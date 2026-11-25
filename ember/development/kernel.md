@@ -33,6 +33,33 @@ task cannot use an existing one, and add its row here.
 | --- | --- | --- |
 | `EMBER64` | General AArch64 system; the default | `GENERIC64` with the passive drivers of the supported boards and the boot splash. |
 
+## Watchdog handoff for a trial boot
+
+On the A733, a loader can hand the active hardware reset timer to the trial
+kernel. Before entering the kernel, consume the trial selection on storage.
+The next reset must select the known working installation until confirmation.
+This selection and its storage format belong to the loader.
+
+For a trial, configure the A733 watchdog for system reset with a 16-second
+period. Verify that it is enabled. Set the empty boolean property
+`emberbsd,trial-watchdog` in `/chosen` of the trial device tree.
+Leave it absent for ordinary boots. The driver checks the enabled and reset
+bits before it hands the running timer to sysmon.
+
+Sysmon feeds the timer during scheduled kernel execution for up to 120
+seconds after handoff. A stalled kernel leaves the hardware timer running.
+At the deadline sysmon stops feeding it and refuses late disarm.
+The reset can take up to one additional hardware period.
+The A733 timer appears as `sunxiwdt0` armed in external tickle mode.
+An external tickle request returns `EBUSY` during handoff.
+
+The service that accepts the trial checks the active timer, boot identity,
+root and required local services. It disarms the timer with
+`/sbin/wdogctl -d` before recording the accepted selection on storage.
+If disarm fails, retain the previous selection.
+An incomplete trial must leave the previous selection in effect.
+Test both a stalled boot and a boot that reaches userland without confirmation.
+
 ## Extend the kernel
 
 Select the narrowest mechanism that serves the functional task:
