@@ -168,7 +168,7 @@ class DefaultsTests(unittest.TestCase):
         self.root = self.work / 'target'
         (self.root / 'etc').mkdir(parents=True)
 
-    def archive(self, name, entries, *, gid=None, dirs=()):
+    def archive(self, name, entries, *, gid=None, dirs=(), links=()):
         path = self.work / (name + '.tar.xz')
         with tarfile.open(path, 'w:xz') as tar:
             for directory, mode in dirs:
@@ -185,6 +185,12 @@ class DefaultsTests(unittest.TestCase):
                 item.gid = os.getgid() if gid is None else gid
                 item.size = len(data)
                 tar.addfile(item, io.BytesIO(data))
+            for name, target in links:
+                item = tarfile.TarInfo('./etc/' + name)
+                item.type = tarfile.LNKTYPE
+                item.linkname = './etc/' + target
+                item.mode, item.uid, item.gid = 0o640, os.getuid(), os.getgid()
+                tar.addfile(item)
         return path
 
     def install(self, entries):
@@ -200,6 +206,7 @@ class DefaultsTests(unittest.TestCase):
         before = dict(local=b'old-local', change=b'old', obsolete=b'remove')
         new = dict(local=b'old-local', change=b'new', add=b'addition')
         self.install(dict(before, local=b'site setting'))
+        (self.root / 'etc/change').chmod(0o600)
 
         def extract(program, *args, **kwargs):
             self.assertEqual(program, '/bin/tar')
@@ -208,6 +215,7 @@ class DefaultsTests(unittest.TestCase):
 
         with patch.object(slot, 'run', side_effect=extract):
             slot.merge_defaults(self.root, self.archive('old', before), self.archive('new', new))
+        self.assertEqual(stat.S_IMODE((self.root / 'etc/change').stat().st_mode), 0o600)
         self.assertEqual({p.name: p.read_bytes() for p in (self.root / 'etc').iterdir()},
                          dict(local=b'site setting', change=b'new', add=b'addition'))
 
@@ -218,6 +226,41 @@ class DefaultsTests(unittest.TestCase):
                                 self.archive('new', {'site': b'upstream'}))
         self.assertEqual((self.root / 'etc/site').read_bytes(), b'local')
         run.assert_not_called()
+
+    def test_merge_only_preserves_local_read_restrictions_on_unchanged_metadata(self):
+        before = ('file', b'old digest', 0o444, 0, 0)
+        after = ('file', b'new digest', 0o444, 0, 0)
+        local = ('file', b'old digest', 0o400, 0, 0)
+        self.assertTrue(slot.keeps_private_mode(before, after, local))
+        for mode in (0o444, 0o644, 0o544, 0o004):
+            self.assertFalse(slot.keeps_private_mode(before, after, (*local[:2], mode, 0, 0)))
+        self.assertFalse(slot.keeps_private_mode(before, (*after[:2], 0o440, 0, 0), local))
+        self.assertFalse(slot.keeps_private_mode(before, after, (*local[:4], 1)))
+
+    def test_private_mode_on_either_archive_hard_link_holds_the_update(self):
+        for private in ('file', 'alias'):
+            with self.subTest(name=private):
+                self.install({'file': b'old', 'alias': b'old'})
+                (self.root / 'etc' / private).chmod(0o600)
+                link = [('alias', 'file')]
+                old = self.archive('old', {'file': b'old'}, links=link)
+                new = self.archive('new', {'file': b'new'}, links=link)
+                with patch.object(slot, 'run') as extract, self.assertRaisesRegex(ValueError, 'hard link'):
+                    slot.merge_defaults(self.root, old, new)
+                extract.assert_not_called()
+                self.assertEqual((self.root / 'etc' / private).read_bytes(), b'old')
+
+    def test_new_hard_link_preserves_a_locally_modified_target(self):
+        self.install({'file': b'old'})
+        target = self.root / 'etc/file'
+        target.chmod(0o600)
+        old = self.archive('old', {'file': b'old'})
+        new = self.archive('new', {'file': b'old'}, links=[('alias', 'file')])
+        with patch.object(slot, 'run') as extract, self.assertRaisesRegex(ValueError, 'hard link'):
+            slot.merge_defaults(self.root, old, new)
+        extract.assert_not_called()
+        self.assertFalse((self.root / 'etc/alias').exists())
+        self.assertEqual(stat.S_IMODE(target.stat().st_mode), 0o600)
 
     def test_merge_directory_defaults_and_retain_site_files(self):
         before = [('site', 0o750), ('obsolete', 0o700), ('mode', 0o750)]

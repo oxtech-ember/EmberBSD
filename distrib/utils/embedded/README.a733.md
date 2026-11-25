@@ -139,6 +139,9 @@ The profile disables automatic resizing of the GPT and root. Supply `-s MIB` to 
 The builder rejects a size below the two-slot minimum.
 It replaces an existing output only after the complete image is ready.
 
+When a release changes a default file's contents, the slot installer keeps stricter local group and public read permissions.
+The installed contents must match the old or new default. The release must keep the file's mode, owner and group. A release hard link with a local mode change holds the update.
+
 The stock health check validates the installed SSH configuration and host keys, the running SSH service and a local default route.
 Set `A733_UPDATE_HEALTH` to an executable for the image's own application to replace this check.
 It must return zero only when the application can use its saved configuration and data.

@@ -120,7 +120,7 @@ def member_id(item, archive):
     return None
 
 
-def defaults(archive):
+def defaults(archive, linked=None):
     with tarfile.open(archive, 'r:xz') as tar:
         result = {}
         for item in tar:
@@ -128,6 +128,9 @@ def defaults(archive):
             check(not path.is_absolute() and '..' not in path.parts, 'invalid defaults path')
             if path == Path('.'):
                 continue
+            if linked is not None and item.islnk():
+                target = Path(item.linkname)
+                linked[path] = linked.get(target, target)
             identity = member_id(item, tar)
             if identity:
                 result[path] = identity
@@ -149,18 +152,40 @@ def installed_id(root, relative):
     return None if not path.exists() else ('other',)
 
 
+def keeps_private_mode(old, new, local):
+    """A site can restrict group or public reads independently of a content update."""
+    if not (old and new and local and old[0] == new[0] == local[0] == 'file'):
+        return False
+    if old[2:] != new[2:] or local[3:] != old[3:]:
+        return False
+    mode, site = old[2], local[2]
+    return site != mode and (site | mode) == mode and not ((mode ^ site) & ~0o044)
+
+
 def merge_defaults(root, old_archive, new_archive):
-    before, after = defaults(old_archive), defaults(new_archive)
-    install, removed_dirs = [], []
+    linked = {}
+    before, after = defaults(old_archive), defaults(new_archive, linked)
+    changed_groups = {target for alias, target in linked.items()
+                      if before.get(alias) != after[alias] or before.get(target) != after[target]}
+    guarded = changed_groups | {alias for alias, target in linked.items() if target in changed_groups}
+    install, removed_dirs, private_modes = [], [], {}
     for path in sorted(before.keys() | after.keys()):
         old, new = before.get(path), after.get(path)
-        if old == new:
+        if old == new and path not in guarded:
             continue
         actual = installed_id(root, path)
         if actual == new:
             continue
-        check(actual == old, f'local and release changes overlap: {path}')
         dest = root / path
+        if path in guarded:
+            check(actual == old, f'local change conflicts with a release hard link: {path}')
+        elif keeps_private_mode(old, new, actual):
+            if actual[1] == new[1]:
+                continue
+            check(actual[1] == old[1], f'local and release changes overlap: {path}')
+            private_modes[dest] = actual[2]
+        else:
+            check(actual == old, f'local and release changes overlap: {path}')
         if new is None and old[0] == 'dir':
             removed_dirs.append(dest)
         elif new is None:
@@ -175,7 +200,9 @@ def merge_defaults(root, old_archive, new_archive):
             install.append('./' + str(path))
     if install:
         names = b'\0'.join(os.fsencode(name) for name in install) + b'\0'
-        run('/bin/tar', '-xpf', new_archive, '-C', root, '--null', '-T', '/dev/stdin', input=names)
+        run('/bin/tar', '-xpf', new_archive, '-C', root, '--safe-writes', '--null', '-T', '/dev/stdin', input=names)
+        for dest, mode in private_modes.items():
+            dest.chmod(mode)
     for dest in reversed(removed_dirs):
         if not any(dest.iterdir()):
             dest.rmdir()
