@@ -1,0 +1,275 @@
+#!/usr/pkg/bin/python3.15 -I
+# SPDX-License-Identifier: BSD-2-Clause
+# Origin: EmberBSD contributors (AI-assisted).
+"""Update one installed OS profile through a one-shot boot slot."""
+
+import argparse
+import fcntl
+import hashlib
+import json
+import os
+from pathlib import Path
+import re
+import shutil
+import signal
+import stat
+import subprocess
+import sys
+import tempfile
+import threading
+
+
+CONFIG = Path('/etc/ember-os-update.json')
+STATE = Path('/var/db/ember-os-update')
+PIDFILE = Path('/var/run/ember_os_update.pid')
+CLIENT = Path('/usr/local/libexec/ember-sdk.pyz')
+CLIENT_CONFIG = Path('/usr/local/etc/ember-sdk.json')
+SLOTS = ('A', 'B')
+
+
+def require(condition, message):
+    if not condition:
+        raise ValueError(message)
+
+
+def trusted_file(path):
+    """Check the executable or configuration and every directory used to reach it."""
+    path = Path(path)
+    require(path.is_absolute() and '..' not in path.parts, f'expected an absolute path: {path}')
+    for entry in (*reversed(path.parents), path):
+        info = entry.lstat()
+        expected = stat.S_ISREG if entry == path else stat.S_ISDIR
+        require(expected(info.st_mode) and info.st_uid == 0 and not info.st_mode & 0o022,
+                f'unsafe owner, mode or file type: {entry}')
+    return path
+
+
+def read(path):
+    return json.loads(path.read_bytes())
+
+
+def save(path, value):
+    with tempfile.NamedTemporaryFile(dir=path.parent, delete=False) as tmp:
+        pending = Path(tmp.name)
+        try:
+            tmp.write(json.dumps(value).encode() + b'\n')
+            tmp.flush()
+            os.fsync(tmp.fileno())
+            os.replace(pending, path)
+            fd = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
+            try:
+                os.fsync(fd)
+            finally:
+                os.close(fd)
+        finally:
+            pending.unlink(missing_ok=True)
+
+
+def run(*command):
+    return subprocess.run(command, check=True, stdout=subprocess.PIPE, text=True).stdout.strip()
+
+
+def receipt(data, profile):
+    require(isinstance(data, dict) and data.get('profile') == profile and
+            type(data.get('generation')) is int and 0 <= data['generation'] < 2**63 and
+            isinstance(data.get('os_commit'), str) and re.fullmatch('[0-9a-f]{40}', data['os_commit']),
+            'invalid installed OS receipt')
+    return data
+
+
+def boot_status(backend):
+    result = json.loads(run(backend, 'status'))
+    require(isinstance(result, dict) and set(result) == {'running', 'confirmed', 'next', 'trial', 'prepared'} and
+            result['running'] in SLOTS and result['confirmed'] in SLOTS and
+            result['next'] in (*SLOTS, None) and type(result['trial']) is bool and
+            result['next'] != result['confirmed'], 'invalid loader slot status')
+    prepared = result['prepared']
+    require(prepared is None or (isinstance(prepared, dict) and set(prepared) == {'slot', 'sha256'} and
+            prepared['slot'] in SLOTS and isinstance(prepared['sha256'], str) and
+            re.fullmatch('[0-9a-f]{64}', prepared['sha256'])), 'invalid prepared OS identity')
+    return result
+
+
+def fetch(profile, floor, directory):
+    result = subprocess.run([sys.executable, '-I', CLIENT, '--config', CLIENT_CONFIG,
+                             'fetch-os-update', '--os-profile', profile,
+                             '--after', str(floor), '--output', directory], stdout=subprocess.PIPE)
+    if result.returncode == 3:
+        return None
+    result.check_returncode()
+    update = receipt(read(directory / 'update.json'), profile)
+    require(update == json.loads(result.stdout) and update['generation'] > floor,
+            'staged release differs from the selected generation')
+    return update
+
+
+def package_lock():
+    # Use the lock from the same installed client as the package update service.
+    from emberbsd_sdk.package_cache import directory_lock
+    from emberbsd_sdk.sdk_client import load_config
+    return directory_lock(Path(load_config(CLIENT_CONFIG)['state_dir']) / 'client.lock')
+
+
+def restart(stopping):
+    subprocess.run(['/sbin/shutdown', '-r', 'now'], check=True)
+    # Keep the package lock until rc.shutdown has stopped package updates.
+    require(stopping.wait(120), 'restart did not reach service shutdown')
+
+
+def cycle(config, stopping):
+    backend = config['backend']
+    profile = config['profile']
+    if stopping.is_set():
+        return
+    raw = (STATE / 'release.json').read_bytes()
+    installed = receipt(json.loads(raw), profile)
+    require(run('/sbin/sysctl', '-n', 'kern.buildinfo') == 'EmberBSD:' + installed['os_commit'],
+            'running kernel differs from installed OS receipt')
+    status = boot_status(backend)
+    active = status['confirmed']
+    if status['running'] != active:
+        require(status['trial'] and status['next'] is None, 'unrecognized unconfirmed boot')
+        expected = dict(slot=status['running'], sha256=hashlib.sha256(raw).hexdigest())
+        require(installed['generation'] > 0 and status['prepared'] == expected,
+                'trial receipt differs from the prepared OS identity')
+        if stopping.is_set():
+            return
+        # A hung local health check cannot keep the hardware watchdog alive.
+        subprocess.run([config['health']], check=True, timeout=30)
+        if stopping.is_set():
+            return
+        run(backend, 'confirm', status['running'])
+        result = boot_status(backend)
+        require(result['confirmed'] == result['running'] == status['running'] and result['next'] is None,
+                'loader did not confirm this boot')
+        print(f"Confirmed OS generation {installed['generation']} in slot {result['running']}.", flush=True)
+        return
+
+    other = 'B' if active == 'A' else 'A'
+    floor = installed['generation']
+    attempt = STATE / 'attempt.json'
+    previous = None
+    if attempt.exists():
+        previous = read(attempt)
+        require(isinstance(previous, dict) and previous.get('slot') == other, 'invalid OS attempt slot')
+        target = receipt(previous, profile)
+        require(target['generation'] > floor and isinstance(target.get('sha256'), str) and
+                re.fullmatch('[0-9a-f]{64}', target['sha256']), 'invalid OS attempt identity')
+        floor = target['generation']
+    if status['next'] is not None:
+        require(previous is not None and status['next'] == other, 'unrecognized pending boot')
+        require(status['prepared'] == dict(slot=other, sha256=previous['sha256']),
+                'pending boot differs from the recorded OS attempt')
+        boot = run('/sbin/sysctl', '-n', 'kern.boottime')
+        require(isinstance(previous.get('boot'), str) and previous['boot'], 'missing attempt boot identity')
+        if stopping.is_set():
+            return
+        if previous['boot'] != boot:
+            run(backend, 'cancel', other)
+            require(boot_status(backend) == dict(status, next=None), 'loader did not cancel stale trial')
+            print(f'Cancelled unconsumed slot {other} on return to {active}.', flush=True)
+            return
+        with package_lock():
+            if not stopping.is_set():
+                restart(stopping)
+        return
+
+    with package_lock():
+        if stopping.is_set():
+            return
+        incoming = STATE / 'incoming'
+        # A power loss can leave the download or an incomplete inactive slot.
+        if incoming.exists():
+            shutil.rmtree(incoming)
+        incoming.mkdir(mode=0o700)
+        try:
+            directory = incoming / 'release'
+            update = fetch(profile, floor, directory)
+            if update is None:
+                if previous is None:
+                    print(f'OS generation {floor} is current in slot {active}.', flush=True)
+                else:
+                    print(f'Using confirmed slot {active}. Skipped attempted generation {floor}.',
+                          flush=True)
+                return
+            if stopping.is_set():
+                return
+            digest = hashlib.sha256((directory / 'update.json').read_bytes()).hexdigest()
+            run(backend, 'prepare', other, directory)
+            prepared = dict(status, prepared=dict(slot=other, sha256=digest))
+            require(boot_status(backend) == prepared, 'loader did not prepare this OS release')
+            if stopping.is_set():
+                return
+            # Record the floor in the old root before firmware can consume the trial.
+            boot = run('/sbin/sysctl', '-n', 'kern.boottime')
+            require(boot, 'missing boot identity')
+            save(attempt, dict(boot=boot, profile=profile, slot=other, generation=update['generation'],
+                               os_commit=update['os_commit'], sha256=digest))
+            try:
+                if stopping.is_set():
+                    raise InterruptedError('stopped before arming the trial')
+                run(backend, 'arm', other)
+                require(boot_status(backend) == dict(prepared, next=other), 'loader did not arm this trial')
+            except (OSError, ValueError, subprocess.SubprocessError):
+                # If the loader can prove it never armed, retry this generation.
+                # An uncertain write keeps the floor and the confirmed fallback.
+                if boot_status(backend) == prepared:
+                    if previous is None:
+                        attempt.unlink()
+                    else:
+                        save(attempt, previous)
+                raise
+            print(f"Armed OS generation {update['generation']} in slot {other}.", flush=True)
+        finally:
+            shutil.rmtree(incoming)
+        if not stopping.is_set():
+            restart(stopping)
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('operation', choices=('watch', 'once'))
+    args = parser.parse_args()
+    os.umask(0o077)
+    config = read(trusted_file(CONFIG))
+    require(isinstance(config, dict) and set(config) == {'profile', 'backend', 'health'},
+            'expected profile, backend and health in OS update configuration')
+    require(re.fullmatch('[a-z0-9][a-z0-9._-]*', config['profile']), 'invalid OS update profile')
+    for key in ('backend', 'health'):
+        trusted_file(config[key])
+    trusted_file(STATE / 'release.json')
+    trusted_file(CLIENT_CONFIG)
+    sys.path.insert(0, str(trusted_file(CLIENT)))
+    from emberbsd_sdk.errors import SDKError
+    stopping = threading.Event()
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        signal.signal(sig, lambda *_: stopping.set())
+    with PIDFILE.open('a+') as stream:
+        fcntl.flock(stream, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        stream.seek(0)
+        stream.truncate()
+        stream.write(str(os.getpid()) + '\n')
+        stream.flush()
+        delay = 30
+        while not stopping.is_set():
+            try:
+                cycle(config, stopping)
+            except (OSError, SDKError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
+                print(f'OS update failed: {exc}', file=sys.stderr, flush=True)
+                if args.operation == 'once':
+                    return 1
+                stopping.wait(delay)
+                delay = min(3600, delay * 2)
+            else:
+                if args.operation == 'once':
+                    return 0
+                delay = 30
+                stopping.wait(3600)
+    return 0
+
+
+if __name__ == '__main__':
+    try:
+        sys.exit(main())
+    except (OSError, ValueError, TypeError) as error:
+        sys.exit(f'Cannot start OS update: {error}')

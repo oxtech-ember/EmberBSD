@@ -1,0 +1,21 @@
+#!/bin/sh
+# SPDX-License-Identifier: BSD-2-Clause
+# Origin: EmberBSD contributors (AI-assisted).
+#
+# PROVIDE: ember_os_update
+# REQUIRE: LOGIN NETWORKING syslogd
+# BEFORE: ember_pkg_update
+# KEYWORD: shutdown
+
+$_rc_subr_loaded . /etc/rc.subr
+
+name=ember_os_update
+rcvar=$name
+command=/usr/libexec/ember-os-update
+command_interpreter=/usr/pkg/bin/python3.15
+pidfile=/var/run/${name}.pid
+required_files=/etc/ember-os-update.json
+command_args="watch </dev/null 2>&1 | /usr/bin/logger -p daemon.info -t $name &"
+
+load_rc_config "$name"
+run_rc_command "$1"
