@@ -16,6 +16,7 @@ import tarfile
 import tempfile
 
 
+TAR = '/bin/tar'
 BOOT = Path('/boot')
 STATE = Path('var/db/ember-os-update')
 ROOTS = {'A': 'netbsd-root', 'B': 'ember-root-b'}
@@ -200,7 +201,7 @@ def merge_defaults(root, old_archive, new_archive):
             install.append('./' + str(path))
     if install:
         names = b'\0'.join(os.fsencode(name) for name in install) + b'\0'
-        run('/bin/tar', '-xpf', new_archive, '-C', root, '--safe-writes', '--null', '-T', '/dev/stdin', input=names)
+        run(TAR, '-xpf', new_archive, '-C', root, '--safe-writes', '--null', '-T', '/dev/stdin', input=names)
         for dest, mode in private_modes.items():
             dest.chmod(mode)
     for dest in reversed(removed_dirs):
@@ -219,19 +220,25 @@ def snapshot_copy(root, work, stack):
     stack.callback(run, '/usr/sbin/fssconfig', '-u', device)
     run('/sbin/mount', '-r', '-t', 'ffs', '/dev/' + device, source)
     stack.callback(run, '/sbin/umount', source)
+    copy_snapshot_tree(source, root)
+
+
+def copy_snapshot_tree(source, root):
     # Copy a consistent system, including pkgdb, accounts, DNS, SSH and firmware.
     # Mounted volumes retain their own storage and fstab entries.
     skip = ['boot', 'proc', 'dev/pts', 'tmp', 'var/tmp', 'var/run', 'var/shm',
-            'var/cache', str(STATE / 'incoming'), str(STATE / 'attempt.json')]
-    args = ['/bin/tar', '--one-file-system', '-cpf', '-']
+            'var/cache']
+    args = [TAR, '--one-file-system', '-cpf', '-']
     for path in skip:
-        args.extend(('--exclude', './' + path + '/*'))
+        # bsdtar also matches the directory itself with a trailing /*.
+        args.extend(('--exclude', './' + path + '/?*'))
     # The package lock and OS journal contain process state from the running slot.
-    args.extend(('--exclude', './' + str(STATE / 'attempt.json'),
+    args.extend(('--exclude', './' + str(STATE / 'incoming'),
+                 '--exclude', './' + str(STATE / 'attempt.json'),
                  '--exclude', './var/db/emberbsd-sdk/client.lock'))
     with subprocess.Popen([*args, '.'], cwd=source, stdout=subprocess.PIPE) as writer:
         try:
-            run('/bin/tar', '-xpf', '-', '-C', root, stdin=writer.stdout)
+            run(TAR, '-xpf', '-', '-C', root, stdin=writer.stdout)
         finally:
             writer.stdout.close()
         check(writer.wait() == 0, 'cannot copy the source snapshot')
@@ -271,17 +278,19 @@ def prepare(profile, slot, device, directory):
         root = work / 'target'
         root.mkdir(mode=0o700)
         stack.callback(root.rmdir)
-        run('/sbin/mount', '-t', 'ffs', '/dev/' + device, root)
+        # A partial target has no boot permission and is reformatted on retry.
+        # Flush and unmount it before recording the prepared identity.
+        run('/sbin/mount', '-t', 'ffs', '-o', 'async', '/dev/' + device, root)
         stack.callback(run, '/sbin/umount', root)
         snapshot_copy(root, work, stack)
         # The native base supplies programs and libraries. Preserve site files and device firmware.
-        run('/bin/tar', '-xpf', directory / 'base.tar.xz', '-C', root, '--safe-writes',
+        run(TAR, '-xpf', directory / 'base.tar.xz', '-C', root, '--safe-writes',
             '--exclude', './etc/*', '--exclude', './var/*', '--exclude', './usr/pkg',
             '--exclude', './usr/local', '--exclude', './libdata/firmware', '--exclude', './usr/libdata/firmware')
-        run('/bin/tar', '-xpf', directory / 'base.tar.xz', '-C', root, '--safe-writes',
+        run(TAR, '-xpf', directory / 'base.tar.xz', '-C', root, '--safe-writes',
             './etc/release', './etc/mtree/set.base')
         if 'comp' in receipt['sets']:
-            run('/bin/tar', '-xpf', directory / 'comp.tar.xz', '-C', root, '--safe-writes')
+            run(TAR, '-xpf', directory / 'comp.tar.xz', '-C', root, '--safe-writes')
         state = root / STATE
         # Some profiles install the updater in an image layer over common sets.
         # This copy retains that layer until a release replaces its programs.
@@ -315,6 +324,11 @@ def prepare(profile, slot, device, directory):
         (state / 'attempt.json').unlink(missing_ok=True)
         shutil.copyfile(directory / 'update.json', state / 'release.json')
         run('/usr/sbin/chroot', root, '/bin/sh', '-ec',
+            'for dir in /boot /var/run /var/tmp /tmp; do test -d "$dir" || exit 1; done; '
+            'while read -r dev dir fs opts rest; do '
+            'case ",$opts," in *,noauto,*) continue ;; esac; '
+            'case "$dir" in /dev/pts|/proc|/var/shm) test -d "$dir" || exit 1 ;; esac; '
+            'done </etc/fstab; '
             'test -x /etc/rc.d/ember_os_update && test -x /usr/libexec/ember-os-update && '
             '/usr/pkg/bin/python3.15 -I -c "import ssl" && '
             '. /etc/rc.subr && load_rc_config resize_root && ! checkyesno resize_root && '

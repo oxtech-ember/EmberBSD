@@ -2,12 +2,14 @@
 # SPDX-License-Identifier: BSD-2-Clause
 """Exercise the U-Boot slot adapter without any device nodes or live mounts."""
 
+import fcntl
 import hashlib
 import importlib.machinery
 import importlib.util
 import io
 import os
 from pathlib import Path
+from types import SimpleNamespace
 import shutil
 import stat
 import subprocess
@@ -162,6 +164,36 @@ class SlotTests(unittest.TestCase):
         self.prepare.assert_called_once()
 
 
+class SnapshotTests(unittest.TestCase):
+    def test_keeps_empty_mount_points_and_runtime_directories(self):
+        tar = '/bin/tar' if sys.platform.startswith('netbsd') else shutil.which('bsdtar')
+        if not tar:
+            self.skipTest('select bsdtar for native FFS snapshot copying')
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            source, target = base / 'snapshot', base / 'target'
+            target.mkdir()
+            modes = {'boot': 0o755, 'proc': 0o555, 'dev/pts': 0o555, 'tmp': 0o1777,
+                     'var/tmp': 0o1777, 'var/run': 0o755, 'var/shm': 0o1777, 'var/cache': 0o750}
+            for name in (*modes, 'etc', 'var/db/ember-os-update/incoming', 'var/db/emberbsd-sdk'):
+                path = source / name
+                path.mkdir(parents=True)
+                (path / '.fixture').touch()
+            for name, mode in modes.items():
+                (source / name).chmod(mode)
+            (source / 'var/db/ember-os-update/attempt.json').touch()
+            (source / 'var/db/emberbsd-sdk/client.lock').touch()
+            with patch.object(slot, 'TAR', tar):
+                slot.copy_snapshot_tree(source, target)
+            for name, mode in modes.items():
+                path = target / name
+                self.assertEqual(list(path.iterdir()), [])
+                self.assertEqual(stat.S_IMODE(path.stat().st_mode), mode)
+            self.assertTrue((target / 'etc/.fixture').is_file())
+            for name in ('ember-os-update/incoming', 'ember-os-update/attempt.json', 'emberbsd-sdk/client.lock'):
+                self.assertFalse((target / 'var/db' / name).exists())
+
+
 class DefaultsTests(unittest.TestCase):
     def setUp(self):
         self.work = Path(self.enterContext(tempfile.TemporaryDirectory())).resolve()
@@ -308,6 +340,128 @@ class DefaultsTests(unittest.TestCase):
         self.assertEqual((self.root / 'etc/site').read_bytes(), b'default')
 
 
+class RepairTests(unittest.TestCase):
+    def setUp(self):
+        self.work = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        self.boot = self.work / 'boot'
+        self.boot.mkdir()
+        spec = importlib.util.spec_from_file_location('provision_a733', IMAGE / 'provision-a733-update.py')
+        self.provision = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(self.provision)
+        self.backend = Mock(BOOT=self.boot, NEXT='osnext.dat')
+        self.backend.read_profile.return_value = self.provision.PROFILE
+        self.status = dict(running='A', confirmed='A', next=None, trial=False, prepared={'slot': 'B'})
+        self.backend.layout.return_value = (self.status, {})
+        self.enterContext(patch.object(self.provision, 'load_backend', return_value=self.backend))
+        self.enterContext(patch.object(self.provision.os, 'geteuid', return_value=0))
+        self.enterContext(patch.object(self.provision.sys, 'platform', 'netbsd11'))
+        self.enterContext(patch.object(self.provision, 'SERVICE_PID', self.work / 'service.pid'))
+        self.board = b'x' * 64
+        self.enterContext(patch.object(self.provision, 'boot_script', side_effect=lambda tool, source, timestamp:
+                                       self.board if source == 'orangepi-zero4-boot.cmd' else b'updated loader'))
+        self.old = self.work / 'original.scr'
+        self.old.write_bytes(b'old loader')
+        self.old_backend = self.work / 'old-backend'
+        self.old_backend.write_bytes(b'original backend')
+        self.installed = self.work / 'installed'
+        self.installed.write_bytes(self.old_backend.read_bytes())
+        self.installed.chmod(0o555)
+        self.enterContext(patch.dict(self.provision.CONTROL, backend=str(self.installed)))
+        # The host tests run without root. Keep the real file and atomic rename.
+        self.enterContext(patch.object(self.provision, 'check_installed_backend'))
+        self.enterContext(patch.object(os, 'fchown'))
+        self.updated_backend = (IMAGE / 'uboot-ffs-slot').read_bytes()
+        self.recovery = self.work / 'baseline-boot.scr'
+        self.recovery.write_bytes(b'recovery')
+        self.args = SimpleNamespace(previous_loader=self.old, previous_backend=self.old_backend,
+                                    recovery_loader=self.recovery, mkubootimage='/usr/bin/mkubootimage')
+        for name, contents in {'boot.scr.uimg': self.old.read_bytes(), 'boot.scr': b'recovery',
+                               'slotboot.scr': self.board, 'osgood.dat': b'A', 'osback.dat': b'A',
+                               'osnext.dat': b'-', 'osplan.dat': b'previous attempt'}.items():
+            (self.boot / name).write_bytes(contents)
+        self.previous = self.files()
+
+    def files(self):
+        return {file.name: file.read_bytes() for file in self.boot.iterdir()}
+
+    def test_replaces_pair_on_used_installation_and_can_repeat(self):
+        for _ in range(2):
+            self.provision.repair_loader(self.args)
+            self.assertEqual(self.files(), dict(self.previous, **{'boot.scr.uimg': b'updated loader'}))
+            self.assertEqual(self.installed.read_bytes(), self.updated_backend)
+
+    def test_restart_after_interruption_between_backend_and_selector(self):
+        real_atomic = self.provision.atomic
+
+        def interrupt(file, *args, **kwargs):
+            if file == self.boot / 'boot.scr.uimg':
+                raise OSError('interrupted')
+            return real_atomic(file, *args, **kwargs)
+
+        with patch.object(self.provision, 'atomic', side_effect=interrupt), self.assertRaises(OSError):
+            self.provision.repair_loader(self.args)
+        self.assertEqual(self.installed.read_bytes(), self.updated_backend)
+        self.assertEqual(self.files(), self.previous)
+        self.provision.repair_loader(self.args)
+        self.assertEqual((self.boot / 'boot.scr.uimg').read_bytes(), b'updated loader')
+
+    def test_recovers_missing_selector_after_fat_removed_its_old_name(self):
+        original_replace = os.replace
+
+        def lose_power(source, destination):
+            if destination == self.boot / 'boot.scr.uimg':
+                destination.unlink()
+                raise OSError('power lost after removing original FAT name')
+            original_replace(source, destination)
+
+        with patch.object(os, 'replace', side_effect=lose_power), self.assertRaises(OSError):
+            self.provision.repair_loader(self.args)
+        self.assertFalse((self.boot / 'boot.scr.uimg').exists())
+        self.assertEqual((self.boot / 'boot.scr').read_bytes(), self.recovery.read_bytes())
+        self.assertEqual(self.installed.read_bytes(), self.updated_backend)
+        self.provision.repair_loader(self.args)
+        self.assertEqual(self.files(), dict(self.previous, **{'boot.scr.uimg': b'updated loader'}))
+
+    def test_requires_confirmed_a_and_verified_recovery_before_any_write(self):
+        self.status.update(running='B', confirmed='B')
+        with self.assertRaises(ValueError):
+            self.provision.repair_loader(self.args)
+        self.status.update(running='A', confirmed='A')
+        self.recovery.write_bytes(b'other image')
+        with self.assertRaises(ValueError):
+            self.provision.repair_loader(self.args)
+        self.args.recovery_loader = self.boot / 'boot.scr'
+        with self.assertRaises(ValueError):
+            self.provision.repair_loader(self.args)
+        self.assertEqual(self.installed.read_bytes(), self.old_backend.read_bytes())
+        self.assertEqual(self.files(), self.previous)
+
+    def test_refuses_diagnostic_entry_wrong_board_pending_boot_and_concurrent_update(self):
+        for filename, data in [('boot.scr.uimg', b'site diagnostics'), ('slotboot.scr', b'another board' * 8),
+                               ('osnext.dat', b'B'), ('osnext.dat', b'?')]:
+            with self.subTest(filename=filename):
+                (self.boot / filename).write_bytes(data)
+                before = self.files()
+                with self.assertRaises(ValueError):
+                    self.provision.repair_loader(self.args)
+                self.assertEqual(self.files(), before)
+                (self.boot / filename).write_bytes(self.previous[filename])
+        self.status['running'] = 'B'
+        with self.assertRaises(ValueError):
+            self.provision.repair_loader(self.args)
+        self.status['running'] = 'A'
+        with self.provision.SERVICE_PID.open('a+') as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            with self.assertRaises(BlockingIOError):
+                self.provision.repair_loader(self.args)
+        self.assertEqual(self.installed.read_bytes(), self.old_backend.read_bytes())
+        self.installed.chmod(0o755)
+        self.installed.write_bytes(b'unknown replacement')
+        with self.assertRaises(ValueError):
+            self.provision.repair_loader(self.args)
+        self.assertEqual(self.files(), self.previous)
+
+
 class LoaderTests(unittest.TestCase):
     # Run the loader conditionals unmodified. Model the byte in RAM, the FAT
     # records, and the transfer to the board script with shell functions.
@@ -328,21 +482,26 @@ fatload() {
     esac
     [ "$memory" != missing ] || return 1
     filesize=1
-    if [ "$memory" = oversized ]; then filesize=2; fi
+    if [ "$memory" = oversized ] || { [ "$wrote" = yes ] && [ "$fault" = long ]; }; then filesize=2; fi
 }
 fatwrite() {
     [ "${4##*/}" = osnext.dat ] && [ "$5" = 1 ] || exit 97
     [ "$fault" != write ] || return 1
-    next=$memory
+    [ "$wrote" != yes ] || exit 98
     wrote=yes
+    # On this vendor command, a prefixed root path can report a successful
+    # write although the next read still returns the original byte.
+    if [ "$4" = /osnext.dat ]; then return 0; fi
+    next=$memory
     if [ "$fault" = badbyte ]; then next=41; fi
 }
-load() { [ "$4" = slotboot.scr ] && [ "$handoff" != missing ]; }
+load() { [ "$4" = /slotboot.scr ] && [ "$handoff" != missing ]; }
 launch() {
     echo "boot $ember_slot $ember_trial $next"
     if [ "$handoff" = boot ]; then exit 0; fi
 }
 reset() { echo "reset"; exit 0; }
+prefix=/
 devtype=mmc
 devnum=0
 distro_bootpart=1
@@ -388,7 +547,7 @@ launch() {
 
     def test_consumes_trial_before_boot_and_uses_confirmed_after_io_errors(self):
         for fault, result in [('', 'boot B yes 2d'), ('write', 'boot A no 42'),
-                              ('read', 'boot A no 2d'), ('badbyte', 'boot A no 41')]:
+                              ('read', 'boot A no 2d'), ('long', 'boot A no 2d'), ('badbyte', 'boot A no 41')]:
             with self.subTest(fault=fault):
                 completed = self.execute(fault=fault)
                 self.assertEqual(completed.returncode, 0, completed.stderr)
@@ -408,6 +567,11 @@ launch() {
                 self.assertEqual(trial.stdout.splitlines()[-1], 'reset')
                 stable = self.execute(handoff=handoff, next='2d')
                 self.assertEqual(stable.stdout.splitlines()[-1], 'recovery')
+
+    def test_vendor_root_leaf_write_hands_off_a_single_consumed_trial(self):
+        boot = self.execute(board=True)
+        self.assertEqual(boot.returncode, 0, boot.stderr)
+        self.assertEqual(boot.stdout.splitlines()[-1], 'root=NAME=ember-root-b yes')
 
     def test_board_selects_matching_kernel_and_keeps_the_recovery_entry(self):
         expected = {'41': ('/', 'netbsd-root'), '42': ('/os-b/', 'ember-root-b')}

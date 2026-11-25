@@ -139,6 +139,9 @@ The profile disables automatic resizing of the GPT and root. Supply `-s MIB` to 
 The builder rejects a size below the two-slot minimum.
 It replaces an existing output only after the complete image is ready.
 
+The installer writes the inactive FFS asynchronously. It flushes and unmounts it before marking the slot ready.
+After an interrupted copy, the next attempt creates a new filesystem there. The running root retains its normal mount options.
+
 When a release changes a default file's contents, the slot installer keeps stricter local group and public read permissions.
 The installed contents must match the old or new default. The release must keep the file's mode, owner and group. A release hard link with a local mode change holds the update.
 
@@ -165,3 +168,32 @@ Supply the OS source tree containing the two-slot support on the device, then ru
 The bootstrap writes the current generation as zero, installs the one-shot loader, then enables `ember_os_update` for subsequent boots.
 Use `--health /path/to/check` to install a site-specific probe. Run `/etc/rc.d/ember_os_update start` to start the first pass now.
 An in-progress installation or another boot entry must be resolved before provisioning this profile.
+
+### Repair the selector on an installed card
+
+Use this operation to repair the stock slot backend and `boot.scr.uimg` on an enrolled system.
+Use the confirmed slot A, including after a rejected trial. Obtain both original files from the trusted installation image or its saved build output.
+Obtain a separate copy of the normal slot A `boot.scr` from the original installation image or its authenticated boot set.
+The installed `slotboot.scr` must match the board script in the selected OS source.
+
+On confirmed slot A, stop OS updates. Run the repair as root:
+
+```sh
+/etc/rc.d/ember_os_update stop
+/usr/pkg/bin/python3.15 -I "$OS_SOURCE/ember/image/provision-a733-update.py" \
+    --repair-loader --previous-loader "$ORIGINAL_SELECTOR" --previous-backend "$ORIGINAL_BACKEND" \
+    --recovery-loader "$ORIGINAL_BOOT_SCR" --mkubootimage /usr/bin/mkubootimage
+/etc/rc.d/ember_os_update start
+```
+
+The repair takes the service lock and checks the running slot, the recovery entry, and the empty next-boot marker.
+It verifies both installed files before writing. It installs the compatible backend on the running root first, then the selector on FAT.
+It flushes each file and its directory, then reads back the installed bytes.
+During a FAT rename, a power loss can leave `boot.scr.uimg` absent. U-Boot then loads the verified `boot.scr` and boots slot A.
+Run the same repair again with the same inputs to restore the preferred entry.
+The installed generation and its recorded attempt survive the repair.
+If a site diagnostic occupies the selector path, the check stops before writing it.
+
+The selector uses bare filenames for FAT markers in the partition root.
+The vendor FAT command can report success for a prefixed write while the file still contains the old slot.
+The loader starts a trial only after one write and a separate one-byte readback of `-`.
