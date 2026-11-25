@@ -64,19 +64,60 @@ test -s "$state/base.roots" || exit 1
 cat "$state/base.roots"
 ```
 
-Once the list matches the selected profile, install those trees and stage the new defaults:
+Use one selection for the backup inventory and the install. Keep the selection in the root-owned staging directory so a later boot uses the same paths.
+Set `extra` to the additional payload sets required by the installed profile.
+For a minimal headless system, use the empty value below. A development system can select `comp`.
+An existing X11 installation also needs the matching `xbase xcomp xfont xserver` payloads and the `xetc` defaults.
 
 ```sh
-/bin/tar --safe-writes --exclude './usr/libdata/firmware' -xpf "$new/base.tar.xz" -C / -T "$state/base.roots" || exit 1
+extra=''                         # or: extra='comp xbase xcomp xfont xserver'
+printf '%s\n' "$extra" > "$state/extra.sets" || exit 1
+cat > "$state/payload.sh" <<'SH' || exit 1
+payload() {
+    mode=$1
+    archive=$2
+    shift 2
+    /bin/tar --safe-writes --exclude './rescue' --exclude './usr/pkg' \
+        --exclude './libdata/firmware' --exclude './usr/libdata/firmware' \
+        "$mode" -f "$new/$archive.tar.xz" "$@"
+}
+native_sets() {
+    extra=$(cat "$state/extra.sets") || return 1
+    payload "$1" base -T "$state/base.roots" || return 1
+    for archive in $extra; do
+        case "$archive" in comp|xbase|xcomp|xfont|xserver) ;; *) return 1 ;; esac
+        payload "$1" "$archive" || return 1
+    done
+}
+SH
+. "$state/payload.sh" || exit 1
+native_sets -t > "$state/set-paths.raw" || exit 1
+LC_ALL=C sort -u "$state/set-paths.raw" > "$state/set-paths" || exit 1
 mkdir "$state/defaults" || exit 1
 /bin/tar -xpf "$new/etc.tar.xz" -C "$state/defaults" || exit 1
+case " $extra " in
+    *" xbase "*) /bin/tar -xpf "$new/xetc.tar.xz" -C "$state/defaults" || exit 1 ;;
+esac
+```
+
+Review `$state/set-paths` against the installed profile. Back up the listed existing files, record the new paths and back up local configuration.
+Keep the uncompressed backup readable by the static rescue tools. Confirm that it can be read before replacing files.
+If the boot procedure requires an intermediate reboot, reopen a root shell. Set `new` and `state` to their original absolute paths.
+Recheck the staged archive hashes against the authenticated release records. Load the saved selection and compare it with the backup inventory.
+Then apply the payloads and merge the staged defaults once:
+
+```sh
+. "$state/payload.sh" || exit 1
+native_sets -t > "$state/apply.raw" || exit 1
+LC_ALL=C sort -u "$state/apply.raw" > "$state/apply.list" || exit 1
+cmp "$state/set-paths" "$state/apply.list" || exit 1
+(cd / && native_sets -xp) || exit 1
 etcupdate -s "$state/defaults" || exit 1
 postinstall -s "$state/defaults" check
 ```
 
 This selection preserves the package prefix, `/rescue`, `/libdata/firmware`, `/usr/libdata/firmware` and local service configuration.
-For a profile with `comp` or X11, apply its additional selected members under the same backup and verification policy.
-Stage `xetc` alongside `etc` before merging when the installed profile uses X11. Review obsolete files and each proposed `postinstall` fix.
+Review obsolete files and each proposed `postinstall` fix.
 If extraction fails, restore the previous userland from the tested backup before booting. Keep a matching kernel and modules with it.
 
 ## Apply and verify
