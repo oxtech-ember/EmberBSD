@@ -86,4 +86,7 @@ struct ure_txpkt {
 #define	URE_FLAG_VER_5C10	0x0008
 #define	URE_FLAG_VER_5C20	0x0010
 #define	URE_FLAG_VER_5C30	0x0020
+#define	URE_FLAG_VER_6000	0x0040
+#define	URE_FLAG_VER_6010	0x0080
 #define	URE_FLAG_8152		0x1000	/* RTL8152 */
+#define	URE_FLAG_8153B		0x2000	/* RTL8153B */

@@ -3,6 +3,8 @@
 
 /*-
  * Copyright (c) 2015-2016 Kevin Lo <kevlo@FreeBSD.org>
+ * Copyright (c) 2019 Kevin Lo <kevlo@openbsd.org>
+ * Copyright (c) 2020 Jonathon Fletcher <jonathon.fletcher@gmail.com>
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -27,7 +29,7 @@
  * SUCH DAMAGE.
  */
 
-/* RealTek RTL8152/RTL8153 10/100/Gigabit USB Ethernet device */
+/* RealTek RTL8152/RTL8153/RTL8153B 10/100/Gigabit USB Ethernet device */
 
 #include <sys/cdefs.h>
 __KERNEL_RCSID(0, "$NetBSD: if_ure.c,v 1.60 2024/05/12 17:17:56 christos Exp $");
@@ -78,11 +80,22 @@ static const struct usb_devno ure_devs[] = {
 
 #define URE_BUFSZ	(16 * 1024)
 
+/* Largest frame for an MTU, with the VLAN tag and the CRC. */
+#define URE_FRAMELEN(mtu) \
+	((mtu) + ETHER_HDR_LEN + ETHER_CRC_LEN + ETHER_VLAN_ENCAP_LEN)
+/* RX packet alignment in the receive buffer. */
+#define URE_RX_BUF_ALIGN	8
+
 static void	ure_reset(struct usbnet *);
 static uint32_t	ure_txcsum(struct mbuf *);
 static int	ure_rxcsum(struct ifnet *, struct ure_rxpkt *);
 static void	ure_rtl8152_init(struct usbnet *);
 static void	ure_rtl8153_init(struct usbnet *);
+static void	ure_rtl8153b_init(struct usbnet *);
+static int	ure_rtl8153b_nic_reset(struct usbnet *);
+static uint16_t	ure_rtl8153_phy_status(struct usbnet *, uint16_t);
+static void	ure_reset_bmu(struct usbnet *);
+static int	ure_rtl8153b_wait_ll(struct usbnet *);
 static void	ure_disable_teredo(struct usbnet *);
 static void	ure_init_fifo(struct usbnet *);
 
@@ -254,6 +267,15 @@ ure_write_4(struct usbnet *un, uint16_t reg, uint16_t index, uint32_t val)
 	return ure_write_mem(un, reg, index | URE_BYTE_EN_DWORD, &temp, 4);
 }
 
+#define URE_SETBIT_1(un, reg, idx, x) \
+	ure_write_1(un, reg, idx, ure_read_1(un, reg, idx) | (x))
+#define URE_CLRBIT_1(un, reg, idx, x) \
+	ure_write_1(un, reg, idx, ure_read_1(un, reg, idx) & ~(x))
+#define URE_SETBIT_2(un, reg, idx, x) \
+	ure_write_2(un, reg, idx, ure_read_2(un, reg, idx) | (x))
+#define URE_CLRBIT_2(un, reg, idx, x) \
+	ure_write_2(un, reg, idx, ure_read_2(un, reg, idx) & ~(x))
+
 static uint16_t
 ure_ocp_reg_read(struct usbnet *un, uint16_t addr)
 {
@@ -414,6 +436,14 @@ ure_uno_init(struct ifnet *ifp)
 {
 	struct usbnet * const un = ifp->if_softc;
 	uint8_t eaddr[8];
+	uint16_t reg;
+	int error;
+
+	if (un->un_flags & URE_FLAG_8153B) {
+		error = ure_rtl8153b_nic_reset(un);
+		if (error)
+			return error;
+	}
 
 	/* Set MAC address. */
 	memset(eaddr, 0, sizeof(eaddr));
@@ -422,6 +452,31 @@ ure_uno_init(struct ifnet *ifp)
 	ure_write_mem(un, URE_PLA_IDR, URE_MCU_TYPE_PLA | URE_BYTE_EN_SIX_BYTES,
 	    eaddr, 8);
 	ure_write_1(un, URE_PLA_CRWECR, URE_MCU_TYPE_PLA, URE_CRWECR_NORAML);
+
+	if (un->un_flags & URE_FLAG_8153B) {
+		/* RX early size in 8-byte units, room for one full frame. */
+		reg = (URE_BUFSZ - URE_FRAMELEN(ifp->if_mtu) -
+		    sizeof(struct ure_rxpkt) - URE_RX_BUF_ALIGN) /
+		    URE_RX_BUF_ALIGN;
+		ure_write_2(un, URE_USB_RX_EARLY_SIZE, URE_MCU_TYPE_USB, reg);
+		ure_write_2(un, URE_USB_RX_EARLY_AGG, URE_MCU_TYPE_USB, 158);
+		ure_write_2(un, URE_USB_PM_CTRL_STATUS, URE_MCU_TYPE_USB, 1875);
+
+		if (un->un_udev->ud_speed == USB_SPEED_HIGH) {
+			reg = ure_read_2(un, URE_USB_L1_CTRL, URE_MCU_TYPE_USB);
+			reg &= ~0x0f;
+			ure_write_2(un, URE_USB_L1_CTRL, URE_MCU_TYPE_USB,
+			    reg | 0x01);
+		}
+
+		if (un->un_flags & URE_FLAG_VER_6010) {
+			URE_CLRBIT_2(un, URE_USB_FW_TASK, URE_MCU_TYPE_USB,
+			    URE_FC_PATCH_TASK);
+			usbd_delay_ms(un->un_udev, 1);
+			URE_SETBIT_2(un, URE_USB_FW_TASK, URE_MCU_TYPE_USB,
+			    URE_FC_PATCH_TASK);
+		}
+	}
 
 	/* Reset the packet filter. */
 	ure_write_2(un, URE_PLA_FMC, URE_MCU_TYPE_PLA,
@@ -435,6 +490,10 @@ ure_uno_init(struct ifnet *ifp)
 	ure_write_1(un, URE_PLA_CR, URE_MCU_TYPE_PLA,
 	    ure_read_1(un, URE_PLA_CR, URE_MCU_TYPE_PLA) | URE_CR_RE |
 	    URE_CR_TE);
+
+	if (un->un_flags & URE_FLAG_8153B)
+		ure_write_1(un, URE_USB_UPT_RXDMA_OWN, URE_MCU_TYPE_USB,
+		    URE_OWN_UPDATE | URE_OWN_CLEAR);
 
 	ure_write_2(un, URE_PLA_MISC_1, URE_MCU_TYPE_PLA,
 	    ure_read_2(un, URE_PLA_MISC_1, URE_MCU_TYPE_PLA) &
@@ -656,12 +715,239 @@ ure_rtl8153_init(struct usbnet *un)
 	    URE_MCU_TYPE_USB | URE_BYTE_EN_SIX_BYTES, u1u2, sizeof(u1u2));
 }
 
+/*
+ * Wait for the PHY state.  With desired == 0, wait for any settled state.
+ */
+static uint16_t
+ure_rtl8153_phy_status(struct usbnet *un, uint16_t desired)
+{
+	uint16_t val = 0;
+	int i;
+
+	for (i = 0; i < URE_PHY_STAT_TIMEOUT; i++) {
+		if (usbnet_isdying(un))
+			return val;
+		val = ure_ocp_reg_read(un, URE_OCP_PHY_STATUS) &
+		    URE_PHY_STAT_MASK;
+		if (desired != 0) {
+			if (val == desired)
+				return val;
+		} else if (val == URE_PHY_STAT_LAN_ON ||
+		    val == URE_PHY_STAT_PWRDN ||
+		    val == URE_PHY_STAT_EXT_INIT)
+			return val;
+		usbd_delay_ms(un->un_udev, 20);
+	}
+	URE_PRINTF(un, "timeout waiting for phy to stabilize\n");
+	return val;
+}
+
+static void
+ure_reset_bmu(struct usbnet *un)
+{
+	uint8_t val;
+
+	val = ure_read_1(un, URE_USB_BMU_RESET, URE_MCU_TYPE_USB);
+	val &= ~(URE_BMU_RESET_EP_IN | URE_BMU_RESET_EP_OUT);
+	ure_write_1(un, URE_USB_BMU_RESET, URE_MCU_TYPE_USB, val);
+	val |= URE_BMU_RESET_EP_IN | URE_BMU_RESET_EP_OUT;
+	ure_write_1(un, URE_USB_BMU_RESET, URE_MCU_TYPE_USB, val);
+}
+
+/*
+ * RTL8153B power-on initialization, at attach.  The NIC FIFOs are
+ * set up on each interface start by ure_rtl8153b_nic_reset().
+ * The RTL8153B sequences follow OpenBSD if_ure.c 1.39.
+ */
+static void
+ure_rtl8153b_init(struct usbnet *un)
+{
+	uint16_t val;
+	int i;
+
+	URE_CLRBIT_2(un, URE_USB_LPM_CONFIG, URE_MCU_TYPE_USB,
+	    URE_LPM_U1U2_EN);
+
+	for (i = 0; i < URE_TIMEOUT; i++) {
+		if (usbnet_isdying(un))
+			return;
+		if (ure_read_2(un, URE_PLA_BOOT_CTRL, URE_MCU_TYPE_PLA) &
+		    URE_AUTOLOAD_DONE)
+			break;
+		usbd_delay_ms(un->un_udev, 10);
+	}
+	if (i == URE_TIMEOUT) {
+		URE_PRINTF(un, "timeout waiting for chip autoload\n");
+		return;
+	}
+
+	/*
+	 * The PHY can come up powered down; it then never reaches the
+	 * LAN_ON state and the port stays dark.  Power it up first.
+	 */
+	ure_rtl8153_phy_status(un, 0);
+	val = ure_ocp_reg_read(un, URE_OCP_BASE_MII + MII_BMCR * 2);
+	if (val & BMCR_PDOWN)
+		ure_ocp_reg_write(un, URE_OCP_BASE_MII + MII_BMCR * 2,
+		    val & ~BMCR_PDOWN);
+	ure_rtl8153_phy_status(un, URE_PHY_STAT_LAN_ON);
+
+	URE_CLRBIT_2(un, URE_USB_U2P3_CTRL, URE_MCU_TYPE_USB,
+	    URE_U2P3_ENABLE);
+
+	/* MSC timer, 32760 ms. */
+	ure_write_2(un, URE_USB_MSC_TIMER, URE_MCU_TYPE_USB, 4095);
+
+	/* Disable the power cut and UPS modes. */
+	URE_CLRBIT_2(un, URE_USB_POWER_CUT, URE_MCU_TYPE_USB, URE_PWR_EN);
+	URE_CLRBIT_2(un, URE_USB_MISC_0, URE_MCU_TYPE_USB, URE_PCUT_STATUS);
+	URE_CLRBIT_1(un, URE_USB_POWER_CUT, URE_MCU_TYPE_USB,
+	    URE_UPS_EN | URE_USP_PREWAKE);
+	URE_CLRBIT_1(un, URE_USB_MISC_2, URE_MCU_TYPE_USB,
+	    URE_UPS_FORCE_PWR_DOWN | URE_UPS_NO_UPS);
+
+	URE_CLRBIT_1(un, URE_PLA_INDICATE_FALG, URE_MCU_TYPE_PLA,
+	    URE_UPCOMING_RUNTIME_D3);
+	URE_CLRBIT_1(un, URE_PLA_SUSPEND_FLAG, URE_MCU_TYPE_PLA,
+	    URE_LINK_CHG_EVENT);
+	URE_CLRBIT_2(un, URE_PLA_EXTRA_STATUS, URE_MCU_TYPE_PLA,
+	    URE_LINK_CHANGE_FLAG);
+
+	ure_write_1(un, URE_PLA_CRWECR, URE_MCU_TYPE_PLA, URE_CRWECR_CONFIG);
+	URE_CLRBIT_2(un, URE_PLA_CONFIG34, URE_MCU_TYPE_PLA,
+	    URE_LINK_OFF_WAKE_EN);
+	ure_write_1(un, URE_PLA_CRWECR, URE_MCU_TYPE_PLA, URE_CRWECR_NORAML);
+
+	/* Let the firmware poll the link state. */
+	val = ure_read_2(un, URE_PLA_EXTRA_STATUS, URE_MCU_TYPE_PLA);
+	if (ure_read_2(un, URE_PLA_PHYSTATUS, URE_MCU_TYPE_PLA) &
+	    URE_PHYSTATUS_LINK)
+		val |= URE_CUR_LINK_OK;
+	else
+		val &= ~URE_CUR_LINK_OK;
+	ure_write_2(un, URE_PLA_EXTRA_STATUS, URE_MCU_TYPE_PLA,
+	    val | URE_POLL_LINK_CHG);
+
+	if (USB_IS_SS(un->un_udev->ud_speed))
+		URE_SETBIT_2(un, URE_USB_LPM_CONFIG, URE_MCU_TYPE_USB,
+		    URE_LPM_U1U2_EN);
+
+	URE_SETBIT_2(un, URE_PLA_MAC_PWR_CTRL2, URE_MCU_TYPE_PLA,
+	    URE_MAC_CLK_SPDWN_EN);
+
+	/* Enable Rx aggregation. */
+	URE_CLRBIT_2(un, URE_USB_USB_CTRL, URE_MCU_TYPE_USB,
+	    URE_RX_AGG_DISABLE | URE_RX_ZERO_EN);
+
+	URE_SETBIT_2(un, URE_PLA_RSTTELLY, URE_MCU_TYPE_PLA, URE_TALLY_RESET);
+}
+
+static int
+ure_rtl8153b_wait_ll(struct usbnet *un)
+{
+	int i;
+
+	for (i = 0; i < URE_TIMEOUT; i++) {
+		if (usbnet_isdying(un))
+			return ENXIO;
+		if (ure_read_1(un, URE_PLA_OOB_CTRL, URE_MCU_TYPE_PLA) &
+		    URE_LINK_LIST_READY)
+			return 0;
+		usbd_delay_ms(un->un_udev, 1);
+	}
+	URE_PRINTF(un, "timeout waiting for OOB control\n");
+	return ETIMEDOUT;
+}
+
+/*
+ * RTL8153B NIC and FIFO setup, on each interface start.
+ */
+static int
+ure_rtl8153b_nic_reset(struct usbnet *un)
+{
+	struct ifnet * const ifp = usbnet_ifp(un);
+	uint32_t rxmode;
+	int error, i;
+
+	URE_CLRBIT_2(un, URE_USB_LPM_CONFIG, URE_MCU_TYPE_USB,
+	    URE_LPM_U1U2_EN);
+	URE_CLRBIT_2(un, URE_USB_U2P3_CTRL, URE_MCU_TYPE_USB,
+	    URE_U2P3_ENABLE);
+
+	/* Disable ALDPS. */
+	ure_ocp_reg_write(un, URE_OCP_POWER_CFG,
+	    ure_ocp_reg_read(un, URE_OCP_POWER_CFG) & ~URE_EN_ALDPS);
+	for (i = 0; i < 20; i++) {
+		usbd_delay_ms(un->un_udev, 1);
+		if (ure_read_2(un, 0xe000, URE_MCU_TYPE_PLA) & 0x0100)
+			break;
+	}
+
+	URE_SETBIT_2(un, URE_PLA_MISC_1, URE_MCU_TYPE_PLA, URE_RXDY_GATED_EN);
+	ure_disable_teredo(un);
+
+	rxmode = ure_read_4(un, URE_PLA_RCR, URE_MCU_TYPE_PLA);
+	rxmode &= ~URE_RCR_ACPT_ALL;
+	rxmode |= URE_RCR_APM | URE_RCR_AB; /* accept my own DA and bcast */
+	ure_write_4(un, URE_PLA_RCR, URE_MCU_TYPE_PLA, rxmode);
+
+	ure_reset(un);
+	ure_reset_bmu(un);
+
+	URE_CLRBIT_1(un, URE_PLA_OOB_CTRL, URE_MCU_TYPE_PLA, URE_NOW_IS_OOB);
+	URE_CLRBIT_2(un, URE_PLA_SFF_STS_7, URE_MCU_TYPE_PLA, URE_MCU_BORW_EN);
+	if ((error = ure_rtl8153b_wait_ll(un)) != 0)
+		return error;
+	URE_SETBIT_2(un, URE_PLA_SFF_STS_7, URE_MCU_TYPE_PLA, URE_RE_INIT_LL);
+	if ((error = ure_rtl8153b_wait_ll(un)) != 0)
+		return error;
+
+	URE_CLRBIT_2(un, URE_PLA_CPCR, URE_MCU_TYPE_PLA, URE_CPCR_RX_VLAN);
+
+	ure_write_2(un, URE_PLA_RMS, URE_MCU_TYPE_PLA,
+	    URE_FRAMELEN(ifp->if_mtu));
+	ure_write_1(un, URE_PLA_MTPS, URE_MCU_TYPE_PLA, URE_MTPS_JUMBO);
+
+	URE_SETBIT_2(un, URE_PLA_TCR0, URE_MCU_TYPE_PLA, URE_TCR0_AUTO_FIFO);
+	ure_reset(un);
+
+	/* Configure Rx FIFO threshold. */
+	ure_write_4(un, URE_PLA_RXFIFO_CTRL0, URE_MCU_TYPE_PLA,
+	    URE_RXFIFO_THR1_NORMAL);
+	ure_write_2(un, URE_PLA_RXFIFO_CTRL1, URE_MCU_TYPE_PLA,
+	    URE_RXFIFO_THR2_NORMAL);
+	ure_write_2(un, URE_PLA_RXFIFO_CTRL2, URE_MCU_TYPE_PLA,
+	    URE_RXFIFO_THR3_NORMAL);
+
+	/* Configure Tx FIFO threshold. */
+	ure_write_4(un, URE_PLA_TXFIFO_CTRL, URE_MCU_TYPE_PLA,
+	    URE_TXFIFO_THR_NORMAL2);
+
+	ure_write_4(un, URE_USB_RX_BUF_TH, URE_MCU_TYPE_USB, URE_RX_THR_B);
+	URE_CLRBIT_2(un, URE_PLA_MAC_PWR_CTRL3, URE_MCU_TYPE_PLA,
+	    URE_PLA_MCU_SPDWN_EN);
+
+	/* Enable ALDPS. */
+	ure_ocp_reg_write(un, URE_OCP_POWER_CFG,
+	    ure_ocp_reg_read(un, URE_OCP_POWER_CFG) | URE_EN_ALDPS);
+
+	if (USB_IS_SS(un->un_udev->ud_speed))
+		URE_SETBIT_2(un, URE_USB_LPM_CONFIG, URE_MCU_TYPE_USB,
+		    URE_LPM_U1U2_EN);
+
+	return 0;
+}
+
 static void
 ure_disable_teredo(struct usbnet *un)
 {
-	ure_write_4(un, URE_PLA_TEREDO_CFG, URE_MCU_TYPE_PLA,
-	    ure_read_4(un, URE_PLA_TEREDO_CFG, URE_MCU_TYPE_PLA) &
-	    ~(URE_TEREDO_SEL | URE_TEREDO_RS_EVENT_MASK | URE_OOB_TEREDO_EN));
+	if (un->un_flags & URE_FLAG_8153B)
+		ure_write_1(un, URE_PLA_TEREDO_CFG, URE_MCU_TYPE_PLA, 0xff);
+	else
+		ure_write_4(un, URE_PLA_TEREDO_CFG, URE_MCU_TYPE_PLA,
+		    ure_read_4(un, URE_PLA_TEREDO_CFG, URE_MCU_TYPE_PLA) &
+		    ~(URE_TEREDO_SEL | URE_TEREDO_RS_EVENT_MASK |
+		    URE_OOB_TEREDO_EN));
 	ure_write_2(un, URE_PLA_WDT6_CTRL, URE_MCU_TYPE_PLA,
 	    URE_WDT6_SET_MODE);
 	ure_write_2(un, URE_PLA_REALWOW_TIMER, URE_MCU_TYPE_PLA, 0);
@@ -881,17 +1167,26 @@ ure_attach(device_t parent, device_t self, void *aux)
 	case 0x5c30:
 		un->un_flags |= URE_FLAG_VER_5C30;
 		break;
+	case 0x6000:
+		un->un_flags |= URE_FLAG_8153B | URE_FLAG_VER_6000;
+		break;
+	case 0x6010:
+		un->un_flags |= URE_FLAG_8153B | URE_FLAG_VER_6010;
+		break;
 	default:
 		/* fake addr?  or just fail? */
 		break;
 	}
-	aprint_normal_dev(self, "RTL%d %sver %04x\n",
-	    (un->un_flags & URE_FLAG_8152) ? 8152 : 8153,
+	aprint_normal_dev(self, "%s %sver %04x\n",
+	    (un->un_flags & URE_FLAG_8152) ? "RTL8152" :
+	    (un->un_flags & URE_FLAG_8153B) ? "RTL8153B" : "RTL8153",
 	    (un->un_flags != 0) ? "" : "unknown ",
 	    ver);
 
 	if (un->un_flags & URE_FLAG_8152)
 		ure_rtl8152_init(un);
+	else if (un->un_flags & URE_FLAG_8153B)
+		ure_rtl8153b_init(un);
 	else
 		ure_rtl8153_init(un);
 

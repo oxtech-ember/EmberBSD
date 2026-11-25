@@ -27,12 +27,12 @@
 .\"
 .\" $FreeBSD: head/share/man/man4/ure.4 291557 2015-12-01 05:12:13Z kevlo $
 .\"
-.Dd August 24, 2019
+.Dd November 25, 2026
 .Dt URE 4
 .Os
 .Sh NAME
 .Nm ure
-.Nd RealTek RTL8152/RTL8153 10/100/Gigabit USB Ethernet device
+.Nd RealTek RTL8152/RTL8153/RTL8153B 10/100/Gigabit USB Ethernet device
 .Sh SYNOPSIS
 .Cd "ure*   at uhub?"
 .Cd "rgephy* at mii?"
@@ -52,6 +52,8 @@ and RTL8153 USB Gigabit Ethernet devices including:
 .Bl -tag -width Ds -offset indent -compact
 .It Anker A7611 Aluminum USB 3.0 to Ethernet Adapter
 .El
+.Pp
+The driver also supports the RTL8153B (chip versions 0x6000 and 0x6010).
 .Pp
 The RTL8152 contains an integrated Fast Ethernet MAC, which supports
 both 10 and 100Mbps speeds in either full or half duplex.
