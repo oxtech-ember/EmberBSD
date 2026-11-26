@@ -1317,9 +1317,9 @@ static void get_cachetype_cp15(void);
 
 /* Additional cache information local to this file.  Log2 of some of the
    above numbers.  */
-static int	arm_dcache_log2_nsets;
-static int	arm_dcache_log2_assoc;
-static int	arm_dcache_log2_linesize;
+static int	arm_dcache_log2_nsets __unused;
+static int	arm_dcache_log2_assoc __unused;
+static int	arm_dcache_log2_linesize __unused;
 
 #if (ARM_MMU_V6 + ARM_MMU_V7) > 0
 static inline u_int
