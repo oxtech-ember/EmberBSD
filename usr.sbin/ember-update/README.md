@@ -3,7 +3,8 @@
 An enrolled system runs `/usr/sbin/ember-update` from the base set. It uses
 libfetch, libcrypto, libssl, zlib and libc. The client reads the signed SDK
 release format directly. The base image installs the release trust anchor and
-the HTTPS CA certificates before the first check.
+the HTTPS CA certificates before the first check. Update images set
+`certctl_init=YES` so the first boot indexes the TLS anchors before the service runs.
 
 ## Service and commands
 
