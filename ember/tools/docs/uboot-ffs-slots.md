@@ -15,7 +15,11 @@ Use the [common image procedure](automatic-system-update.md#build-an-image-with-
 The common FFS installer prepares the candidate. The boot adapter reads and confirms the selected slot.
 The [Zero 3W description](../../image/os-profiles/orangepi-zero3w.json) supplies one supported U-Boot layout.
 
+Run the [selector regression](../../boot/test-uboot-ffs-slots.py) with host Python.
+It checks FAT marker consumption, verified readback, the trial boot and the recovery entry.
+
 ## Repair an earlier installation
 
 For a card running the G4 updater, use its matching [enrollment and selector recovery procedure](https://github.com/oxtech-ember/EmberBSD/blob/4786829fa46/ember/tools/docs/uboot-ffs-slots.md).
+Get the [G4 tools](https://github.com/oxtech-ember/EmberBSD/tree/4786829fa46/ember/image) from the same revision.
 Identify the active release and exact hardware profile before replacing its loader.
