@@ -5,3 +5,6 @@ HOSTPROG_CXX=	${_TOOL_PREFIX}elftosb
 HOST_SRCDIR=	external/bsd/elftosb/usr.sbin/elftosb
 
 .include "${.CURDIR}/../Makefile.host"
+
+# Use the C++ dialect selected by the elftosb sources.
+HOST_CXXFLAGS+=	${CXXFLAGS:M-std=*:u}
