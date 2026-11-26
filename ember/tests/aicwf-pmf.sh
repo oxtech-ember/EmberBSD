@@ -10,7 +10,7 @@ cat > "$work/check.c" <<'C'
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
-#include "if_aicwf_sae.h"
+#include "aicwf_sae.h"
 static const uint8_t self[6]={2,0,0,0,0,1}, peer[6]={2,0,0,0,0,2};
 int main(void)
 {
@@ -64,5 +64,5 @@ int main(void)
     return 0;
 }
 C
-${CC:-cc} -std=c99 -Wall -Wextra -Werror -I"$src/sys/dev/sdmmc" "$work/check.c" -o "$work/check"
+${CC:-cc} -std=c99 -Wall -Wextra -Werror -I"$src/sys/dev/ic" "$work/check.c" -o "$work/check"
 "$work/check"

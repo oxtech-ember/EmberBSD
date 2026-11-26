@@ -4,6 +4,9 @@
 #define RXBA_SHARED_MAIN aicwf_prior_rxba_main
 #include "net80211-rxba-contract.c"
 #include <time.h>
+#ifndef atomic_load_relaxed
+#define atomic_load_relaxed(p) (*(p))
+#endif
 
 #define __SHIFTOUT(v,m) (((v)&(m)) >> __builtin_ctz(m))
 #define ETHER_HDR_LEN 14
@@ -35,6 +38,7 @@ struct aicwf_task {
  uint8_t t_key[IEEE80211_KEYBUF_SIZE];
 };
 struct aicwf_softc {
+ bool sc_dying;
  struct ieee80211com sc_ic;struct ifnet sc_if;
  int sc_lock,sc_epoch_lock,sc_rx_lock,sc_dev,sc_taskpool,sc_taskq;
  struct { unsigned delay; } sc_rxba_ch;

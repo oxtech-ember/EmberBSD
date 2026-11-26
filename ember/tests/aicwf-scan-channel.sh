@@ -6,10 +6,10 @@ work=$(mktemp -d "${TEST_OBJDIR:-${TMPDIR:-/tmp}}/aicwf-channel.XXXXXX")
 trap 'rm -rf "$work"' EXIT HUP INT TERM
 awk '/^aicwf_scan_result\(/ {copy=1; print "static void"}
 copy {print} copy && /^}/ {exit}' \
-    "$src/sys/dev/sdmmc/if_aicwf.c" > "$work/scan.h"
+    "$src/sys/dev/ic/aicwf.c" > "$work/scan.h"
 awk '/^aicwf_sta_scan_result_valid\(/ {copy=1; print "static bool"}
 copy {print} copy && /^}/ {exit}' \
-    "$src/sys/dev/sdmmc/if_aicwf_sta.h" > "$work/wire.h"
+    "$src/sys/dev/ic/aicwf_sta.h" > "$work/wire.h"
 cat > "$work/check.c" <<'C'
 
 #include <assert.h>

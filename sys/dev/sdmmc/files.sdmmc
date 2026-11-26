@@ -27,9 +27,8 @@ attach bwfm at sdmmc with bwfm_sdio
 file	dev/sdmmc/if_bwfm_sdio.c	bwfm_sdio
 
 # AICSemi AIC8800 FullMAC SDIO wireless adapter
-device aicwf: arp, ifnet, wlan, firmload
-attach aicwf at sdmmc
-file	dev/sdmmc/if_aicwf.c		aicwf
+attach aicwf at sdmmc with aicwf_sdio
+file	dev/sdmmc/if_aicwf.c		aicwf_sdio
 
 # Broadcom SoftMAC SDIO wireless driver
 attach bwi at sdmmc with bwi_sdio

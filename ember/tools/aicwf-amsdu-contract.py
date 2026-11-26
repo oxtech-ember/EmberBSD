@@ -32,7 +32,12 @@ def main():
                 text=True)
         return (root / path).read_text()
 
-    text = source('sys/dev/sdmmc/if_aicwf.c')
+    driver = 'sys/dev/ic/aicwf.c'
+    if args.revision and subprocess.run(
+        ['git', '-C', str(root), 'cat-file', '-e', args.revision + ':' + driver],
+        stderr=subprocess.DEVNULL).returncode:
+        driver = 'sys/dev/sdmmc/if_aicwf.c'
+    text = source(driver)
     definitions = text
     if not re.search(r'^#define\s+AICWF_RXHDR_LEN\s+', text, re.M):
         definitions += source('sys/dev/ic/aicwf_command.h')

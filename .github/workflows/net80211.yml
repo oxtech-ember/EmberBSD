@@ -7,8 +7,10 @@ name: Native net80211 crypto, scan, aggregation and WME contracts
       - '.github/workflows/net80211.yml'
       - '.github/actions/prepare-wpa-source/action.yml'
       - 'sys/net80211/**'
-      - 'sys/dev/ic/aicwf_command.h'
+      - 'sys/dev/ic/aicwf_*.h'
       - 'sys/dev/sdmmc/if_aicwf.c'
+      - 'sys/dev/ic/aicwfvar.h'
+      - 'sys/dev/ic/aicwf.c'
       - 'sys/dev/sdmmc/if_aicwf_*.h'
       - 'ember/tests/aicwf-vht.sh'
       - 'ember/tests/aicwf-sta.sh'
@@ -75,8 +77,10 @@ name: Native net80211 crypto, scan, aggregation and WME contracts
       - '.github/workflows/net80211.yml'
       - '.github/actions/prepare-wpa-source/action.yml'
       - 'sys/net80211/**'
-      - 'sys/dev/ic/aicwf_command.h'
+      - 'sys/dev/ic/aicwf_*.h'
       - 'sys/dev/sdmmc/if_aicwf.c'
+      - 'sys/dev/ic/aicwfvar.h'
+      - 'sys/dev/ic/aicwf.c'
       - 'sys/dev/sdmmc/if_aicwf_*.h'
       - 'ember/tests/aicwf-vht.sh'
       - 'ember/tests/aicwf-sta.sh'
@@ -163,8 +167,10 @@ jobs:
             /.github/actions/prepare-wpa-source/action.yml
             /ember/shared-sources.json
             /sys/net80211/
-            /sys/dev/ic/aicwf_command.h
+            /sys/dev/ic/aicwf_*.h
             /sys/dev/sdmmc/if_aicwf.c
+            /sys/dev/ic/aicwfvar.h
+            /sys/dev/ic/aicwf.c
             /sys/dev/sdmmc/if_aicwf_*.h
             /ember/tests/aicwf-vht.sh
             /ember/tests/aicwf-sta.sh

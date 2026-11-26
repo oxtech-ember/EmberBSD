@@ -31,7 +31,7 @@ for spec in "codec:$src/sys/net80211/ieee80211_vht_ies.c:$codec" \
     name=${spec%%:*}; rest=${spec#*:}
     source=${rest%%:*}; includes=${rest#*:}
     "$cc" -std=c11 -include stdbool.h -include stdint.h \
-        -I"$includes" -I"$src/sys/dev/sdmmc" -E "$source" > "$work/$name.i"
+        -I"$includes" -I"$src/sys/dev/ic" -E "$source" > "$work/$name.i"
     set --
     if [ "$name" = sta ]; then
         # Suppress only verified modeled log sinks. Keep source expressions
@@ -58,6 +58,6 @@ for spec in "codec:$src/sys/net80211/ieee80211_vht_ies.c:$codec" \
         --error-exitcode=1 --language=c --check-level=exhaustive "$work/$name.i"
     "${CSA:-clang}" --analyze -std=c11 -include stdbool.h -include stdint.h \
         -Xanalyzer -analyzer-output=text -Xanalyzer -analyzer-werror \
-        -I"$includes" -I"$src/sys/dev/sdmmc" "$source" \
+        -I"$includes" -I"$src/sys/dev/ic" "$source" \
         -o "$work/$name.plist"
 done

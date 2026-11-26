@@ -19,7 +19,7 @@ typedef unsigned int u_int;
 #define __BITS(h,l) (((1U << ((h)-(l)+1))-1) << (l))
 #endif
 #define IEEE80211_DPRINTF(...) ((void)0)
-struct aicwf_softc { int sc_bus_lock, sc_sf; };
+struct aicwf_sdio_softc { int sc_bus_lock, sc_sf; };
 static unsigned raw, reads, pauses;
 static void mutex_enter(int *p) { assert(!*p); *p=1; }
 static void mutex_exit(int *p) { assert(*p); *p=0; }
@@ -29,7 +29,7 @@ static void sdmmc_pause(int us, void *p) { (void)us; (void)p; pauses++; }
 #include "wait.h"
 static void check(unsigned free_buffers, unsigned reserve, size_t len, int result)
 {
-    struct aicwf_softc sc={0}; raw=free_buffers; reads=pauses=0;
+    struct aicwf_sdio_softc sc={0}; raw=free_buffers; reads=pauses=0;
     assert(aicwf_tx_wait(&sc,len,reserve)==result);
     assert(reads==(result ? 50 : 1));
     assert(pauses==(result ? 50 : 0));

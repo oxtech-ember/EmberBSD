@@ -10,6 +10,9 @@ awk '/^#define[[:space:]]+IEEE80211_SAE_/ {print}
     "$src/sys/net80211/ieee80211_ioctl.h" > "$work/abi.h"
 cat > "$work/check.c" <<'C'
 #include <stdbool.h>
+#ifndef atomic_load_relaxed
+#define atomic_load_relaxed(p) (*(p))
+#endif
 #include <stdint.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -57,7 +60,8 @@ struct ieee80211req {int i_len,i_val; void *i_data;};
 #define ieee80211_sae_serial(ic) ((uint64_t)0)
 static int ieee80211_sae_request(struct ieee80211com *ic, const struct ieee80211req_sae *r)
 { (void)ic; (void)r; assert(false); return EOPNOTSUPP; }
-struct aicwf_softc {struct ieee80211com sc_ic; int sc_dev, sc_vif, sc_lock, sc_epoch_lock, sc_if; uint16_t sc_sae_caps; bool sc_fw_bip_ready; bool sc_if_attached,sc_sae_enabled,sc_sae_pending,sc_sae_authenticated,sc_connecting,sc_connected; uint32_t sc_sae_generation; uint64_t sc_sae_epoch, sc_join_serial, sc_configure_serial; bool sc_ptk_valid; uint64_t sc_pmf_rx_pn; uint8_t sc_ptk[16]; uint8_t sc_sae_bssid[6],sc_igtk[2];};
+struct ieee80211req_sta_mgmt { uint32_t generation; };
+struct aicwf_softc {struct ieee80211req_sta_mgmt sc_sta_scan; bool sc_sta_scan_started; struct ieee80211com sc_ic; int sc_dev, sc_vif, sc_lock, sc_epoch_lock, sc_if; uint16_t sc_sae_caps; bool sc_fw_bip_ready; bool sc_if_attached,sc_sae_enabled,sc_sae_pending,sc_sae_authenticated,sc_connecting,sc_connected; uint32_t sc_sae_generation; uint64_t sc_sae_epoch, sc_join_serial, sc_configure_serial; bool sc_ptk_valid; uint64_t sc_pmf_rx_pn; uint8_t sc_ptk[16]; uint8_t sc_sae_bssid[6],sc_igtk[2];};
 static void mutex_enter(int *p) { assert(!*p); *p = 1; }
 static void mutex_exit(int *p) { assert(*p); *p = 0; }
 #define mutex_spin_enter mutex_enter
@@ -69,14 +73,20 @@ static void le16enc(void *ptr,uint16_t v) {uint8_t *p=ptr;p[0]=v;p[1]=v>>8;}
 #endif
 static void aicwf_rx_retire(struct aicwf_softc *sc) {(void)sc;}
 
-#include "if_aicwf_sae.h"
+#include "aicwf_sae.h"
 static int aicwf_sae_tx(struct aicwf_softc *sc,const uint8_t *p,size_t n,uint64_t epoch,bool query) {(void)query;(void)sc;(void)p;(void)n;(void)epoch;return 0;}
 #ifndef __arraycount
 #define __arraycount(a) (sizeof(a) / sizeof((a)[0]))
 #endif
 static void aicwf_disconnect_ind(struct aicwf_softc *, const uint8_t *, size_t);
-static void aicwf_sta_retire_locked(struct aicwf_softc *sc, uint8_t *tx, bool *a, uint8_t *scan, bool *b)
-{ assert(sc->sc_lock); (void)tx; (void)scan; *a = *b = false; }
+static void aicwf_sta_retire_locked(struct aicwf_softc *sc, uint8_t *tx, bool *a, bool *b)
+{ assert(sc->sc_lock); (void)tx; *a = *b = false; }
+static int splnet(void) { return 0; }
+static void splx(int s) { (void)s; }
+static bool ieee80211_sta_scan_report(struct ieee80211com *ic, struct ieee80211req_sta_mgmt *req, bool cancelled)
+{ (void)ic; (void)req; (void)cancelled; assert(false); return false; }
+static bool ieee80211_sta_scan_release(struct ieee80211com *ic, struct ieee80211req_sta_mgmt *req)
+{ (void)ic; (void)req; assert(false); return false; }
 static void rt_ieee80211msg(void *ifp, int code, void *p, size_t n)
 { (void)ifp; (void)code; (void)p; (void)n; assert(false); }
 static void aicwf_recover_scan(struct aicwf_softc *sc, uint64_t epoch, uint64_t serial)
@@ -148,7 +158,7 @@ for pair in aicwf_sae_advance_if:uint64_t aicwf_sae_advance:void aicwf_disconnec
     type=${pair#*:}
     awk -v name="$name" -v type="$type" '$0 ~ "^" name "\\(" {copy=1; print "static " type}
         copy {print} copy && /^}/ {exit}' \
-        "$src/sys/dev/sdmmc/if_aicwf.c" >> "$work/check.c"
+        "$src/sys/dev/ic/aicwf.c" >> "$work/check.c"
 done
 cat >> "$work/check.c" <<'C'
 int main(void)
@@ -272,6 +282,6 @@ int main(void)
     return 0;
 }
 C
-${CC:-cc} -std=c99 -Wall -Wextra -Werror ${AICWF_SAE_LIFETIME_CFLAGS:-} -I"$src/sys/dev/sdmmc" \
+${CC:-cc} -std=c99 -Wall -Wextra -Werror ${AICWF_SAE_LIFETIME_CFLAGS:-} -I"$src/sys/dev/ic" \
     "$work/check.c" -o "$work/check"
 "$work/check"

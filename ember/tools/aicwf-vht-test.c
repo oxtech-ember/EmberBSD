@@ -47,7 +47,7 @@ le32enc(void *p, uint32_t v)
 
 #endif
 
-#include "if_aicwf_vht.h"
+#include "aicwf_vht.h"
 
 static unsigned checks;
 #define CHECK(e) do { assert(e); checks++; } while (0)

@@ -5,8 +5,8 @@
  * hal_desc.h, sdio_host.c, lmac_msg.h and rwnx_msg_tx.c.
  * These bounded BSD codecs do not import the vendor implementation.
  */
-#ifndef _DEV_SDMMC_IF_AICWF_STA_H_
-#define _DEV_SDMMC_IF_AICWF_STA_H_
+#ifndef _DEV_IC_AICWF_STA_H_
+#define _DEV_IC_AICWF_STA_H_
 
 #define AICWF_STA_TOKEN_MAX		0x7fffffffU
 #define AICWF_STA_CFM_REQUEST		0x80000000U
@@ -71,4 +71,4 @@ aicwf_sta_scan_build(uint8_t *req, const uint16_t *freqs, size_t count,
 	return true;
 }
 
-#endif /* _DEV_SDMMC_IF_AICWF_STA_H_ */
+#endif /* _DEV_IC_AICWF_STA_H_ */

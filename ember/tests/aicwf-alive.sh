@@ -10,10 +10,13 @@ awk '
 /^aicwf_alive_lost\(/ {copy=1; print "static void"}
 /^aicwf_alive_tick\(/ {copy=1; print "static void"}
 copy {print} copy && /^}/ {copy=0}
-' "$src/sys/dev/sdmmc/if_aicwf.c" > "$work/alive.h"
+' "$src/sys/dev/ic/aicwf.c" > "$work/alive.h"
 cat > "$work/check.c" <<'C'
 #include <assert.h>
 #include <stdbool.h>
+#ifndef atomic_load_relaxed
+#define atomic_load_relaxed(p) (*(p))
+#endif
 #include <stdint.h>
 #include <stdio.h>
 #include <errno.h>
@@ -38,7 +41,7 @@ struct aicwf_softc {
 	struct work sc_alive_work;
 	volatile u_int sc_alive_rx;
 	u_int sc_alive_misses;
-	bool sc_alive_queued, sc_connected, sc_connecting, sc_if_attached;
+	bool sc_dying, sc_alive_queued, sc_connected, sc_connecting, sc_if_attached;
 };
 static struct aicwf_softc sc = { .sc_taskq = &thetaskq };
 

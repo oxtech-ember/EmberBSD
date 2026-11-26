@@ -50,6 +50,8 @@ interface_inputs = (
     *interface_ic,
     "sys/dev/ic/aicwf_command.h",
     "sys/dev/sdmmc/if_aicwf.c",
+    "sys/dev/ic/aicwf.c",
+    "sys/dev/ic/aicwfvar.h",
     "ember/tools/aicwf-rxba-contract.py",
     "ember/tools/aicwf-rxba-contract.c",
     "sys/dev/sdmmc/sdmmc_io_status.h",

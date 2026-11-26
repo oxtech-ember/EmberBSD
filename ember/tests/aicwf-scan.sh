@@ -9,7 +9,7 @@ copy {print} copy && /^}/ {exit}' \
     "$src/sys/net80211/ieee80211_ioctl.c" > "$work/setup.h"
 awk '/^aicwf_newstate_cb\(/ {copy=1; print "static void"}
 copy {print} copy && /^}/ {exit}' \
-    "$src/sys/dev/sdmmc/if_aicwf.c" > "$work/state.h"
+    "$src/sys/dev/ic/aicwf.c" > "$work/state.h"
 cat > "$work/check.c" <<'C'
 #include <assert.h>
 #include <stdbool.h>

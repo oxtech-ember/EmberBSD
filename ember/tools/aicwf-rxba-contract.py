@@ -8,11 +8,12 @@ import sys
 
 src, out = map(pathlib.Path, sys.argv[1:])
 driver = pathlib.Path(os.environ.get('AICWF_RXBA_SOURCE',
-    src / 'sys/dev/sdmmc/if_aicwf.c')).read_text()
+    src / 'sys/dev/ic/aicwf.c')).read_text()
 command = (src / 'sys/dev/ic/aicwf_command.h').read_text()
 (out / 'aicwf_command.h').write_text(command)
 parts = []
-for line in driver.splitlines():
+definitions = (src / 'sys/dev/ic/aicwfvar.h').read_text() + driver
+for line in definitions.splitlines():
     if re.match(r'^#define\s+AICWF_(RX|REORDER|KEY_|HWKEY|STA_NONE|CIPHER_CCMP|MM_KEY_|ME_SET_CONTROL_PORT)', line):
         parts.append(line)
 for name in ('aicwf_rx_input', 'aicwf_rx_free', 'aicwf_rx_discard',
@@ -23,7 +24,7 @@ for name in ('aicwf_rx_input', 'aicwf_rx_free', 'aicwf_rx_discard',
              'aicwf_rx_data', 'aicwf_rx', 'aicwf_key_set_cb',
              'aicwf_key_delete_cb', 'aicwf_key_task', 'aicwf_newstate',
              'aicwf_connect_ind', 'aicwf_disconnect_ind'):
-    match = re.search(r'^static [^\n]+\n' + name + r'\([^;]*?\n\{.*?^\}',
+    match = re.search(r'^(?:static )?[^\n]+\n' + name + r'\([^;]*?\n\{.*?^\}',
                       driver, re.M | re.S)
     if not match:
         raise SystemExit('Missing complete AIC consumer: ' + name)

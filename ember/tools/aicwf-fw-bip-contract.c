@@ -39,7 +39,7 @@ fault_hash(const uint8_t *p, size_t n, uint8_t out[32])
 }
 #define le32dec check_le32dec
 #include "if_aicwf_fw_bip.h"
-#include "if_aicwf_sae.h"
+#include "aicwf_sae.h"
 
 static void
 wire_contract(void)

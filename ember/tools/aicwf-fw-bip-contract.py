@@ -13,7 +13,7 @@ import sys
 FUNCTIONS = ('aicwf_fw_cmd', 'aicwf_fw_mem_read', 'aicwf_fw_mem_write',
              'aicwf_fw_bip_hash', 'aicwf_wlan_upload', 'aicwf_fw_options_set',
              'aicwf_fw_bip_verify', 'aicwf_fw_start', 'aicwf_wlan_load',
-             'aicwf_fw_bip_runtime_verify', 'aicwf_fw_init')
+             'aicwf_fw_bip_runtime_verify', 'aicwf_station_setup', 'aicwf_fw_init')
 
 
 def projection(source):
@@ -37,6 +37,7 @@ def main():
     args = p.parse_args()
     root = Path(__file__).resolve().parents[2]
     source = (root / 'sys/dev/sdmmc/if_aicwf.c').read_text()
+    source += (root / 'sys/dev/ic/aicwf.c').read_text()
     body = projection(source)
     sdk_source = Path(args.sdk_source).resolve(strict=True) / 'src'
     sys.path.insert(0, str(sdk_source))
@@ -66,7 +67,7 @@ def main():
     env['TMPDIR'] = str(tmp)
     (out / 'driver-body.h').write_text(body)
     defines = re.findall(r'^#define[ \t]+AICWF_[^\n]*(?:\\\n[^\n]*)*', source, re.M)
-    vht = (root / 'sys/dev/sdmmc/if_aicwf_vht.h').read_text()
+    vht = (root / 'sys/dev/ic/aicwf_vht.h').read_text()
     defines += re.findall(r'^#define AICWF_ME_CONFIG_LEN[^\n]*', vht, re.M)
     options = re.search(r'static const uint32_t aicwf_fw_options\[\]\[2\] = \{.*?\n};', source, re.S)
     if options is None:

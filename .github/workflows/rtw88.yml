@@ -50,6 +50,8 @@ name: Native rtw88 source contracts
       - 'ember/tools/aicwf-rxba-*'
       - 'sys/dev/ic/aicwf_command.h'
       - 'sys/dev/sdmmc/if_aicwf.c'
+      - 'sys/dev/ic/aicwfvar.h'
+      - 'sys/dev/ic/aicwf.c'
       - 'ember/tools/ccmp*'
       - 'sys/crypto/aes/**'
       - 'sys/net80211/ieee80211_rxba.c'
@@ -112,6 +114,8 @@ name: Native rtw88 source contracts
       - 'ember/tools/aicwf-rxba-*'
       - 'sys/dev/ic/aicwf_command.h'
       - 'sys/dev/sdmmc/if_aicwf.c'
+      - 'sys/dev/ic/aicwfvar.h'
+      - 'sys/dev/ic/aicwf.c'
       - 'ember/tools/ccmp*'
       - 'sys/crypto/aes/**'
       - 'sys/net80211/ieee80211_rxba.c'
@@ -160,6 +164,8 @@ jobs:
             /ember/tools/aicwf-rxba-*
             /sys/dev/ic/aicwf_command.h
             /sys/dev/sdmmc/if_aicwf.c
+            /sys/dev/ic/aicwfvar.h
+            /sys/dev/ic/aicwf.c
             /ember/tools/ccmp*
             /sys/crypto/aes/
             /sys/net80211/ieee80211_rxba.c

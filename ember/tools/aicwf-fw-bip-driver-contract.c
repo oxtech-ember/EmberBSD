@@ -23,6 +23,7 @@
 #endif
 #define MIN(a,b) ((a) < (b) ? (a) : (b))
 #define ETHER_ADDR_LEN 6
+#define ETHER_IS_MULTICAST(p) (((const uint8_t *)(p))[0] & 1)
 #define IEEE80211_SAE_CAP_EXTERNAL 1
 #define IEEE80211_SAE_CAP_PMF 2
 #define IEEE80211_SAE_CAP_SA_QUERY 4
@@ -84,7 +85,11 @@ SHA256_Final(uint8_t out[32], SHA256_CTX *p)
 #include "if_aicwf_fw_bip.h"
 #include "aicwf_command.h"
 #include "driver-values.h"
+struct aicwf_softc;
+struct aicwf_bus_ops { int (*verify)(struct aicwf_softc *); };
 struct aicwf_softc {
+	const struct aicwf_bus_ops *sc_ops;
+	bool sc_dc;
 	void *sc_dev;
 	bool sc_fw_bip_pending, sc_fw_bip_verified, sc_fw_bip_ready;
 	bool sc_fw_bip_wstatus_valid, sc_fw_bip_bootstatus_valid;
@@ -247,6 +252,9 @@ reply(struct aicwf_softc *sc, uint16_t id, const void *p, size_t len,
 		starts++;
 		corrupt_word(start_corrupt);
 		check_le32enc(cfm, 0xabcdef01); /* Low byte can be hardware information. */
+	} else if (id == AICWF_MM_GET_MAC_ADDR_REQ) {
+		CHECK(cfm_len == 6);
+		((uint8_t *)cfm)[0] = 2;
 	} else if (id == AICWF_MM_VERSION_REQ) {
 		CHECK(cfm_len == 28 && starts == 1);
 		check_le32enc(cfm, mac_version);
@@ -332,6 +340,7 @@ aicwf_chan_list(struct aicwf_softc *s, uint8_t *a,
 	return 0;
 }
 #include "driver-body.h"
+static const struct aicwf_bus_ops bus_ops = { aicwf_fw_bip_runtime_verify };
 static void
 reset(void)
 {
@@ -355,7 +364,7 @@ static void
 refusal(uint16_t short_reply, uint32_t bad_word, uint32_t echo,
     uint32_t write_echo, uint32_t corrupt, uint16_t transport)
 {
-	struct aicwf_softc sc = {0};
+	struct aicwf_softc sc = { .sc_ops = &bus_ops };
 
 	reset();
 	short_id = short_reply;
@@ -370,7 +379,7 @@ refusal(uint16_t short_reply, uint32_t bad_word, uint32_t echo,
 static void
 post_refusal(uint32_t address, bool at_start, unsigned fault)
 {
-	struct aicwf_softc sc = {0};
+	struct aicwf_softc sc = { .sc_ops = &bus_ops };
 
 	reset();
 	if (at_start)
@@ -405,6 +414,7 @@ main(int argc, char **argv)
 		post_refusal(0, true, n);
 	reset();
 	memset(&sc, 0, sizeof(sc));
+		sc.sc_ops = &bus_ops;
 	CHECK(aicwf_wlan_load(&sc, false) == 0);
 	CHECK(starts == 1 && code_reads == 181 && !sc.sc_fw_bip_ready);
 	CHECK(aicwf_fw_init(&sc) == 0 && sc.sc_fw_bip_ready);
@@ -430,6 +440,7 @@ main(int argc, char **argv)
 	for (n = 0; n < 9; n++) {
 		reset();
 		memset(&sc, 0, sizeof(sc));
+		sc.sc_ops = &bus_ops;
 		CHECK(aicwf_wlan_load(&sc, false) == 0);
 		if (n == 0)
 			features = 0;
@@ -455,6 +466,7 @@ main(int argc, char **argv)
 	for (n = 0; n < 2; n++) {
 		reset();
 		memset(&sc, 0, sizeof(sc));
+		sc.sc_ops = &bus_ops;
 		unknown_image = n == 1;
 		CHECK(aicwf_wlan_load(&sc, n == 0) == 0);
 		CHECK(!sc.sc_fw_bip_pending && !sc.sc_fw_bip_verified);

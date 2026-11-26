@@ -5,6 +5,9 @@
 #endif
 #include <assert.h>
 #include <stdbool.h>
+#ifndef atomic_load_relaxed
+#define atomic_load_relaxed(p) (*(p))
+#endif
 #include <stdint.h>
 #include <stddef.h>
 #include <stdio.h>
@@ -26,6 +29,7 @@ enum ieee80211_state {
 };
 #define IEEE80211_AUTH_ALG_OPEN 0
 #define ETHERTYPE_PAE 0x888e
+#define IEEE80211_IS_CHAN_2GHZ(c) ((c)->ic_freq < 3000)
 #define IEEE80211_IS_CHAN_5GHZ(c) ((c)->ic_freq >= 4000)
 #define AICWF_MM_KEY_DEL_REQ 0x16
 #define AICWF_MM_KEY_DEL_CFM 0x17
@@ -48,7 +52,7 @@ enum ieee80211_state {
 #define AICWF_TXDESC_LEN 28
 #define AICWF_TYPE_DATA 1
 #define AICWF_MSG_MAX_PARAM 1032
-#define AICWF_RX_MAX 2048
+#define AICWF_TX_MAX 2048
 #define AICWF_CMD_TIMEOUT_MS 2000
 #define AICWF_SCAN_INTERVAL_MS 3000
 #define AICWF_SCANU_START_REQ 0x1000
@@ -89,7 +93,7 @@ static void device_printf(void *dev, const char *fmt, ...)
 #include "actions.h"
 #include "net80211/ieee80211_sta_action.h"
 #include "aicwf-defs.h"
-#include "if_aicwf_sae.h"
+#include "aicwf_sae.h"
 
 struct ifnet { void *if_softc; int if_flags, ioctl_locked; };
 struct ieee80211_chan { uint16_t ic_freq; };
@@ -112,6 +116,7 @@ struct ieee80211_sta_scan_state {
 	uint8_t bssid[6];
 };
 struct ieee80211com {
+	unsigned ic_txpowlimit;
 	int ic_state, ic_opmode, ic_flags;
 	unsigned ic_des_esslen; uint8_t ic_des_essid[32];
 	uint8_t *ic_opt_ie; size_t ic_opt_ie_len;
@@ -130,7 +135,13 @@ struct work { unsigned unused; };
 enum aicwf_task_cmd { AICWF_TASK_STA_MGMT, AICWF_TASK_STA_CANCEL_SCAN, AICWF_TASK_NEWSTATE, AICWF_TASK_RECOVER_SCAN };
 struct aicwf_task { struct work t_work; enum aicwf_task_cmd t_cmd;
     uint64_t t_epoch, t_join_serial, t_configure_serial; enum ieee80211_state t_state; int t_arg; struct ieee80211req_sta_mgmt t_sta; };
+#define aicwf_sdio_softc aicwf_softc
+struct aicwf_softc;
+struct aicwf_bus_ops { int (*write)(struct aicwf_softc *, size_t, unsigned, bool *); };
 struct aicwf_softc {
+	struct aicwf_softc *sc_bus;
+	const struct aicwf_bus_ops *sc_ops;
+	bool sc_5ghz, sc_dc, sc_dying;
 	struct ieee80211com sc_ic;
 	struct ifnet sc_if;
 	int sc_lock, sc_epoch_lock, sc_bus_lock;
@@ -297,8 +308,8 @@ static void be16enc(void *v, uint16_t x)
 #endif
 #include "ieee80211_rsn.h"
 #include "ieee80211_sta.h"
-#include "if_aicwf_vht.h"
-#include "if_aicwf_sta.h"
+#include "aicwf_vht.h"
+#include "aicwf_sta.h"
 #include "aicwf_command.h"
 static int splnet(void) { return 0; }
 static void splx(int s) { (void)s; }
@@ -338,9 +349,6 @@ static void workqueue_enqueue(void *q, struct work *w, void *arg)
 { (void)q;(void)arg;assert(tasks_count<__arraycount(tasks));tasks[tasks_count++]=(void *)w; }
 static uint8_t aicwf_crc8(const void *p, size_t n)
 { (void)p;(void)n;return 0; }
-static unsigned aicwf_chan_list(struct aicwf_softc *s, uint8_t *two,
-    uint8_t *five, unsigned *n5g)
-{ (void)s; (void)two; le16enc(five, 5180); *n5g = 1; return 0; }
 static int aicwf_tx_wait(struct aicwf_softc *s, size_t n, unsigned reserve)
 {
 	assert(s == &sc && s->sc_lock && n == 512);
@@ -416,7 +424,10 @@ reset(void)
 {
 	for (unsigned i=0;i<tasks_count;i++) free(tasks[i]);
 	tasks_count=0;
+	static const struct aicwf_bus_ops ops = { .write = aicwf_sdio_write };
 	memset(&sc, 0, sizeof(sc));
+	sc.sc_bus = &sc;
+	sc.sc_ops = &ops;
 	static uint8_t rsn[]={48,20,1,0,0,15,172,4,1,0,0,15,172,4,1,0,0,15,172,2,0,0};
 	rsn[19]=2;rsn[20]=0;sc.sc_ic.ic_opt_ie=rsn;sc.sc_ic.ic_opt_ie_len=sizeof(rsn);
 	sc.sc_ic.ic_flags=IEEE80211_F_WPA2;sc.sc_ic.ic_opmode=IEEE80211_M_STA;
@@ -1128,6 +1139,52 @@ join_disconnect(void)
 }
 
 static void
+dc_channel_checks(void)
+{
+	uint8_t two[13 * AICWF_CHAN_LEN], five[25 * AICWF_CHAN_LEN];
+	unsigned n5g;
+
+	reset();
+	sc.sc_dc = true;
+	sc.sc_5ghz = true;
+	sc.sc_if_attached = false;
+	CHECK(aicwf_chan_list(&sc, two, five, &n5g) == 11 && n5g == 0);
+	CHECK(le16dec(two) == 2412 && le16dec(two + 60) == 2462 && two[4] == 15);
+	sc.sc_if_attached = true;
+	sc.sc_ic.ic_txpowlimit = 23;
+	sc.sc_ic.ic_channels[6].ic_freq = 2437;
+	setbit(sc.sc_ic.ic_chan_active, 6);
+	sc.sc_ic.ic_channels[12].ic_freq = 2467;
+	setbit(sc.sc_ic.ic_chan_active, 12);
+	CHECK(aicwf_chan_list(&sc, two, five, &n5g) == 1 && n5g == 0);
+	CHECK(le16dec(two) == 2437 && two[4] == 11);
+	struct ieee80211req_sta_mgmt req = { 0 };
+	uint8_t wire[AICWF_STA_SCAN_LEN];
+	CHECK(aicwf_sta_scan_request(&sc, &req, wire) == 0);
+	CHECK(wire[367] == 1 && le16dec(wire) == 2437 && wire[4] == 11);
+	sc.sc_ic.ic_txpowlimit = 80;
+	CHECK(aicwf_tx_power(&sc) == 15);
+
+	IFNET_LOCK(&sc.sc_if);
+	ni.ni_chan = &sc.sc_ic.ic_channels[36];
+	aicwf_connect(&sc);
+	CHECK(writes == 0);
+	ni.ni_chan = &sc.sc_ic.ic_channels[12];
+	aicwf_connect(&sc);
+	CHECK(writes == 0);
+	ni.ni_chan = &sc.sc_ic.ic_channels[6];
+	memset(sc.sc_ic.ic_chan_active, 0, sizeof(sc.sc_ic.ic_chan_active));
+	aicwf_connect(&sc);
+	CHECK(writes == 0);
+	setbit(sc.sc_ic.ic_chan_active, 6);
+	sc.sc_ic.ic_txpowlimit = 23;
+	aicwf_connect(&sc);
+	CHECK(writes == 1 && le16dec(written + 8) == AICWF_SM_CONNECT_REQ);
+	CHECK(le16dec(written + 16 + 40) == 2437 && written[16 + 44] == 11);
+	IFNET_UNLOCK(&sc.sc_if);
+}
+
+static void
 reassoc_checks(void)
 {
 	uint8_t ind[6] = {0};
@@ -1339,7 +1396,10 @@ main(int argc, char **argv)
 	if (!strcmp(group, "all") || !strcmp(group, "scan")) scan_checks();
 	if (!strcmp(group, "all") || !strcmp(group, "retire")) retirement_checks();
 	if (!strcmp(group, "all") || !strcmp(group, "assoc")) assoc_checks();
-	if (!strcmp(group, "all") || !strcmp(group, "reassoc")) reassoc_checks();
+	if (!strcmp(group, "all") || !strcmp(group, "reassoc")) {
+		dc_channel_checks();
+		reassoc_checks();
+	}
 	if (!strcmp(group, "all") || !strcmp(group, "recovery")) recovery_checks();
 	reset();
 	CHECK(checks != 0);

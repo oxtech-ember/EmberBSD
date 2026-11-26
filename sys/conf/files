@@ -1547,6 +1547,10 @@ file	dev/ic/nvme.c			nvme
 attach	ld at nvme with ld_nvme
 file	dev/ic/ld_nvme.c		ld_nvme
 
+# AICsemi FullMAC 802.11 driver
+device	aicwf: arp, ifnet, wlan, firmload
+file	dev/ic/aicwf.c			aicwf
+
 # Broadcom FullMAC 802.11 driver
 device	bwfm: arp, ifnet, wlan, firmload
 file	dev/ic/bwfm.c			bwfm

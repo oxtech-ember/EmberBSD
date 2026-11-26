@@ -6,20 +6,23 @@ work=$(mktemp -d "${TMPDIR:-/tmp}/aicwf-command.XXXXXX")
 trap 'rm -rf "$work"' EXIT HUP INT TERM
 awk '/^aicwf_cmd_reply\(/ {copy=1; print "static int"}
 copy {print} copy && /^}/ {exit}' \
-    "$src/sys/dev/sdmmc/if_aicwf.c" > "$work/command.h"
+    "$src/sys/dev/ic/aicwf.c" > "$work/command.h"
 awk '/^aicwf_crc8\(/ {copy=1; print "static uint8_t"}
 copy {print} copy && /^}/ {exit}' \
     "$src/sys/dev/sdmmc/if_aicwf.c" > "$work/crc.h"
 cat > "$work/check.c" <<'C'
 #include <assert.h>
 #include <stdbool.h>
+#ifndef atomic_load_relaxed
+#define atomic_load_relaxed(p) (*(p))
+#endif
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 #include <errno.h>
 #define KASSERT assert
 #define AICWF_MSG_MAX_PARAM 1032
-#define AICWF_RX_MAX 2048
+#define AICWF_TX_MAX 2048
 #define AICWF_CMD_TIMEOUT_MS 2000
 #define AICWF_SCANU_START_REQ 0x1000
 #define AICWF_SCANU_CANCEL_REQ 0x100a
@@ -28,7 +31,7 @@ cat > "$work/check.c" <<'C'
 struct aicwf_softc {
     uint8_t sc_txbuf[2048], sc_cfm[1032];
     int sc_lock, sc_cv; uint64_t sc_sae_epoch;
-    bool sc_cmd_busy, sc_cfm_done;
+    bool sc_cmd_busy, sc_cfm_done, sc_dying;
     bool sc_sta_scan_pending, sc_sta_scan_started, sc_sta_scan_draining;
     bool sc_scanning, sc_scan_published;
     uint16_t sc_cfm_len, sc_cfm_id;
@@ -58,6 +61,7 @@ static int aicwf_write_attempted(struct aicwf_softc *sc, size_t len, unsigned re
         0x10, 0x00, 0x11, 0xd5, 0, 0, 0, 0,
         0x24, 0, 0, 0, 100, 0, 4, 0,
     };
+    sc->sc_txbuf[3] = aicwf_crc8(sc->sc_txbuf, 3);
     assert(memcmp(sc->sc_txbuf, header, sizeof(header)) == 0);
     assert(mutex_owned(&sc->sc_lock));
     if (attempted != NULL) *attempted = true;

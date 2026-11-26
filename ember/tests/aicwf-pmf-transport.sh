@@ -50,16 +50,15 @@ static void *kmem_zalloc(size_t n,int flags) {assert(flags==KM_NOSLEEP);return f
 #ifndef __NetBSD__
 static void le16enc(void *v,uint16_t x) {uint8_t *p=v;p[0]=x;p[1]=x>>8;}
 #endif
-static unsigned aicwf_crc8(const uint8_t *p,size_t n) {(void)p;(void)n;return 0;}
 static int aicwf_write(struct aicwf_softc *sc,size_t n,unsigned reserve)
 {assert(sc->sc_lock && n>=32 && reserve==2);writes++;return 0;}
 static void rt_ieee80211msg(void *ifp,unsigned type,void *p,size_t n)
 {(void)ifp;assert(type==1 && n<=sizeof(event));memcpy(&event,p,n);deliveries++;}
-#include "if_aicwf_sae.h"
+#include "aicwf_sae.h"
 C
 for pair in aicwf_sae_tx:int aicwf_pmf_rx:void; do
  name=${pair%:*}; type=${pair#*:}
- awk -v name="$name" -v type="$type" '$0~"^"name"\\("{copy=1;print "static "type} copy{print} copy&&/^}/{exit}' "$src/sys/dev/sdmmc/if_aicwf.c" >> "$work/check.c"
+ awk -v name="$name" -v type="$type" '$0~"^"name"\\("{copy=1;print "static "type} copy{print} copy&&/^}/{exit}' "$src/sys/dev/ic/aicwf.c" >> "$work/check.c"
 done
 cat >> "$work/check.c" <<'C'
 int main(void)
@@ -90,5 +89,5 @@ int main(void)
     return 0;
 }
 C
-${CC:-cc} -std=c99 -Wall -Wextra -Werror -I"$src/sys/dev/sdmmc" "$work/check.c" -o "$work/check"
+${CC:-cc} -std=c99 -Wall -Wextra -Werror -I"$src/sys/dev/ic" "$work/check.c" -o "$work/check"
 "$work/check"

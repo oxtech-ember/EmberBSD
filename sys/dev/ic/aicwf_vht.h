@@ -4,8 +4,8 @@
  * Radxa SDIO driver d13d07963cd15d731e2895e8288a04cca6152ac9,
  * lmac_mac.h, lmac_msg.h, hal_desc.h and rwnx_mod_params.c.
  */
-#ifndef _DEV_SDMMC_IF_AICWF_VHT_H_
-#define _DEV_SDMMC_IF_AICWF_VHT_H_
+#ifndef _DEV_IC_AICWF_VHT_H_
+#define _DEV_IC_AICWF_VHT_H_
 
 #include <net80211/ieee80211_vht_ies.h>
 
@@ -145,4 +145,4 @@ aicwf_assoc_parse(const uint8_t *ind, size_t len,
 	return true;
 }
 
-#endif /* _DEV_SDMMC_IF_AICWF_VHT_H_ */
+#endif /* _DEV_IC_AICWF_VHT_H_ */

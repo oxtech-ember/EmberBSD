@@ -51,11 +51,11 @@ static void rt_ieee80211msg(void *ifp, int type, void *req, size_t len)
     memcpy(&delivered, req, len);
     deliveries++;
 }
-#include "if_aicwf_sae.h"
+#include "aicwf_sae.h"
 C
 awk '/^aicwf_sae_event\(/ {copy=1; print "static void"}
     copy {print} copy && /^}/ {exit}' \
-    "$src/sys/dev/sdmmc/if_aicwf.c" >> "$work/check.c"
+    "$src/sys/dev/ic/aicwf.c" >> "$work/check.c"
 cat >> "$work/check.c" <<'C'
 int main(void)
 {
@@ -89,6 +89,6 @@ int main(void)
     return 0;
 }
 C
-${CC:-cc} -std=c99 -Wall -Wextra -Werror -I"$src/sys/dev/sdmmc" \
+${CC:-cc} -std=c99 -Wall -Wextra -Werror -I"$src/sys/dev/ic" \
     "$work/check.c" -o "$work/check"
 "$work/check"

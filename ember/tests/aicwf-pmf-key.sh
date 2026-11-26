@@ -7,6 +7,9 @@ trap 'rm -rf "$work"' EXIT HUP INT TERM
 cat > "$work/check.c" <<'C'
 #include <assert.h>
 #include <stdbool.h>
+#ifndef atomic_load_relaxed
+#define atomic_load_relaxed(p) (*(p))
+#endif
 #include <stdint.h>
 #include <string.h>
 #include <stdio.h>
@@ -28,7 +31,7 @@ typedef unsigned u_int;
 #define device_printf(...) ((void)0)
 enum aicwf_task_cmd { AICWF_TASK_KEY_SET, AICWF_TASK_KEY_DELETE };
 struct aicwf_task { int t_work; enum aicwf_task_cmd t_cmd; bool t_group; unsigned t_keyix,t_cipher,t_keylen; uint64_t t_epoch,t_rx_serial; uint8_t t_key[32];};
-struct aicwf_softc {int sc_lock,sc_dev,sc_epoch_lock,sc_taskpool,sc_taskq; bool sc_connected,sc_ptk_valid,sc_rx_active; uint64_t sc_sae_epoch,sc_pmf_rx_pn,sc_rx_serial; uint8_t sc_ptk[16],sc_hwkey[5],sc_ap,sc_vif;};
+struct aicwf_softc { bool sc_dying;int sc_lock,sc_dev,sc_epoch_lock,sc_taskpool,sc_taskq; bool sc_connected,sc_ptk_valid,sc_rx_active; uint64_t sc_sae_epoch,sc_pmf_rx_pn,sc_rx_serial; uint8_t sc_ptk[16],sc_hwkey[5],sc_ap,sc_vif;};
 static bool node_spin_held;
 static void mutex_enter(int *p) {assert(!node_spin_held);assert(!*p);*p=1;}
 static void mutex_exit(int *p) {assert(*p);*p=0;}
@@ -68,7 +71,7 @@ static int aicwf_cmd_reply(struct aicwf_softc *sc, unsigned id,const void *p,siz
 C
 for fn in aicwf_key_set_cb aicwf_key_delete_cb aicwf_key_task; do
  type=void; [ "$fn" != aicwf_key_task ] || type=int
- awk -v fn="$fn" -v type="$type" '$0 ~ "^"fn"\\("{copy=1;print "static "type} copy{print} copy&&/^}/{exit}' "$src/sys/dev/sdmmc/if_aicwf.c" >> "$work/check.c"
+ awk -v fn="$fn" -v type="$type" '$0 ~ "^"fn"\\("{copy=1;print "static "type} copy{print} copy&&/^}/{exit}' "$src/sys/dev/ic/aicwf.c" >> "$work/check.c"
 done
 cat >> "$work/check.c" <<'C'
 int main(void)

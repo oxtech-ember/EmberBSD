@@ -5,7 +5,7 @@
 set -eu
 src=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
 wpa=${EMBER_WPA_SOURCE:?Set EMBER_WPA_SOURCE to the prepared Ports WPA source}
-driver=${AICWF_STA_SOURCE:-$src/sys/dev/sdmmc/if_aicwf.c}
+driver=${AICWF_STA_SOURCE:-$src/sys/dev/ic/aicwf.c}
 defs=${AICWF_STA_DEFS:-$wpa/src/common/ieee802_11_defs.h}
 work=$(mktemp -d "${TEST_OBJDIR:-${TMPDIR:-/tmp}}/aicwf-sta.XXXXXXXX")
 if [ "${AICWF_STA_KEEP:-0}" = 1 ]; then
@@ -30,7 +30,7 @@ awk '/^#define WLAN_ACTION_(WNM|RADIO_MEASUREMENT) / {print}
     > "$work/actions.h"
 awk '/^#define[[:space:]]+AICWF_(RXHDR_|RX_FLAG_UPLOAD|RX_DECR[[:space:]]|KEY_SLOT_PAIRWISE|HWKEY_NONE|SM_(CONNECT|DISCONNECT)|CONNECT_|AUTH_SAE|BAND_)/ {print}' \
     "$driver" > "$work/aicwf-defs.h"
-cp "$src/sys/dev/ic/aicwf_command.h" "$src/sys/dev/sdmmc/if_aicwf_sae.h" "$src/sys/dev/sdmmc/if_aicwf_vht.h" "$src/sys/dev/sdmmc/if_aicwf_sta.h" "$src/sys/net80211/ieee80211_rsn.h" "$src/sys/net80211/ieee80211_sta.h" "$work/"
+cp "$src/sys/dev/ic/aicwf_command.h" "$src/sys/dev/ic/aicwf_sae.h" "$src/sys/dev/ic/aicwf_vht.h" "$src/sys/dev/ic/aicwf_sta.h" "$src/sys/net80211/ieee80211_rsn.h" "$src/sys/net80211/ieee80211_sta.h" "$work/"
 mkdir -p "$work/net80211" "$work/sys"
 cp "$src/sys/net80211/ieee80211_sta_action.h" "$work/net80211/"
 cp "$work/abi.h" "$work/net80211/ieee80211_ioctl.h"
@@ -40,12 +40,15 @@ sed '/^#include/,$d' "$src/sys/net80211/ieee80211_ioctl.c" > "$work/driver.h"
 awk '/^ieee80211_sta_request_validate\(/ {copy=1; print "static int"}
     copy {print} copy && /^}/ {exit}' \
     "$src/sys/net80211/ieee80211_ioctl.c" >> "$work/driver.h"
+awk '/^aicwf_sdio_write\(/ { copy=1; print "static int" }
+    copy {print} copy && /^}/ {exit}' "$src/sys/dev/sdmmc/if_aicwf.c" >> "$work/driver.h"
 for spec in aicwf_sta_action_valid:bool aicwf_sta_supported:bool \
     aicwf_sta_security:bool aicwf_sta_ready:bool aicwf_write_attempted:int \
-    aicwf_write:int aicwf_cmd_reply:int aicwf_cmd:int aicwf_scan:void \
+    aicwf_write:int aicwf_cmd_reply:int aicwf_cmd:int \
     aicwf_sta_tx_finish_locked:bool aicwf_sta_scan_finish_locked:bool \
     aicwf_sta_scan_cancel_locked:void aicwf_sta_retire_locked:void aicwf_sae_advance_if:uint64_t \
-    aicwf_sae_advance:void aicwf_chan_set:void aicwf_connect:void \
+    aicwf_sae_advance:void aicwf_tx_power:int8_t aicwf_dc_channel:bool \
+    aicwf_chan_set:void aicwf_chan_list:u_int aicwf_scan:void aicwf_connect:void \
     aicwf_sae_clear_keys:void aicwf_disconnect:void aicwf_newstate_cb:void aicwf_state_cb:void \
     aicwf_sta_tx_cfm:void aicwf_sta_scan_request:int aicwf_sta_mgmt:int \
     aicwf_sta_mgmt_cb:void aicwf_sta_cancel_scan_cb:void aicwf_scan_done:void \

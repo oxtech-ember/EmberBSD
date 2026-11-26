@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
 /* Bounded decoding of the AIC8800D80 external-authentication wire format. */
-#ifndef _DEV_SDMMC_IF_AICWF_SAE_H_
-#define _DEV_SDMMC_IF_AICWF_SAE_H_
+#ifndef _DEV_IC_AICWF_SAE_H_
+#define _DEV_IC_AICWF_SAE_H_
 
 static inline bool
 aicwf_sae_peer_valid(const uint8_t *peer, uint32_t generation)
