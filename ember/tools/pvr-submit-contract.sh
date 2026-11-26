@@ -28,7 +28,7 @@ sed '/^#include /d' "$src/sys/external/bsd/drm2/drm/drm_sched_batch.c" \
 # shellcheck disable=SC2086
 "${CC:-cc}" -std=c11 -Wall -Wextra -Werror -Wno-unused-parameter \
     -Wno-unused-function -Wno-sign-compare -Wno-unused-but-set-variable \
-    ${CFLAGS:-} -pthread -I"$work" -I"$src/sys/arch" \
+    ${CFLAGS:-} -pthread -I"$work" -idirafter "$src/sys" \
     -I"$src/sys/external/bsd/drm2/powervr" \
     "$src/ember/tools/pvr-submit-contract.c" \
     "$src/sys/external/bsd/drm2/powervr/pvr_stream.c" -o "$work/contract"

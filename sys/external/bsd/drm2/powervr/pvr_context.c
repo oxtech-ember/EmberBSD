@@ -32,8 +32,8 @@
 #include <sys/systm.h>
 #include <sys/time.h>
 #include <sys/timearith.h>
-#include <arm/sunxi/powervr/pvr_rogue_fwif.h>
-#include <arm/sunxi/powervr/pvr_rogue_fwif_client.h>
+#include <dev/powervr/fwif/pvr_rogue_fwif.h>
+#include <dev/powervr/fwif/pvr_rogue_fwif_client.h>
 #include "pvr_backend.h"
 #include "pvr_context.h"
 #include "pvr_drm.h"

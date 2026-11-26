@@ -9,7 +9,7 @@
 #include <string.h>
 #include "sun60i_a733_gpu_fwinfo.h"
 #include "sun60i_a733_gpu_mmu.h"
-#include "powervr/pvr_rogue_fwif.h"
+#include "dev/powervr/fwif/pvr_rogue_fwif.h"
 
 #ifndef __CTASSERT
 #define __CTASSERT(e) _Static_assert(e, #e)

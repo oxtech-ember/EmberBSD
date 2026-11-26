@@ -8,7 +8,7 @@ No accelerated display or Plasma session is established by these checks.
 
 ## Interface
 
-Include `arm/sunxi/powervr/pvr_rogue_fwif.h` from kernel code.
+Include `dev/powervr/fwif/pvr_rogue_fwif.h` from kernel code.
 No Linux compatibility layer is required.
 The header selects the exact upstream structure and command layouts.
 Every inclusion evaluates 476 upstream offset, size, and array assertions.

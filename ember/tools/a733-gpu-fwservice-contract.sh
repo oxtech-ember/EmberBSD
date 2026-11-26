@@ -26,7 +26,7 @@ sed '/^static bool/,$d; /^#include /d' "$src/sys/dev/powervr/pvr_fwheap.c" |
 # Simulate raw GE allocation; the checked owner has its own fwmem contract.
 sed '/^void$/,$d; /^#include /d; /memset(dma->cpu, 0, size);/d'     "$src/sys/dev/powervr/pvr_fwheap.c" |     sed s/pvr_heap_dma_alloc_coherent/fake_ge_raw_alloc/g >> "$work/dma-driver.h"
 ${CC:-cc} -std=c11 -Wall -Wextra -Werror ${FWSERVICE_TEST_CFLAGS:-} \
-    -I"$work" -I"$src/sys/arch/arm/sunxi" \
+    -I"$work" -I"$src/sys/arch/arm/sunxi" -idirafter "$src/sys" \
     "$tools/a733-gpu-fwservice-contract.c" \
     "$src/sys/arch/arm/sunxi/sun60i_a733_gpu_mips.c" "$src/sys/dev/powervr/pvr_mips.c" -o "$work/contract"
 "$work/contract"

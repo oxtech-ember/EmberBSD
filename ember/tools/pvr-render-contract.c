@@ -22,7 +22,7 @@ typedef uint64_t __u64;
 #include "pvr_backend.h"
 #include "pvr_fwinfo.h"
 #include "rbtree.h"
-#include "powervr/pvr_rogue_fwif.h"
+#include "dev/powervr/fwif/pvr_rogue_fwif.h"
 #ifndef PVR_REGISTRY_TEST
 #define PVR_REGISTRY_TEST 1
 #endif

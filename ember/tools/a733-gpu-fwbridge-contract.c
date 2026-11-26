@@ -9,7 +9,7 @@
 #include <string.h>
 #include "sun60i_a733_gpu_fwimage.h"
 #include "sun60i_a733_gpu_fwinit.h"
-#include "powervr/pvr_rogue_fwif.h"
+#include "dev/powervr/fwif/pvr_rogue_fwif.h"
 
 typedef unsigned int u_int;
 typedef uint64_t bus_addr_t;

@@ -40,8 +40,8 @@
 #include <drm/drm_device.h>
 #include <drm/drm_file.h>
 #include <drm/drm_syncobj.h>
-#include <arm/sunxi/powervr/pvr_rogue_fwif.h>
-#include <arm/sunxi/powervr/pvr_rogue_fwif_client.h>
+#include <dev/powervr/fwif/pvr_rogue_fwif.h>
+#include <dev/powervr/fwif/pvr_rogue_fwif_client.h>
 #include "pvr_backend.h"
 #include "pvr_context.h"
 #include "pvr_drm.h"

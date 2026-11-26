@@ -21,7 +21,7 @@
 #ifndef EAUTH
 #define EAUTH 80
 #endif
-#include "powervr/pvr_rogue_fwif.h"
+#include "dev/powervr/fwif/pvr_rogue_fwif.h"
 #include "sun60i_a733_gpu_fwinfo.h"
 
 typedef unsigned int u_int;

@@ -8,7 +8,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <arm/sunxi/powervr/pvr_rogue_fwif.h>
+#include <dev/powervr/fwif/pvr_rogue_fwif.h>
 #include "pvr_backend.h"
 #include "pvr_hwrt.h"
 #define BUS_DMASYNC_PREREAD 1

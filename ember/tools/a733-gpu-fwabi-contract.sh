@@ -11,14 +11,14 @@ fi
 work=$(mktemp -d "${TMPDIR:-/tmp}/a733-fwabi.XXXXXXXX")
 trap 'rm -rf "$work"' EXIT HUP INT TERM
 ${CC:-cc} -std=c11 -Wall -Wextra -Werror ${FWABI_TEST_CFLAGS:-} \
-    -I"$src/sys/arch/arm/sunxi" \
+    -idirafter "$src/sys" \
     "$tools/a733-gpu-fwabi-contract.c" -o "$work/contract"
 "$work/contract"
 # ABI-changing compiler flags must fail the production assertions.
 for flag in -fshort-enums -fpack-struct=1; do
     if ${CC:-cc} -std=c11 -Wall -Wextra -Werror \
         -DPVR_FWABI_COMPILE_ONLY "$flag" \
-        -I"$src/sys/arch/arm/sunxi" -fsyntax-only \
+        -idirafter "$src/sys" -fsyntax-only \
         "$tools/a733-gpu-fwabi-contract.c" >"$work/reject.log" 2>&1; then
         echo "ABI assertions did not reject $flag" >&2
         exit 1
@@ -31,12 +31,12 @@ for flag in -fshort-enums -fpack-struct=1; do
     echo "rejected incompatible ABI: $flag"
 done
 cat >"$work/not-array.c" <<'C'
-#include "powervr/pvr_check.h"
+#include "dev/powervr/fwif/pvr_check.h"
 struct pvr_fwabi_not_array { uint32_t *member; };
 FLEX_ARRAY_CHECK(struct pvr_fwabi_not_array, member);
 C
 if ${CC:-cc} -std=c11 -Wall -Wextra -Werror \
-    -I"$src/sys/arch/arm/sunxi" -fsyntax-only "$work/not-array.c" \
+    -idirafter "$src/sys" -fsyntax-only "$work/not-array.c" \
     >"$work/reject.log" 2>&1; then
     echo 'ABI array check accepted a pointer member' >&2
     exit 1

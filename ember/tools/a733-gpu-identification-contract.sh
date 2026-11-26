@@ -14,7 +14,7 @@ cp "$src/sys/arch/arm/sunxi/sun60i_a733_ccu.h" \
 # Stage 18 needs the serializer ABI and the packed compute-image format;
 # stages 19-21 add the firmware-heap submission provider API.
 for header in fwcompute fwcompute_cmd; do
-    printf '#include "powervr/pvr_rogue_fwif_client.h"\n' > "$work/sun60i_a733_gpu_$header.h"
+    printf '#include "dev/powervr/fwif/pvr_rogue_fwif_client.h"\n' > "$work/sun60i_a733_gpu_$header.h"
     sed '/^#include /d' "$src/sys/dev/powervr/pvr_$header.h" >> "$work/sun60i_a733_gpu_$header.h"
     sed '/^#include /d' "$src/sys/arch/arm/sunxi/sun60i_a733_gpu_$header.h" >> "$work/sun60i_a733_gpu_$header.h"
 done
@@ -27,8 +27,8 @@ for name in drm.h query.h backend.h; do
     sed '/^#include /d' "$src/sys/external/bsd/drm2/powervr/pvr_$name" \
         > "$work/pvr-$name-body.h"
 done
-mkdir "$work/powervr"
-cp "$src/sys/dev/powervr/fwif/"*.h "$work/powervr/"
+mkdir -p "$work/dev/powervr/fwif"
+cp "$src/sys/dev/powervr/fwif/"*.h "$work/dev/powervr/fwif/"
 # Keep the production memory interface. Only native bus-DMA types are stubbed.
 for header in fwmem fwstart fwboot fwprobe fwservice fwbridge; do
     case "$header" in

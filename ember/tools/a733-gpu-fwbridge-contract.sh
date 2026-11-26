@@ -32,6 +32,6 @@ awk '/^sun60i_gpu_run_stage\(/ { active=1; print "static void" }
 sed -n '/^#define A733_GPU_BASE/,/^struct sun60i_gpu_softc/p' \
     "$src/sys/arch/arm/sunxi/sun60i_a733_gpu.c" | sed '$d' > "$work/platform-defines.h"
 ${CC:-cc} -std=c11 -Wall -Wextra -Werror ${FWBRIDGE_TEST_CFLAGS:-} \
-    -I"$work" -I"$src/sys/arch/arm/sunxi" \
+    -I"$work" -I"$src/sys/arch/arm/sunxi" -idirafter "$src/sys" \
     "$tools/a733-gpu-fwbridge-contract.c" -o "$work/contract"
 "$work/contract"

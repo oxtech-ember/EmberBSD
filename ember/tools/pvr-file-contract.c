@@ -39,7 +39,7 @@ typedef void *bus_dma_tag_t;
 #include "pvr_backend.h"
 #include "pvr_file.h"
 #include "pvr_exec.h"
-#include <arm/sunxi/powervr/pvr_rogue_fwif.h>
+#include <dev/powervr/fwif/pvr_rogue_fwif.h>
 #define BUS_DMASYNC_PREREAD 1
 #define BUS_DMASYNC_PREWRITE 2
 #define BUS_DMASYNC_POSTREAD 4
