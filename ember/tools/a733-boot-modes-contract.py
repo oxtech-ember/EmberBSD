@@ -160,7 +160,7 @@ REFERENCE_ARGS = {
     "interrupt-affinity": 0,
     "gpio": "#gpio-cells", "reset-gpios": "#gpio-cells",
     "gpu-supply": 0, "vbus-supply": 0, "vqmmc-supply": 0,
-    "npu-supply": 0, "operating-points-v2": 0,
+    "npu-supply": 0, "operating-points-v2": 0, "interrupt-affinity": 0,
 }
 
 
@@ -202,6 +202,9 @@ def check_zero4_graphics(npu_observe, graphics):
         (engine, "emberbsd,scanout-field-probe"): b"",
         (display, "emberbsd,shadow-scanout"): b"",
         (display, "emberbsd,kms-worker-cpu"): (7).to_bytes(4, "big"),
+        ("/soc/ethernet@4500000", "emberbsd,eqos-rx-riwt"): (64).to_bytes(4, "big"),
+        ("/soc/ethernet@4500000", "emberbsd,eqos-tx-ioc-interval"): (8).to_bytes(4, "big"),
+        ("/soc/ethernet@4500000", "emberbsd,eqos-ipv4-checksums"): b"",
     }
     for key, value in graphics_profile.items():
         require(graphics.get(key) == value, f"Zero 4 graphics profile {key}")

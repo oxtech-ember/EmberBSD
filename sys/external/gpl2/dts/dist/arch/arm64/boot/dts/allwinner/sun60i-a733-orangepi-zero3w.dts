@@ -84,6 +84,7 @@
 
 /* Nothing is wired to the MAC: its pins are left to the pin header. */
 &gmac0 {
+	/delete-property/ interrupt-affinity;
 	status = "disabled";
 };
 
