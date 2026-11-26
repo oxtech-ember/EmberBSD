@@ -60,7 +60,23 @@ struct dma_resv {
 	struct dma_fence *readers[128];
 	unsigned nreaders;
 };
+struct drm_gem_object;
+struct drm_gem_object_funcs {
+	int (*begin_cpu_read)(struct drm_gem_object *, size_t, const void **);
+	void (*end_cpu_read)(struct drm_gem_object *);
+};
+struct dma_buf;
+struct dma_buf_ops { void (*release)(struct dma_buf *); };
+struct dma_buf {
+	const struct dma_buf_ops *ops;
+	struct dma_resv *resv;
+	void *priv;
+};
+struct dma_buf_attachment { struct dma_buf *dmabuf; };
+static void drm_gem_dmabuf_release(struct dma_buf *buf) { (void)buf; }
 struct drm_gem_object {
+	const struct drm_gem_object_funcs *funcs;
+	struct dma_buf_attachment *import_attach;
 	size_t size;
 	struct dma_resv *resv;
 	unsigned refs;
@@ -70,6 +86,7 @@ struct drm_gem_cma_object {
 	bus_dma_tag_t dmat;
 	bus_dmamap_t dmamap;
 	size_t dmasize;
+	void *sgt, *vaddr;
 };
 #include "sun60i_a733_output.h"
 
@@ -247,6 +264,14 @@ dma_fence_wait_timeout(struct dma_fence *f, bool intr, long timeout)
 	}
 	return 99;
 }
+int
+sun60i_a733_de352_submit_shadow(struct sun60i_a733_de352_client *client,
+    const struct sun60i_a733_de352_frame *frame,
+    struct sun60i_a733_de352_completion *done)
+{
+	return sun60i_a733_de352_submit(client, frame, done);
+}
+
 #include "sun60i_a733_drm_frame.c"
 int
 sun60i_a733_de352_submit(struct sun60i_a733_de352_client *client,
@@ -263,7 +288,7 @@ sun60i_a733_de352_submit(struct sun60i_a733_de352_client *client,
 	if (provider_mode == 1)
 		return EIO;
 	if (provider_mode == 5) {
-		*done = (struct sun60i_a733_de352_completion){7, 100};
+		*done = (struct sun60i_a733_de352_completion){7, 100, false};
 		return 0;
 	}
 	CHECK(frame->retain(frame->cookie) == 0);
@@ -274,7 +299,7 @@ sun60i_a733_de352_submit(struct sun60i_a733_de352_client *client,
 	if (provider_mode == 6) {
 		/* Model later proven retirement before this caller resumes. */
 		frame->release(frame->cookie);
-		*done = (struct sun60i_a733_de352_completion){7, 100};
+		*done = (struct sun60i_a733_de352_completion){7, 100, false};
 		return 0;
 	}
 	if (provider_mode == 3) {
@@ -285,7 +310,7 @@ sun60i_a733_de352_submit(struct sun60i_a733_de352_client *client,
 	if (active.cookie)
 		active.release(active.cookie);
 	active = *frame;
-	*done = (struct sun60i_a733_de352_completion){7, 100};
+	*done = (struct sun60i_a733_de352_completion){7, 100, false};
 	return 0;
 }
 static void
@@ -318,7 +343,8 @@ reset(void)
 	map = (struct dmamap){
 	    1, 640 * 480 * 4, {{0x100000, 640 * 480 * 4}, {0, 0}}};
 	object = (struct drm_gem_cma_object){
-	    {640 * 480 * 4, &resv, 1}, &tag, &map, 640 * 480 * 4};
+	    {.size = 640 * 480 * 4, .resv = &resv, .refs = 1},
+	    &tag, &map, 640 * 480 * 4, NULL, NULL};
 	state = (struct sun60i_a733_de352_state){
 	    .mode = {.hdisplay = 640, .vdisplay = 480},
 	    .dmat = &tag,
@@ -334,7 +360,7 @@ reset(void)
 static void
 expect_failure(int expected)
 {
-	struct sun60i_a733_de352_completion done = {123, 456}, before = done;
+	struct sun60i_a733_de352_completion done = {123, 456, false}, before = done;
 	int actual = sun60i_a733_drm_frame_submit(&client, &state, &object,
 						  &desc, &done);
 	if (actual != expected)
@@ -346,6 +372,73 @@ expect_failure(int expected)
 	clear_readers();
 	CHECK(allocations == frees);
 }
+static const size_t pixel_bytes = 640 * 480 * 4;
+static uint8_t importer_pixels[640 * 480 * 4];
+static uint8_t exporter_pixels[640 * 480 * 4];
+static uint8_t shadow_pixels[640 * 480 * 4];
+static unsigned begin_calls, end_calls;
+static int reader_error;
+static int
+begin_read(struct drm_gem_object *gem, size_t bytes, const void **out)
+{
+	CHECK(gem->resv == &resv && bytes == pixel_bytes);
+	CHECK(resv.nreaders != 0 && resv.readers[resv.nreaders - 1]->status == 0);
+	begin_calls++;
+	if (reader_error)
+		return reader_error;
+	*out = exporter_pixels;
+	return 0;
+}
+
+static void
+end_read(struct drm_gem_object *gem)
+{
+	CHECK(gem->resv == &resv && resv.readers[resv.nreaders - 1]->status == 0);
+	end_calls++;
+}
+
+static void
+import_copy_checks(void)
+{
+	const struct drm_gem_object_funcs funcs = {begin_read, end_read};
+	struct drm_gem_object exporter = {.funcs = &funcs, .size = pixel_bytes,
+	    .resv = &resv};
+	const struct dma_buf_ops ops = {.release = drm_gem_dmabuf_release};
+	struct dma_buf buf = {.ops = &ops, .resv = &resv, .priv = &exporter};
+	struct dma_buf_attachment attach = {.dmabuf = &buf};
+	struct dma_resv private_resv = {0};
+	struct drm_gem_cma_object dst;
+	struct dmamap dst_map;
+
+	reset();
+	dst = object;
+	dst_map = map;
+	dst_map.dm_segs[0].ds_addr = 0x400000;
+	dst.dmamap = &dst_map;
+	dst.base.resv = &private_resv;
+	dst.vaddr = shadow_pixels;
+	object.sgt = &attach;
+	object.base.import_attach = &attach;
+	object.vaddr = importer_pixels;
+	memset(importer_pixels, 0x13, pixel_bytes);
+	memset(exporter_pixels, 0x46, pixel_bytes);
+	CHECK(sun60i_a733_drm_frame_has_import_reader(&object));
+	CHECK(sun60i_a733_drm_frame_shadow_copy(&state, &object, &dst, &desc) == 0);
+	CHECK(begin_calls == 1 && end_calls == 1);
+	CHECK(memcmp(shadow_pixels, exporter_pixels, pixel_bytes) == 0);
+	CHECK(memcmp(shadow_pixels, importer_pixels, pixel_bytes) != 0);
+	clear_readers();
+	reader_error = EBUSY;
+	CHECK(sun60i_a733_drm_frame_shadow_copy(&state, &object, &dst, &desc) == EBUSY);
+	CHECK(begin_calls == 2 && end_calls == 1);
+	clear_readers();
+	buf.resv = &private_resv;
+	CHECK(!sun60i_a733_drm_frame_has_import_reader(&object));
+	CHECK(sun60i_a733_drm_frame_shadow_copy(&state, &object, &dst, &desc) ==
+	    EOPNOTSUPP);
+	CHECK(begin_calls == 2 && end_calls == 1 && resv.nreaders == 0);
+}
+
 int
 main(void)
 {
@@ -412,7 +505,7 @@ main(void)
 			state.max_dma_address = UINT64_MAX;
 			break;
 		}
-		struct sun60i_a733_de352_completion done = {123, 456},
+		struct sun60i_a733_de352_completion done = {123, 456, false},
 						    before = done;
 		CHECK(sun60i_a733_drm_frame_submit(&client, &state, &object,
 						   &desc, &done) != 0);
@@ -513,6 +606,8 @@ main(void)
 	retire_active();
 	clear_readers();
 	CHECK(object.base.refs == 1 && allocations == frees);
+	import_copy_checks();
+	CHECK(signals > 0);
 	printf("A733 DRM frame: %u checks PASS\n", checks);
 	return 0;
 }

@@ -142,8 +142,19 @@ A failure after installation removes the callback before `drm_dev_put`.
 
 The commit worker calls `drm_crtc_vblank_on` once and holds a vblank reference.
 The reference covers native submission and the page-flip event.
-After success the event carries `drm_crtc_vblank_count_and_time`.
-Native completion follows at least two vblanks after the frame request.
+For active private scanout, the event carries the DRM sequence and timestamp
+matched to the confirmed TV0 observation. If its history entry is missing,
+the worker can use a later validated observation. It releases commit
+admission before it delivers the event. Private buffer retirement can finish
+later. The same timestamp selection applies when a frame falls back to
+guarded submission on this configuration.
+
+The stock Zero 4 graphics device tree enables private scanout. The worker can
+copy a local, mapped dumb buffer owned by the submitting file, or a supported
+PowerVR DMA-BUF after its explicit producer fence completes. The source and
+alias checks run before each copy. Other sources use guarded submission.
+With private scanout disabled and a vblank reference, the event uses
+`drm_crtc_vblank_count_and_time`.
 Without the interrupt the provider returns `EOPNOTSUPP` at installation.
 The event then carries the polled observation count and time.
 

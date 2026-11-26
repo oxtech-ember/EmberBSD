@@ -1328,6 +1328,7 @@ include "external/bsd/common/conf/files.linux"
 
 # DRM/KMS - Newer direct rendering manager with kernel mode-switching
 include "external/bsd/drm2/drm/files.drmkms"
+include "dev/powervr/files.powervr"
 
 # The Linux 6.18 DRM core: only a definition (attribute drmkms618) until a
 # configuration selects it; no default kernel does.

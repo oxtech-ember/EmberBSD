@@ -65,7 +65,7 @@ struct sun60i_a733_hdmi_softc {
 	void *ih;
 	bool irq_hw, irq_armed;
 	uint64_t irq_sequence;
-	sun60i_a733_vblank_fn vblank_fn;
+	sun60i_a733_output_irq_fn vblank_fn;
 	void *vblank_arg;
 };
 
@@ -742,6 +742,8 @@ native_observe(void *arg, const void *owner, uint64_t *sequence)
 	return error == ENOENT ? error : native_fail(sc, error);
 }
 
+static bool native_irq_blank_line(void *, uint32_t *);
+
 /*
  * TCON_TV0 GINT0 has the vblank enable at bit 30 and the W0C vblank flag at
  * bit 14. An armed handler acknowledges the flag and counts one vblank. A
@@ -780,15 +782,21 @@ native_intr(void *arg)
 	sc->irq_sequence++;
 	cv_signal(&sc->intr_cv);
 	/* The callback runs under intr_lock, so a removal drains it. */
-	if (sc->vblank_fn != NULL)
-		sc->vblank_fn(sc->vblank_arg, sc->irq_sequence);
+	if (sc->vblank_fn != NULL) {
+		const struct sun60i_a733_irq_window window = {
+			.cookie = sc,
+			.blank_line = native_irq_blank_line,
+		};
+
+		sc->vblank_fn(sc->vblank_arg, sc->irq_sequence, &window);
+	}
 	mutex_spin_exit(&sc->intr_lock);
 	return 1;
 }
 
 static int
 native_set_vblank_handler(void *arg, const void *owner,
-    sun60i_a733_vblank_fn fn, void *cookie)
+    sun60i_a733_output_irq_fn fn, void *cookie)
 {
 	struct sun60i_a733_hdmi_softc *sc = arg;
 
@@ -933,6 +941,85 @@ native_sample_vblank_irq(void *arg, const void *owner, uint64_t *out)
 	return error;
 }
 
+/* The caller holds intr_lock and has checked the expected IRQ sequence. */
+static bool
+native_read_tv0_phase_locked(struct sun60i_a733_hdmi_softc *sc,
+    struct sun60i_a733_tv0_phase *phase, bool read_basic4)
+{
+	if (!sc->irq_hw || !sc->irq_armed)
+		return false;
+	phase->control = bus_space_read_4(sc->bst, sc->tv0, 0x90);
+	if (read_basic4)
+		phase->basic4 = bus_space_read_4(sc->bst, sc->tv0, 0xa4);
+	phase->debug = bus_space_read_4(sc->bst, sc->tv0, 0xfc);
+	phase->gint0 = bus_space_read_4(sc->bst, sc->tv0, A733_TV0_GINT0);
+	return true;
+}
+
+/*
+ * TV0 DEBUG[15:0] counts lines in the current interval. BSP qualifies an
+ * early vblank by comparing this line with TV0_CTL.START_DELAY. A pending
+ * uncounted vblank or sticky FIFO error makes the phase ambiguous.
+ */
+static bool
+native_irq_blank_line(void *arg, uint32_t *out)
+{
+	struct sun60i_a733_hdmi_softc *sc = arg;
+	struct sun60i_a733_tv0_phase phase;
+	uint32_t line, delay;
+
+	if (!native_read_tv0_phase_locked(sc, &phase, false))
+		return false;
+	delay = (phase.control >> 4) & 0xffff;
+	line = phase.debug & 0xffff;
+	if ((phase.control & UINT32_C(0x80100000)) != UINT32_C(0x80000000) ||
+	    (phase.debug & UINT32_C(0x60000000)) != 0 || line >= delay ||
+	    (phase.gint0 & (A733_TV0_VB_ENABLE | UINT32_C(0x00004000))) !=
+	    A733_TV0_VB_ENABLE)
+		return false;
+	*out = line;
+	return true;
+}
+
+static int
+native_sample_tv0_phase(void *arg, const void *owner, uint64_t sequence,
+    struct sun60i_a733_tv0_phase *out)
+{
+	struct sun60i_a733_hdmi_softc *sc = arg;
+	bool valid;
+
+	if (sc->fault != 0)
+		return sc->fault;
+	if (owner == NULL || owner != sc->owner)
+		return EBUSY;
+	if (sc->ih == NULL)
+		return EOPNOTSUPP;
+	mutex_spin_enter(&sc->intr_lock);
+	valid = sequence == sc->irq_sequence &&
+	    native_read_tv0_phase_locked(sc, out, true);
+	mutex_spin_exit(&sc->intr_lock);
+	return valid ? 0 : ENOENT;
+}
+
+static int
+native_sample_blank_line(void *arg, const void *owner, uint64_t sequence,
+    uint32_t *out)
+{
+	struct sun60i_a733_hdmi_softc *sc = arg;
+	bool valid;
+
+	if (sc->fault != 0)
+		return sc->fault;
+	if (owner == NULL || owner != sc->owner)
+		return EBUSY;
+	if (sc->ih == NULL)
+		return EOPNOTSUPP;
+	mutex_spin_enter(&sc->intr_lock);
+	valid = sequence == sc->irq_sequence && native_irq_blank_line(sc, out);
+	mutex_spin_exit(&sc->intr_lock);
+	return valid ? 0 : ENOENT;
+}
+
 /* The provider lock keeps the owner, clock lease and start state stable. */
 static int
 native_wait_vblank_irq(void *arg, const void *owner, uint64_t target,
@@ -977,7 +1064,8 @@ static const struct sun60i_a733_output_ops output_ops = {
 	native_cached_trace, native_cached_phy_trace, native_sample,
 	native_set_vblank_handler, native_detect, native_stop,
 	native_cached_observe_trace, native_cached_tv0_trace,
-	native_sample_vblank_irq, native_wait_vblank_irq
+	native_sample_vblank_irq, native_sample_blank_line, native_sample_tv0_phase,
+	native_wait_vblank_irq
 };
 
 static int

@@ -7,3 +7,21 @@
 &npu {
 	netbsd,init-on-demand;
 };
+
+/* Enable verified private scanout for the native Zero 4 HDMI output. */
+&de0 {
+	emberbsd,online-rcq-vblank;
+	emberbsd,scanout-field-probe;
+};
+
+&display {
+	emberbsd,shadow-scanout;
+	emberbsd,kms-worker-cpu = <7>;
+};
+
+/* Trial profile. The UDP transmit checksum canary remains explicit. */
+&gmac0 {
+	emberbsd,eqos-rx-riwt = <64>;
+	emberbsd,eqos-tx-ioc-interval = <8>;
+	emberbsd,eqos-ipv4-checksums;
+};

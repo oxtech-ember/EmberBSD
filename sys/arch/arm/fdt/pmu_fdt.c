@@ -26,6 +26,8 @@
  * SUCH DAMAGE.
  */
 
+#include "opt_multiprocessor.h"
+
 #include <sys/cdefs.h>
 __KERNEL_RCSID(0, "$NetBSD: pmu_fdt.c,v 1.12 2023/10/02 08:42:20 riastradh Exp $");
 
@@ -52,6 +54,7 @@ __KERNEL_RCSID(0, "$NetBSD: pmu_fdt.c,v 1.12 2023/10/02 08:42:20 riastradh Exp $
 #endif
 
 #include <arm/armreg.h>
+#include <arm/fdt/arm_fdtvar.h>
 
 static bool	pmu_fdt_uses_ppi;
 static int	pmu_fdt_count;
@@ -186,44 +189,25 @@ cleanup:
 static int
 pmu_fdt_intr_distribute(const int phandle, int index, void *ih)
 {
-	CPU_INFO_ITERATOR cii;
-	struct cpu_info *ci;
-	bus_addr_t mpidr;
-	int len, cpunode;
-	const u_int *aff;
+#ifdef MULTIPROCESSOR
 	kcpuset_t *set;
 	int error;
 
+	if (of_hasprop(phandle, "interrupt-affinity"))
+		return arm_fdt_intr_distribute(phandle, index, ih);
+
+	/* A PMU without an explicit binding keeps its indexed route. */
 	kcpuset_create(&set, true);
-
-	if (of_hasprop(phandle, "interrupt-affinity")) {
-		aff = fdtbus_get_prop(phandle, "interrupt-affinity", &len);
-		if (len < (index + 1) * 4)
-			return EINVAL;
-		cpunode = fdtbus_get_phandle_from_native(be32toh(aff[index]));
-		if (fdtbus_get_reg(cpunode, 0, &mpidr, NULL) != 0)
-			return ENXIO;
-		for (CPU_INFO_FOREACH(cii, ci)) {
-			const uint32_t ci_mpidr =
-			    __SHIFTIN(ci->ci_core_id, MPIDR_AFF0) |
-			    __SHIFTIN(ci->ci_package_id, MPIDR_AFF1);
-			if (ci_mpidr == mpidr) {
-				kcpuset_set(set, cpu_index(ci));
-				break;
-			}
-		}
-	} else {
-		kcpuset_set(set, index);
-	}
-
-	if (kcpuset_iszero(set)) {
-		kcpuset_destroy(set);
-		return ENOENT;
-	}
-
+	kcpuset_set(set, index);
+	mutex_enter(&cpu_lock);
 	error = interrupt_distribute(ih, set, NULL);
-
+	mutex_exit(&cpu_lock);
 	kcpuset_destroy(set);
-
 	return error;
+#else
+	(void)phandle;
+	(void)index;
+	(void)ih;
+	return EOPNOTSUPP;
+#endif
 }

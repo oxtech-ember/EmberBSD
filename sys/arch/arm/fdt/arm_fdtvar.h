@@ -62,4 +62,6 @@ void	arm_fdt_fiq_handler(void *);
 
 void	arm_fdt_module_init(void);
 
+int	arm_fdt_intr_distribute(int, unsigned, void *);
+
 #endif /* !_ARM_ARM_FDTVAR_H */

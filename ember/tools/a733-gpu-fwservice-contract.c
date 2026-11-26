@@ -11,7 +11,7 @@
 #include "sun60i_a733_gpu_fwimage.h"
 #include "sun60i_a733_gpu_fwinit.h"
 #include "sun60i_a733_gpu_mips.h"
-#include "powervr/pvr_rogue_fwif.h"
+#include "dev/powervr/fwif/pvr_rogue_fwif.h"
 
 #define roundup(x, y) ((((x) + (y) - 1) / (y)) * (y))
 #define KM_SLEEP 0

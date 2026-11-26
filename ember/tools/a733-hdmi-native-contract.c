@@ -252,8 +252,14 @@ static uint32_t bus_space_read_4(bus_space_tag_t t,bus_space_handle_t h,bus_size
 { (void)t;CHECK(h==3&&off==4&&ccu_tv0);irq_reads++;return tvregs[1]; }
 static void bus_space_write_4(bus_space_tag_t t,bus_space_handle_t h,bus_size_t off,uint32_t v)
 { (void)t;CHECK(h==3&&off==4&&ccu_tv0);irq_writes++;tvregs[1]=(v&UINT32_C(0x5f000000))|(tvregs[1]&v&UINT32_C(0x5f00)); }
-static void consumer(void *arg,uint64_t sequence)
-{ CHECK(arg==&cb_sequence&&cb_lock!=NULL&&cb_lock->held);cb_calls++;cb_sequence=sequence; }
+static void
+consumer(void *arg, uint64_t sequence, const struct sun60i_a733_irq_window *window)
+{
+	CHECK(arg == &cb_sequence && cb_lock != NULL && cb_lock->held);
+	CHECK(window != NULL && window->blank_line != NULL);
+	cb_calls++;
+	cb_sequence = sequence;
+}
 int sun60i_a733_output_register(int node,const struct sun60i_a733_output_ops *ops,void *arg)
 { CHECK(node==1&&ops&&arg);int e=step(26);if(!e)registered=true;return e; }
 #include "sun60i_a733_hdmi_fdt.c"

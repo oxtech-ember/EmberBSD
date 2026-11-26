@@ -157,9 +157,10 @@ REFERENCE_ARGS = {
     "clocks": "#clock-cells", "iommus": "#iommu-cells",
     "nsi": 1, "phy-handle": 0, "pinctrl-0": 0, "syscon": 0,
     "resets": "#reset-cells", "mmc-pwrseq": 0, "phys": "#phy-cells",
+    "interrupt-affinity": 0,
     "gpio": "#gpio-cells", "reset-gpios": "#gpio-cells",
     "gpu-supply": 0, "vbus-supply": 0, "vqmmc-supply": 0,
-    "npu-supply": 0, "operating-points-v2": 0,
+    "npu-supply": 0, "operating-points-v2": 0, "interrupt-affinity": 0,
 }
 
 
@@ -196,6 +197,18 @@ def check_zero4_graphics(npu_observe, graphics):
     added = {(hdmi, name) for name in
              ("vdd08-supply", "vcc18-supply", "allwinner,external-resistor")}
     added.add((engine, "output"))
+    graphics_profile = {
+        (engine, "emberbsd,online-rcq-vblank"): b"",
+        (engine, "emberbsd,scanout-field-probe"): b"",
+        (display, "emberbsd,shadow-scanout"): b"",
+        (display, "emberbsd,kms-worker-cpu"): (7).to_bytes(4, "big"),
+        ("/soc/ethernet@4500000", "emberbsd,eqos-rx-riwt"): (64).to_bytes(4, "big"),
+        ("/soc/ethernet@4500000", "emberbsd,eqos-tx-ioc-interval"): (8).to_bytes(4, "big"),
+        ("/soc/ethernet@4500000", "emberbsd,eqos-ipv4-checksums"): b"",
+    }
+    for key, value in graphics_profile.items():
+        require(graphics.get(key) == value, f"Zero 4 graphics profile {key}")
+    added.update(graphics_profile)
     init_on_demand = ("/soc/npu@3600000", "netbsd,init-on-demand")
     require(graphics.get(init_on_demand) == b"", "Zero 4 graphics NPU init on demand")
     added.add(init_on_demand)
@@ -234,6 +247,14 @@ def main():
     diagnostic = trees["zero3w-diagnostic"]
     zero4 = trees["zero4"]
     graphics = trees["zero4-graphics"]
+    eqos = "/soc/ethernet@4500000"
+    affinity = (eqos, "interrupt-affinity")
+    for name, tree in trees.items():
+        if name.startswith("zero4"):
+            require(tree.get(affinity) == tree.get(("/cpus/cpu@600", "phandle"))
+                    and affinity in tree, f"{name}: EQOS CPU6 phandle")
+        else:
+            require(affinity not in tree, f"{name}: Unexpected EQOS affinity")
     gpu = "/soc/gpu@1800000"
     observe = "netbsd,observe-only"
     for node in (gpu, "/display"):

@@ -13,7 +13,7 @@
 #include "sun60i_a733_gpu_fwimage.h"
 #include "../../sys/dev/powervr/pvr_fw_handshake.h"
 #include "sun60i_a733_gpu_fwinit.h"
-#include "powervr/pvr_rogue_fwif.h"
+#include "dev/powervr/fwif/pvr_rogue_fwif.h"
 
 #ifndef __arraycount
 #define __arraycount(a) (sizeof(a) / sizeof((a)[0]))

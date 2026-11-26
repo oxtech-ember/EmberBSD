@@ -62,6 +62,7 @@ struct eqos_softc {
 	uint32_t		sc_csr_clock;
 	uint32_t		sc_clock_range;
 	uint32_t		sc_hw_feature[4];
+	bool			sc_dma_32bit_tag;
 	uint32_t		sc_dma_txpbl;
 	uint32_t		sc_dma_rxpbl;
 
@@ -70,11 +71,27 @@ struct eqos_softc {
 	callout_t		sc_stat_ch;
 	kmutex_t		sc_lock;
 	kmutex_t		sc_txlock;
+	/* The media lock covers MII state and the periodic PHY tick. */
+	kmutex_t		sc_media_lock;
+	/* Serialize the entire address/data transaction on the MDIO bus. */
+	kmutex_t		sc_mdio_lock;
 	u_short			sc_if_flags;
 	bool			sc_txrunning;
 
 	struct eqos_ring	sc_tx;
 	struct eqos_ring	sc_rx;
+
+	bool			sc_rx_csum_active;
+	bool			sc_rx_csum_posted[EQOS_DMA_DESC_COUNT];
+	uint8_t			sc_boot_rx_riwt;
+	uint8_t			sc_boot_tx_ioc_interval;
+	bool			sc_boot_ipv4_checksums;
+	int			sc_tx_ioc_interval;
+	bool			sc_udp_tx_canary;
+	int			sc_rx_riwt;
+	int			sc_rx_riwt_programmed;
+	unsigned int		sc_rx_moderated_count;
+	bool			sc_rx_moderated[EQOS_DMA_DESC_COUNT];
 
 	/* receiving context for jumbo frame */
 	bool			sc_rx_discarding;
@@ -86,6 +103,8 @@ struct eqos_softc {
 	uint32_t		sc_debug;
 
 	/* Indents indicate groups within evcnt. */
+	struct evcnt		sc_ev_udp_tx_cic;
+	struct evcnt		sc_ev_rx_riwt_frames;
 	struct evcnt		sc_ev_intr;
 	struct evcnt		 sc_ev_rxintr;
 	struct evcnt		 sc_ev_txintr;

@@ -32,7 +32,7 @@
 #include <sys/kmem.h>
 #include <sys/systm.h>
 #include <arm/sunxi/sun60i_a733_gpu_vm.h>
-#include <arm/sunxi/powervr/pvr_rogue_fwif.h>
+#include <dev/powervr/fwif/pvr_rogue_fwif.h>
 
 #define VM_PAGE_SIZE	A733_GPU_MMU_PAGE_SIZE
 #define VM_BVNC		UINT64_C(0x00240038006800b7)

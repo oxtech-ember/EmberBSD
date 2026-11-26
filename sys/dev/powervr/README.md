@@ -34,6 +34,23 @@ existing `ember/tools/a733-gpu-fwinfo-contract.sh`,
 selected host Clang and firmware files. Successful tests establish no GPU,
 firmware execution, compute or rendering support.
 
+## Firmware job interrupt
+
+The A133 and A733 platform drivers use the shared MIPS job interrupt.
+The FDT adapter establishes a masked, exclusive level-triggered SPI on the
+supported GIC. The common handler tests and acknowledges the firmware
+interrupt, advances its generation and wakes job waiters. The GE8300
+firmware controls its wrapper. The A733 driver enables its wrapper during
+setup.
+
+A generation change tells the worker to read the firmware state again.
+The worker still checks the timeline and queue read offset before it releases
+job resources. Normal DRM jobs use bounded polling when the route is
+unavailable. The kernel log gives the reason. The first A133 diagnostic
+queue proof requires a working interrupt. A persistent interrupt fault masks and retires
+the route. The interrupt and timeout event counters remain available through
+`vmstat -i` and `vmstat -e` as applicable.
+
 ## Queue failure diagnostics
 
 The native DRM submit ioctl returns after validation and bounded queue admission.

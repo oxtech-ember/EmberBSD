@@ -1,0 +1,49 @@
+# PowerVR Rogue firmware and render support.
+# Origin: EmberBSD, AI-assisted.
+
+define	pvrfwprep
+define	pvrfirmware: pvrfwprep
+define	pvrfw_fdt: pvrfirmware
+define	pvrnative: drmkms_sched, pvrfirmware
+makeoptions pvrnative "CPPFLAGS.pvrnative"+="${CPPFLAGS.drmkms}"
+
+defflag	opt_pvr_fw.h	PVR_GE8300_EXPERIMENTAL: pvrfwprep
+defflag	opt_pvr_fw.h	PVR_GE8300_DRM: pvrnative
+
+file	dev/powervr/pvr_fw_handshake.c	pvrfwprep
+file	dev/powervr/pvr_fwboot.c	pvrfwprep
+file	dev/powervr/pvr_fwimage.c	pvrfwprep
+file	dev/powervr/pvr_fwinfo.c	pvrfwprep
+file	dev/powervr/pvr_fwinit.c	pvrfwprep
+file	dev/powervr/pvr_fwmem.c	pvrfwprep
+file	dev/powervr/pvr_fwstart.c	pvrfwprep
+file	dev/powervr/pvr_ge8300.c	pvrfwprep
+file	dev/powervr/pvr_mips.c	pvrfwprep
+
+file	dev/powervr/pvr_fwcompute.c	pvrfirmware
+file	dev/powervr/pvr_fwcompute_cmd.c	pvrfirmware
+file	dev/powervr/pvr_fwcompute_file.c	pvrfirmware
+file	dev/powervr/pvr_fwcompute_vm.c	pvrfirmware
+file	dev/powervr/pvr_fwheap.c	pvrfirmware
+file	dev/powervr/pvr_fwprobe.c	pvrfirmware
+file	dev/powervr/pvr_fwservice.c	pvrfirmware
+file	dev/powervr/pvr_job_irq.c	pvrfirmware
+file	dev/powervr/pvr_mips_irq.c	pvrfirmware
+file	dev/powervr/pvr_mmu.c	pvrfirmware
+
+file	dev/powervr/pvr_job_irq_fdt.c	pvrfw_fdt
+
+file	external/bsd/drm2/powervr/pvr_bo.c	pvrnative
+file	external/bsd/drm2/powervr/pvr_context.c	pvrnative
+file	external/bsd/drm2/powervr/pvr_drv.c	pvrnative
+file	external/bsd/drm2/powervr/pvr_exec.c	pvrnative
+file	external/bsd/drm2/powervr/pvr_exec_hwrt.c	pvrnative
+file	external/bsd/drm2/powervr/pvr_file.c	pvrnative
+file	external/bsd/drm2/powervr/pvr_freelist.c	pvrnative
+file	external/bsd/drm2/powervr/pvr_fwbridge.c	pvrnative
+file	external/bsd/drm2/powervr/pvr_heap.c	pvrnative
+file	external/bsd/drm2/powervr/pvr_hwrt.c	pvrnative
+file	external/bsd/drm2/powervr/pvr_query.c	pvrnative
+file	external/bsd/drm2/powervr/pvr_stream.c	pvrnative
+file	external/bsd/drm2/powervr/pvr_submit.c	pvrnative
+file	external/bsd/drm2/powervr/pvr_vm.c	pvrnative

@@ -37,8 +37,8 @@
 #include <string.h>
 #endif
 
-#include <arm/sunxi/powervr/pvr_rogue_fwif.h>
-#include <arm/sunxi/powervr/pvr_rogue_fwif_client.h>
+#include <dev/powervr/fwif/pvr_rogue_fwif.h>
+#include <dev/powervr/fwif/pvr_rogue_fwif_client.h>
 #include "pvr_stream.h"
 
 /*

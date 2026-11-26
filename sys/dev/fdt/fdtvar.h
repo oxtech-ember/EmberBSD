@@ -142,6 +142,8 @@ struct fdtbus_gpio_controller_func {
 
 /* flags for fdtbus_intr_establish */
 #define FDT_INTR_MPSAFE			__BIT(0)
+/* GIC providers: exclusively own the route, returned initially masked. */
+#define FDT_INTR_EXCLUSIVE_MASKED		__BIT(1)
 
 /* Interrupt trigger types defined by the FDT "interrupts" bindings. */
 #define	FDT_INTR_TYPE_POS_EDGE		__BIT(0)

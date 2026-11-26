@@ -60,6 +60,7 @@
  * edge of the first window and outside the second.
  */
 &gmac0 {
+	interrupt-affinity = <&cpu6>;
 	phy-mode = "rgmii";
 	phy-handle = <&ext_rgmii_phy>;
 	pinctrl-names = "default";

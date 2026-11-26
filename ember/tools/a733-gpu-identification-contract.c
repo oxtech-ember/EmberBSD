@@ -21,7 +21,7 @@
 #ifndef EAUTH
 #define EAUTH 80
 #endif
-#include "powervr/pvr_rogue_fwif.h"
+#include "dev/powervr/fwif/pvr_rogue_fwif.h"
 #include "sun60i_a733_gpu_fwinfo.h"
 
 typedef unsigned int u_int;
@@ -1117,6 +1117,79 @@ sun60i_a733_gpu_fwbridge_publish(struct sun60i_a733_gpu_fwbridge *bridge,
 	return native_publish_error;
 }
 
+/*
+ * The identification fixture observes IRQ routing at the provider
+ * boundary. The common job IRQ fixture covers the actual handler.
+ */
+enum { PVR_JOB_IRQ_A733 };
+struct pvr_job_irq { bool active; };
+struct pvr_job_irq_fdt { struct pvr_job_irq irq; };
+static struct pvr_job_irq *native_irq;
+static bool native_irq_missing;
+static unsigned int native_irq_starts, native_irq_callbacks, native_irq_stops;
+
+static void
+pvr_job_irq_init(struct pvr_job_irq *irq, device_t dev)
+{
+	assert(irq != NULL && dev != NULL);
+	irq->active = false;
+	native_irq = irq;
+}
+
+static int
+pvr_job_irq_fdt_start(struct pvr_job_irq_fdt *route, int phandle,
+    bus_space_tag_t tag, bus_space_handle_t handle, int profile)
+{
+	assert(native_fixture && native_irq == &route->irq && !route->irq.active);
+	assert(consumer_lock != NULL && *consumer_lock && phandle == 1);
+	assert(tag == NULL && handle == 0x5678 && profile == PVR_JOB_IRQ_A733);
+	assert(native_prepares == 1 && native_publishes == 0);
+	assert(native_irq_starts++ == 0);
+	route->irq.active = !native_irq_missing;
+	return native_irq_missing ? ENXIO : 0;
+}
+
+static bool
+pvr_job_irq_active(struct pvr_job_irq *irq)
+{
+	assert(irq == native_irq);
+	return irq->active;
+}
+
+static unsigned int
+pvr_job_irq_mark(void *cookie)
+{
+	assert(cookie == native_irq && native_irq->active);
+	return 17;
+}
+
+static void
+pvr_job_irq_wait(void *cookie, unsigned int mark, int ticks)
+{
+	assert(cookie == native_irq && native_irq->active && mark == 17 && ticks == 1);
+}
+
+static void
+pvr_job_irq_stop(struct pvr_job_irq *irq)
+{
+	assert(irq == native_irq && consumer_lock != NULL && !*consumer_lock);
+	assert(native_publishes == 1 && native_publish_error != 0);
+	assert(native_irq_stops++ == 0);
+	irq->active = false;
+}
+
+void
+pvr_fwbridge_set_irq(struct pvr_fwbridge *bridge, void *cookie,
+    unsigned (*mark)(void *), void (*wait)(void *, unsigned, int))
+{
+	assert(bridge->attempted && !bridge->registered);
+	assert(consumer_lock != NULL && *consumer_lock);
+	assert(cookie == native_irq && native_irq->active);
+	assert(mark == pvr_job_irq_mark && wait == pvr_job_irq_wait);
+	wait(cookie, mark(cookie), 1);
+	assert(native_irq_callbacks++ == 0);
+}
+
 #include "driver.h"
 #undef sun60i_a733_gpu_fwinfo_parse
 #define CHECK(c) do { assert(c); checks++; } while (0)
@@ -1125,6 +1198,9 @@ static struct sun60i_gpu_softc sc;
 static void
 reset(void)
 {
+	native_irq = NULL;
+	native_irq_missing = false;
+	native_irq_starts = native_irq_callbacks = native_irq_stops = 0;
 	assert(!regulator.acquired && !clock_fixture.acquired);
 	assert(!fw_handle.open && fw_memory == NULL);
 	assert(fwmem_live == NULL);
@@ -3455,10 +3531,23 @@ test_native_startup(void)
 			CHECK(native_prepares == (failure >= 19));
 			CHECK(native_publishes == (failure == 20));
 		}
+		CHECK(native_irq_starts == (failure == 0 || failure == 20));
+		CHECK(native_irq_callbacks == native_irq_starts);
+		CHECK(native_irq_stops == (failure == 20));
 		CHECK(unreserves == 0 && fwmem_destroys == 0);
 		CHECK(sc.sc_retained == (failure == 0 || failure > 5));
 		native_no_replay();
 	}
+	/* A failed route keeps publication on the bounded polling path. */
+	native_begin();
+	native_attach();
+	native_irq_missing = true;
+	native_run();
+	CHECK(sc.sc_run_result == 0 && sc.sc_fwbridge.registered);
+	CHECK(native_irq_starts == 1 && native_irq_callbacks == 0);
+	CHECK(native_irq_stops == 0 && !sc.sc_job_irq.irq.active);
+	native_no_replay();
+
 	/* Only a request timeout can continue to the read-only CORE waiter. */
 	native_begin();
 	native_attach();

@@ -21,7 +21,7 @@ sed '/^#include /d' "$src/sys/dev/powervr/pvr_fwstart.h" > "$work/start.h"
 sed '/^#include /d' "$src/sys/arch/arm/sunxi/sun60i_a733_gpu_fwstart.h" \
     >> "$work/start.h"
 ${CC:-cc} -std=c11 -Wall -Wextra -Werror ${FWBOOT_TEST_CFLAGS:-} \
-    -I"$work" -I"$src/sys/arch/arm/sunxi" \
+    -I"$work" -I"$src/sys/arch/arm/sunxi" -idirafter "$src/sys" \
     "$tools/a733-gpu-fwboot-contract.c" \
     "$src/sys/arch/arm/sunxi/sun60i_a733_gpu_fwinit.c" "$src/sys/dev/powervr/pvr_fwinit.c" \
     "$src/sys/dev/powervr/pvr_fw_handshake.c" -o "$work/contract"

@@ -194,9 +194,12 @@ provider_fault(void *arg, const void *owner, int error)
 }
 
 static const struct sun60i_a733_output_ops provider_ops = {
-	provider_mode, provider_prepare, provider_start, provider_vblank,
-	provider_fault, NULL, NULL, NULL, NULL, NULL, provider_stop, NULL, NULL,
-	NULL, NULL
+	.get_mode = provider_mode,
+	.prepare = provider_prepare,
+	.start = provider_start,
+	.observed_vblank = provider_vblank,
+	.fault = provider_fault,
+	.stop = provider_stop,
 };
 
 static void
@@ -502,11 +505,11 @@ output_sample(void)
 
 static unsigned handler_calls;
 static int handler_error;
-static sun60i_a733_vblank_fn handler_fn;
+static sun60i_a733_output_irq_fn handler_fn;
 static void *handler_arg;
 
 static int
-provider_set_vblank(void *arg, const void *owner, sun60i_a733_vblank_fn fn,
+provider_set_vblank(void *arg, const void *owner, sun60i_a733_output_irq_fn fn,
     void *cb)
 {
 	const struct provider_fixture *f = arg;
@@ -520,11 +523,23 @@ provider_set_vblank(void *arg, const void *owner, sun60i_a733_vblank_fn fn,
 	return handler_error;
 }
 
-static void
-consumer_vblank(void *arg, uint64_t sequence)
+static bool
+provider_window_line(void *arg, uint32_t *line)
 {
-	(void)arg;
-	(void)sequence;
+	CHECK(arg == output_arg);
+	*line = 5;
+	return true;
+}
+
+static void
+consumer_vblank(void *arg, uint64_t sequence,
+    const struct sun60i_a733_irq_window *window)
+{
+	uint32_t line = 0;
+
+	CHECK(sequence == 17 && window->blank_line(window->cookie, &line));
+	CHECK(line == 5);
+	++*(int *)arg;
 }
 
 static void
@@ -569,6 +584,12 @@ output_vblank_handler(void)
 	    &cookie) == 0);
 	CHECK(handler_calls == 1 && handler_fn == consumer_vblank &&
 	    handler_arg == &cookie);
+	const struct sun60i_a733_irq_window window = {
+		.cookie = &f,
+		.blank_line = provider_window_line,
+	};
+	handler_fn(handler_arg, 17, &window);
+	CHECK(cookie == 1);
 	CHECK(sun60i_a733_output_set_vblank_handler(7, &f, NULL, NULL) == 0);
 	CHECK(handler_calls == 2 && handler_fn == NULL && handler_arg == NULL);
 	handler_error = EOPNOTSUPP;

@@ -39,6 +39,7 @@ __KERNEL_RCSID(0, "$NetBSD: gic_fdt.c,v 1.26 2024/12/02 12:53:07 skrll Exp $");
 #include <sys/kernel.h>
 #include <sys/lwp.h>
 #include <sys/kmem.h>
+#include <sys/mutex.h>
 #include <sys/queue.h>
 
 #include <dev/pci/pcivar.h>
@@ -47,6 +48,7 @@ __KERNEL_RCSID(0, "$NetBSD: gic_fdt.c,v 1.26 2024/12/02 12:53:07 skrll Exp $");
 #include <arm/cortex/gic_reg.h>
 #include <arm/cortex/gic_v2m.h>
 #include <arm/cortex/mpcore_var.h>
+#include <arm/pic/picvar.h>
 
 #include <dev/fdt/fdtvar.h>
 
@@ -68,11 +70,15 @@ static int	gic_fdt_intr(void *);
 static void *	gic_fdt_establish(device_t, u_int *, int, int,
 		    int (*)(void *), void *, const char *);
 static void	gic_fdt_disestablish(device_t, void *);
+static void	gic_fdt_mask(device_t, void *);
+static void	gic_fdt_unmask(device_t, void *);
 static bool	gic_fdt_intrstr(device_t, u_int *, char *, size_t);
 
 struct fdtbus_interrupt_controller_func gic_fdt_funcs = {
 	.establish = gic_fdt_establish,
 	.disestablish = gic_fdt_disestablish,
+	.mask = gic_fdt_mask,
+	.unmask = gic_fdt_unmask,
 	.intrstr = gic_fdt_intrstr
 };
 
@@ -92,11 +98,13 @@ struct gic_fdt_irq {
 	int			intr_ipl;
 	int			intr_level;
 	int			intr_mpsafe;
+	bool			intr_exclusive;
 	TAILQ_HEAD(, gic_fdt_irqhandler) intr_handlers;
 	int			intr_irq;
 };
 
 struct gic_fdt_softc {
+	kmutex_t		sc_route_lock;
 	device_t		sc_dev;
 	device_t		sc_gicdev;
 	int			sc_phandle;
@@ -146,6 +154,7 @@ gic_fdt_attach(device_t parent, device_t self, void *aux)
 	sc->sc_dev = self;
 	sc->sc_phandle = phandle;
 
+	mutex_init(&sc->sc_route_lock, MUTEX_DEFAULT, IPL_NONE);
 	error = fdtbus_register_interrupt_controller(self, phandle,
 	    &gic_fdt_funcs);
 	if (error) {
@@ -241,7 +250,7 @@ gic_fdt_attach_v2m(struct gic_fdt_softc *sc, bus_space_tag_t bst, int phandle)
 #endif
 
 static void *
-gic_fdt_establish(device_t dev, u_int *specifier, int ipl, int flags,
+gic_fdt_establish_locked(device_t dev, u_int *specifier, int ipl, int flags,
     int (*func)(void *), void *arg, const char *xname)
 {
 	struct gic_fdt_softc * const sc = device_private(dev);
@@ -260,6 +269,12 @@ gic_fdt_establish(device_t dev, u_int *specifier, int ipl, int flags,
 	    ? IST_EDGE : IST_LEVEL;
 
 	const u_int mpsafe = (flags & FDT_INTR_MPSAFE) ? IST_MPSAFE : 0;
+	const bool exclusive = (flags & FDT_INTR_EXCLUSIVE_MASKED) != 0;
+
+	/* An exclusive route must name a valid SPI before adding its base. */
+	if (irq >= GIC_MAXIRQ ||
+	    (exclusive && (type != 0 || intr >= GIC_MAXIRQ - IRQ_SPI(0))))
+		return NULL;
 
 	firq = sc->sc_irq[irq];
 	if (firq == NULL) {
@@ -267,12 +282,17 @@ gic_fdt_establish(device_t dev, u_int *specifier, int ipl, int flags,
 		firq->intr_sc = sc;
 		firq->intr_refcnt = 0;
 		firq->intr_arg = arg;
+		firq->intr_exclusive = exclusive;
 		firq->intr_ipl = ipl;
 		firq->intr_level = level;
 		firq->intr_mpsafe = mpsafe;
 		TAILQ_INIT(&firq->intr_handlers);
 		firq->intr_irq = irq;
-		if (arg == NULL) {
+		if (exclusive) {
+			firq->intr_ih = intr_establish_xname_masked(irq, ipl,
+			    level | mpsafe, arg == NULL ? func : gic_fdt_intr,
+			    arg == NULL ? NULL : firq, xname);
+		} else if (arg == NULL) {
 			firq->intr_ih = intr_establish_xname(irq, ipl,
 			    level | mpsafe, func, NULL, xname);
 		} else {
@@ -285,6 +305,8 @@ gic_fdt_establish(device_t dev, u_int *specifier, int ipl, int flags,
 		}
 		sc->sc_irq[irq] = firq;
 	} else {
+		if (firq->intr_refcnt == 0 || exclusive || firq->intr_exclusive)
+			return NULL;
 		if (firq->intr_arg == NULL && arg != NULL) {
 			device_printf(dev, "cannot share irq with NULL arg\n");
 			return NULL;
@@ -326,6 +348,7 @@ gic_fdt_disestablish(device_t dev, void *ih)
 	struct gic_fdt_irq *firq;
 	u_int n;
 
+	mutex_enter(&sc->sc_route_lock);
 	for (n = 0; n < GIC_MAXIRQ; n++) {
 		firq = sc->sc_irq[n];
 		if (firq == NULL || firq->intr_ih != ih)
@@ -337,14 +360,51 @@ gic_fdt_disestablish(device_t dev, void *ih)
 			panic("%s: cannot disestablish shared irq", __func__);
 
 		firqh = TAILQ_FIRST(&firq->intr_handlers);
-		kmem_free(firqh, sizeof(*firqh));
+		/*
+		 * Keep the slot reserved while PIC drains running handlers.
+		 * Do not hold the controller lock across xc_barrier().
+		 */
+		firq->intr_refcnt = 0;
+		mutex_exit(&sc->sc_route_lock);
 		intr_disestablish(firq->intr_ih);
-		kmem_free(firq, sizeof(*firq));
+		mutex_enter(&sc->sc_route_lock);
 		sc->sc_irq[n] = NULL;
+		mutex_exit(&sc->sc_route_lock);
+		kmem_free(firqh, sizeof(*firqh));
+		kmem_free(firq, sizeof(*firq));
 		return;
 	}
+	mutex_exit(&sc->sc_route_lock);
 
 	panic("%s: interrupt not established", __func__);
+}
+
+static void *
+gic_fdt_establish(device_t dev, u_int *specifier, int ipl, int flags,
+    int (*fn)(void *), void *arg, const char *xname)
+{
+	struct gic_fdt_softc *sc = device_private(dev);
+	void *ih;
+
+	mutex_enter(&sc->sc_route_lock);
+	ih = gic_fdt_establish_locked(dev, specifier, ipl, flags, fn, arg,
+	    xname);
+	mutex_exit(&sc->sc_route_lock);
+	return ih;
+}
+
+static void
+gic_fdt_mask(device_t dev, void *ih)
+{
+	(void)dev;
+	intr_mask(ih);
+}
+
+static void
+gic_fdt_unmask(device_t dev, void *ih)
+{
+	(void)dev;
+	intr_unmask(ih);
 }
 
 static int

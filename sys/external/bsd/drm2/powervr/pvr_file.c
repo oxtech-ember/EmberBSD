@@ -25,7 +25,7 @@
 #include "pvr_backend.h"
 #include "pvr_file.h"
 #include "pvr_exec.h"
-#include <arm/sunxi/powervr/pvr_rogue_fwif.h>
+#include <dev/powervr/fwif/pvr_rogue_fwif.h>
 
 /*
  * An unmap during queued or running work keeps the BO reference, and with it

@@ -48,7 +48,7 @@ for shift in 12 14; do
     # shellcheck disable=SC2086
     "${CC:-cc}" -std=c11 -Wall -Wextra -Werror -Wno-unused-parameter \
         ${CFLAGS:-} -pthread -DRBDEBUG -DPAGE_SHIFT="$shift" -include "$work/host-shim.h" \
-        -I"$work" -I"$src/sys/arch" -I"$src/sys/external/bsd/drm2/powervr" \
+        -I"$work" -idirafter "$src/sys" -I"$src/sys/external/bsd/drm2/powervr" \
         "$src/ember/tools/pvr-file-contract.c" "$work/rb.o" -o "$work/contract"
     "$work/contract"
 done

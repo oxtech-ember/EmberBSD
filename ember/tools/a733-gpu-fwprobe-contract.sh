@@ -22,7 +22,7 @@ for kind in probe boot mem start; do
         >> "$work/$kind.h"
 done
 ${CC:-cc} -std=c11 -Wall -Wextra -Werror ${FWPROBE_TEST_CFLAGS:-} \
-    -I"$work" -I"$src/sys/arch/arm/sunxi" \
+    -I"$work" -I"$src/sys/arch/arm/sunxi" -idirafter "$src/sys" \
     "$tools/a733-gpu-fwprobe-contract.c" \
     "$src/sys/arch/arm/sunxi/sun60i_a733_gpu_fwinit.c" "$src/sys/dev/powervr/pvr_fwinit.c" \
     "$src/sys/dev/powervr/pvr_fw_handshake.c" -o "$work/contract"

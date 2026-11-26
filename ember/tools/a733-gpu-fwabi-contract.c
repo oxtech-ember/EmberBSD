@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: MIT */
 /* Copyright (c) 2026 EmberBSD contributors. AI-assisted ABI checks. */
-#include "powervr/pvr_rogue_fwif.h"
+#include "dev/powervr/fwif/pvr_rogue_fwif.h"
 
 /* Including the production headers evaluates all upstream ABI assertions. */
 #ifndef PVR_FWABI_COMPILE_ONLY

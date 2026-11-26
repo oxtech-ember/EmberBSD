@@ -20,7 +20,7 @@
 #include "pvr_drv.h"
 #include "pvr_exec.h"
 #include "pvr_exec_hwrt.h"
-#include <arm/sunxi/powervr/pvr_rogue_fwif.h>
+#include <dev/powervr/fwif/pvr_rogue_fwif.h>
 #include "pvr_freelist.h"
 #include "pvr_file.h"
 #include "pvr_heap.h"

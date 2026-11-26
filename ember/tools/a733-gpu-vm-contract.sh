@@ -26,7 +26,7 @@ trap 'rm -rf "$work"' EXIT HUP INT TERM
 sed '/^#include /d' "$src/sys/arch/arm/sunxi/sun60i_a733_gpu_vm.c" > "$work/driver.h"
 sed '/^#include /d' "$src/sys/arch/arm/sunxi/sun60i_a733_gpu_vm.h" > "$work/vm.h"
 ${CC:-cc} -std=c11 -Wall -Wextra -Werror ${VM_TEST_CFLAGS:-} \
-    -I"$work" -I"$src/sys/arch/arm/sunxi" \
+    -I"$work" -I"$src/sys/arch/arm/sunxi" -idirafter "$src/sys" \
     "$tools/a733-gpu-vm-contract.c" \
     "$src/sys/arch/arm/sunxi/sun60i_a733_gpu_mmu.c" \
     "$src/sys/dev/powervr/pvr_mmu.c" \

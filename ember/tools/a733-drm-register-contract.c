@@ -163,6 +163,7 @@ static const char *device_xname(void *d){
 	CHECK(d == current);
 	return "sun60idrm0";
 }
+#undef strlcpy
 #define strlcpy fixture_strlcpy
 static void fixture_strlcpy(char *out, const char *in, size_t n){
 	CHECK(strlen(in) < n);
@@ -226,6 +227,8 @@ static int drm_vblank_init(struct drm_device *d, unsigned n){
 	}
 	return -e;
 }
+static void a733_drm_vblank_history_reset(struct a733_drm *sc, bool enabled)
+{ CHECK(sc == current && !enabled && vblank_bound); }
 static int sun60i_a733_de352_set_vblank_handler(void *client, sun60i_a733_vblank_fn fn, void *arg){
 	CHECK(client == current && acquired == 1 && devices == 1);
 	if (fn == NULL) {

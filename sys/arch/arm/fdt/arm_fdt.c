@@ -29,6 +29,7 @@
 #include "opt_arm_timer.h"
 #include "opt_efi.h"
 #include "opt_modular.h"
+#include "opt_multiprocessor.h"
 
 #include <sys/cdefs.h>
 __KERNEL_RCSID(0, "$NetBSD: arm_fdt.c,v 1.22 2025/01/30 11:09:53 jmcneill Exp $");
@@ -36,6 +37,8 @@ __KERNEL_RCSID(0, "$NetBSD: arm_fdt.c,v 1.22 2025/01/30 11:09:53 jmcneill Exp $"
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/cpu.h>
+#include <sys/interrupt.h>
+#include <sys/sched.h>
 #include <sys/device.h>
 #include <sys/kmem.h>
 #include <sys/bus.h>
@@ -346,3 +349,58 @@ arm_fdt_efi_rtc_settime(todr_chip_handle_t tch, struct clock_ymdhms *dt)
 	return 0;
 }
 #endif
+
+/* Apply one explicit FDT CPU affinity after secondary CPUs have started. */
+int
+arm_fdt_intr_distribute(int phandle, unsigned index, void *ih)
+{
+#ifdef MULTIPROCESSOR
+	CPU_INFO_ITERATOR cii;
+	struct cpu_info *ci;
+	bus_addr_t mpidr;
+	const uint32_t *affinity;
+	const char *type;
+	kcpuset_t *set;
+	int cpunode, error, len;
+
+	if (ih == NULL)
+		return EINVAL;
+	affinity = fdtbus_get_prop(phandle, "interrupt-affinity", &len);
+	if (affinity == NULL || len <= 0 || len % sizeof(*affinity) != 0 ||
+	    index >= len / sizeof(*affinity))
+		return EINVAL;
+	cpunode = fdtbus_get_phandle_from_native(be32toh(affinity[index]));
+	if (cpunode <= 0)
+		return ENXIO;
+	type = fdtbus_get_string(cpunode, "device_type");
+	if (type == NULL || strcmp(type, "cpu") != 0 ||
+	    fdtbus_get_reg(cpunode, 0, &mpidr, NULL) != 0)
+		return ENXIO;
+
+	kcpuset_create(&set, true);
+	error = ENOENT;
+	mutex_enter(&cpu_lock);
+	for (CPU_INFO_FOREACH(cii, ci)) {
+		if (ci->ci_cpuid != mpidr)
+			continue;
+		const u_int n = cpu_index(ci);
+		if (!kcpuset_isset(kcpuset_running, n) ||
+		    (ci->ci_schedstate.spc_flags &
+		    (SPCF_OFFLINE | SPCF_NOINTR)) != 0) {
+			error = EBUSY;
+			break;
+		}
+		kcpuset_set(set, n);
+		error = interrupt_distribute(ih, set, NULL);
+		break;
+	}
+	mutex_exit(&cpu_lock);
+	kcpuset_destroy(set);
+	return error;
+#else
+	(void)phandle;
+	(void)index;
+	(void)ih;
+	return EOPNOTSUPP;
+#endif
+}

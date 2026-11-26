@@ -8,6 +8,6 @@ trap 'rm -rf "$work"' EXIT HUP INT TERM
 sed '/^#include /d' "$src/sys/external/bsd/drm2/powervr/pvr_hwrt.c" > "$work/pvr-hwrt-body.h"
 # shellcheck disable=SC2086
 "${CC:-cc}" -std=c11 -Wall -Wextra -Werror ${CFLAGS:-} \
-    -I"$work" -I"$src/sys/arch" -I"$src/sys/external/bsd/drm2/powervr" \
+    -I"$work" -idirafter "$src/sys" -I"$src/sys/external/bsd/drm2/powervr" \
     "$src/ember/tools/pvr-hwrt-contract.c" -o "$work/contract"
 "$work/contract"

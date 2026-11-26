@@ -31,6 +31,7 @@
 #include <sys/bus.h>
 #include <sys/errno.h>
 #include <dev/powervr/pvr_mips_irq.h>
+#define PVR_MIPS_IRQ_ENABLE 0x08a0
 #define PVR_MIPS_IRQ_STATUS 0x08a8
 #define PVR_MIPS_IRQ_CLEAR  0x08b0
 
@@ -54,4 +55,18 @@ pvr_mips_irq_clear(bus_space_tag_t tag, bus_space_handle_t handle)
 	bus_space_write_4(tag, handle, PVR_MIPS_IRQ_CLEAR, 1);
 	bus_space_barrier(tag, handle, PVR_MIPS_IRQ_CLEAR, 4, BUS_SPACE_BARRIER_WRITE);
 	return 0;
+}
+
+int
+pvr_mips_irq_enable(bus_space_tag_t tag, bus_space_handle_t handle, bool enable)
+{
+	const uint32_t expected = enable ? 1 : 0;
+
+	if (tag == NULL)
+		return EINVAL;
+	bus_space_write_4(tag, handle, PVR_MIPS_IRQ_ENABLE, expected);
+	bus_space_barrier(tag, handle, PVR_MIPS_IRQ_ENABLE, 4,
+	    BUS_SPACE_BARRIER_READ | BUS_SPACE_BARRIER_WRITE);
+	return (bus_space_read_4(tag, handle, PVR_MIPS_IRQ_ENABLE) & 1) ==
+	    expected ? 0 : EIO;
 }

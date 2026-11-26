@@ -6,6 +6,7 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #include <sys/param.h>
 #include <sys/atomic.h>
 #include <sys/container_of.h>
+#include <sys/cpu.h>
 #include <sys/device.h>
 #include <sys/intr.h>
 #include <sys/kmem.h>
@@ -18,12 +19,14 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #include <drm/drm_drv.h>
 #include <drm/drm_fourcc.h>
 #include <drm/drm_gem.h>
+#include <drm/drm_legacy.h>
 #include <drm/drm_modes.h>
 #include <drm/drm_modeset_helper.h>
 #include <drm/drm_modeset_helper_vtables.h>
 #include <drm/drm_prime.h>
 #include <drm/drm_probe_helper.h>
 #include <drm/drm_vblank.h>
+#include <drm/drm_file.h>
 #include "sun60i_a733_drm.h"
 
 bool
@@ -72,6 +75,38 @@ static const struct drm_framebuffer_funcs a733_fb_funcs = {
 	.create_handle = a733_fb_handle,
 };
 
+static int
+a733_file_open(struct drm_device *dev, struct drm_file *file)
+{
+	struct a733_drm *sc = dev->dev_private;
+	struct a733_drm_file *owner = kmem_alloc(sizeof(*owner), KM_SLEEP);
+	int error = 0;
+
+	mutex_enter(&sc->lock);
+	if (sc->next_file_id == UINT64_MAX)
+		error = -EOVERFLOW;
+	else
+		owner->id = ++sc->next_file_id;
+	mutex_exit(&sc->lock);
+	if (error != 0) {
+		kmem_free(owner, sizeof(*owner));
+		return error;
+	}
+	file->driver_priv = owner;
+	return 0;
+}
+
+static void
+a733_file_close(struct drm_device *dev, struct drm_file *file)
+{
+	struct a733_drm_file *owner = file->driver_priv;
+
+	(void)dev;
+	file->driver_priv = NULL;
+	if (owner != NULL)
+		kmem_free(owner, sizeof(*owner));
+}
+
 static struct drm_framebuffer *
 a733_fb_create(struct drm_device *dev, struct drm_file *file,
     const struct drm_mode_fb_cmd2 *cmd)
@@ -113,6 +148,8 @@ a733_fb_create(struct drm_device *dev, struct drm_file *file,
 		goto fail;
 	fb = kmem_zalloc(sizeof(*fb), KM_SLEEP);
 	fb->object = obj;
+	if (file->driver_priv != NULL)
+		fb->owner_id = ((const struct a733_drm_file *)file->driver_priv)->id;
 	drm_helper_mode_fill_fb_struct(dev, &fb->base, cmd);
 	error = drm_framebuffer_init(dev, &fb->base, &a733_fb_funcs);
 	if (error == 0)
@@ -123,6 +160,26 @@ fail:
 	return ERR_PTR(error);
 }
 
+struct drm_gem_cma_object *
+a733_drm_alloc_cma(struct a733_drm *sc, size_t size)
+{
+	struct drm_gem_cma_object *obj;
+	vmem_addr_t probe;
+
+	/* A fit proof avoids the helper's blocking fallback at exhaustion. */
+	mutex_enter(&sc->pool_lock);
+	if (sc->pool == NULL || sc->dev->cma_pool != sc->pool ||
+	    vmem_xalloc(sc->pool, size, PAGE_SIZE, 0, 0, VMEM_ADDR_MIN,
+	    VMEM_ADDR_MAX, VM_BESTFIT | VM_NOSLEEP, &probe) != 0) {
+		mutex_exit(&sc->pool_lock);
+		return NULL;
+	}
+	vmem_xfree(sc->pool, probe, size);
+	obj = drm_gem_cma_create(sc->dev, size);
+	mutex_exit(&sc->pool_lock);
+	return obj;
+}
+
 static int
 a733_dumb_create(struct drm_file *file, struct drm_device *dev,
     struct drm_mode_create_dumb *args)
@@ -130,38 +187,19 @@ a733_dumb_create(struct drm_file *file, struct drm_device *dev,
 	struct a733_drm *sc = dev->dev_private;
 	struct drm_gem_cma_object *obj;
 	uint64_t pitch, size;
-	vmem_addr_t probe;
 	int error;
 
 	if (args->bpp != 32 || args->width == 0 || args->width > 1920 ||
 	    args->height == 0 || args->height > 1080 || args->flags != 0)
 		return -EINVAL;
-	pitch = ((uint64_t) args->width * 4 + 63) & ~UINT64_C(63);
-	/*
-	 * <linux/mm.h> defines PAGE_MASK as ~(PAGE_SIZE - 1), so use explicit
-	 * offset masks. A zero size makes uvm_pglistalloc() retry forever.
-	 */
-	size = (pitch * args->height + PAGE_SIZE - 1) &
-	    ~((uint64_t) PAGE_SIZE - 1);
-	if (size < pitch * args->height)
-		return -EINVAL;
-	/*
-	 * A full CMA pool makes the helper use a blocking contiguous
-	 * allocation that can retry forever. Prove the fit first. Only this
-	 * function allocates from the pool, and a free only adds space.
-	 */
-	mutex_enter(&sc->pool_lock);
-	if (sc->pool == NULL || dev->cma_pool != sc->pool ||
-	    vmem_xalloc(sc->pool, size, PAGE_SIZE, 0, 0, VMEM_ADDR_MIN,
-	    VMEM_ADDR_MAX, VM_BESTFIT | VM_NOSLEEP, &probe) != 0) {
-		mutex_exit(&sc->pool_lock);
-		return -ENOMEM;
-	}
-	vmem_xfree(sc->pool, probe, size);
-	obj = drm_gem_cma_create(dev, size);
-	mutex_exit(&sc->pool_lock);
+	pitch = ((uint64_t)args->width * 4 + 63) & ~UINT64_C(63);
+	size = roundup(pitch * args->height, PAGE_SIZE);
+	obj = a733_drm_alloc_cma(sc, size);
 	if (obj == NULL)
 		return -ENOMEM;
+	if (file->driver_priv != NULL)
+		obj->a733_allocation_id =
+		    ((const struct a733_drm_file *)file->driver_priv)->id;
 	error = drm_gem_handle_create(file, &obj->base, &args->handle);
 	drm_gem_object_put_unlocked(&obj->base);
 	if (error == 0) {
@@ -197,9 +235,52 @@ static void
 a733_vblank(void *arg, uint64_t sequence)
 {
 	struct a733_drm *sc = arg;
+	ktime_t prior_time = 0, time = 0;
+	uint64_t generation = 0, before = 0, count = 0;
+	bool handled;
+	mutex_spin_enter(&sc->vblank_history_lock);
+	if (sc->vblank_history.active)
+		generation = sc->vblank_history.generation;
+	mutex_spin_exit(&sc->vblank_history_lock);
 
+	/*
+	 * The native IRQ lock serializes this callback. Do not hold the
+	 * history lock across DRM event_lock or vblank_time_lock.
+	 */
+	if (generation != 0)
+		before = drm_crtc_vblank_count_and_time(&sc->crtc, &prior_time);
 	atomic_store_relaxed(&sc->hw_vblank, sequence);
-	(void)drm_crtc_handle_vblank(&sc->crtc);
+	handled = drm_crtc_handle_vblank(&sc->crtc);
+	if (generation == 0)
+		return;
+	if (handled)
+		count = drm_crtc_vblank_count_and_time(&sc->crtc, &time);
+	mutex_spin_enter(&sc->vblank_history_lock);
+	if (generation != 0)
+		a733_history_record(&sc->vblank_history, generation, sequence,
+		    before, ktime_to_ns(prior_time), handled, count,
+		    ktime_to_ns(time));
+	mutex_spin_exit(&sc->vblank_history_lock);
+}
+
+void
+a733_drm_vblank_history_reset(struct a733_drm *sc, bool enabled)
+{
+	mutex_spin_enter(&sc->vblank_history_lock);
+	a733_history_reset(&sc->vblank_history, enabled);
+	mutex_spin_exit(&sc->vblank_history_lock);
+}
+
+bool
+a733_drm_vblank_stamp(struct a733_drm *sc, uint64_t raw,
+    struct a733_vblank_stamp *stamp)
+{
+	bool found;
+
+	mutex_spin_enter(&sc->vblank_history_lock);
+	found = a733_history_lookup(&sc->vblank_history, raw, stamp);
+	mutex_spin_exit(&sc->vblank_history_lock);
+	return found;
 }
 
 static uint32_t
@@ -328,6 +409,57 @@ static const struct drm_mode_config_funcs a733_mode_funcs = {
 	.atomic_check = a733_drm_atomic_check,
 	.atomic_commit = a733_drm_atomic_commit,
 };
+/*
+ * A CPU alias disqualifies an imported object for private scanout.
+ * Admission is serialized with its short source-copy lease. Existing
+ * aliases continue to work with the ordinary scanout path.
+ */
+static bool
+a733_expose_cpu(struct drm_gem_object *gem)
+{
+	struct a733_drm *sc = gem->dev->dev_private;
+	struct drm_gem_cma_object *obj = to_drm_gem_cma_obj(gem);
+	bool allowed;
+
+	mutex_enter(&sc->lock);
+	allowed = !obj->shadow_copying;
+	if (allowed)
+		obj->shadow_cpu_mapped = true;
+	mutex_exit(&sc->lock);
+	return allowed;
+}
+
+static int
+a733_gem_mmap(struct drm_device *dev, off_t offset, size_t size, int prot,
+    struct uvm_object **uobjp, voff_t *uoffsetp, struct file *file)
+{
+	struct drm_gem_object *gem;
+	int error;
+
+	error = drm_gem_mmap_object(dev, offset, size, prot, uobjp, uoffsetp,
+	    file);
+	if (error != 0)
+		return error;
+	if (*uobjp == NULL)
+		return drm_legacy_mmap_object(dev, offset, size, prot, uobjp,
+		    uoffsetp, file);
+	gem = container_of(*uobjp, struct drm_gem_object, gemo_uvmobj);
+	if (a733_expose_cpu(gem))
+		return 0;
+	drm_gem_object_put_unlocked(gem);
+	*uobjp = NULL;
+	return -EBUSY;
+}
+
+static void *
+a733_prime_vmap(struct drm_gem_object *obj)
+{
+
+	if (!a733_expose_cpu(obj))
+		return NULL;
+	return drm_gem_cma_prime_vmap(obj);
+}
+
 /* The authorized PRIME offset is relative to this CMA object, in bytes. */
 static int
 a733_prime_mmap(struct drm_gem_object *obj, off_t * offp, size_t size,
@@ -341,25 +473,51 @@ a733_prime_mmap(struct drm_gem_object *obj, off_t * offp, size_t size,
 	    (prot & ~(PROT_READ | PROT_WRITE)) != 0 ||
 	    (*flagsp & MAP_SHARED) == 0 || (*flagsp & MAP_PRIVATE) != 0)
 		return -EINVAL;
+	if (!a733_expose_cpu(obj))
+		return -EBUSY;
 	drm_gem_object_get(obj);
 	*uobjp = &obj->gemo_uvmobj;
 	*maxprotp = PROT_READ | PROT_WRITE;
 	return 0;
 }
 
+/*
+ * All first exports of local CMA storage pass here under the PRIME core's
+ * object_name_lock. Remember exposure for the lifetime of the GEM object.
+ */
+static struct dma_buf *
+a733_prime_export(struct drm_gem_object *gem, int flags)
+{
+	struct a733_drm *sc = gem->dev->dev_private;
+	struct drm_gem_cma_object *obj = to_drm_gem_cma_obj(gem);
+
+	mutex_enter(&sc->lock);
+	if (obj->shadow_copying) {
+		mutex_exit(&sc->lock);
+		return ERR_PTR(-EBUSY);
+	}
+	obj->a733_prime_exposed = true;
+	mutex_exit(&sc->lock);
+
+	return drm_gem_prime_export(gem, flags);
+}
+
 static struct drm_driver a733_driver = {
 	.driver_features = DRIVER_MODESET | DRIVER_ATOMIC | DRIVER_GEM,
+	.open = a733_file_open,
+	.postclose = a733_file_close,
 	.gem_free_object = drm_gem_cma_free_object,
-	.mmap_object = drm_gem_or_legacy_mmap_object,
+	.mmap_object = a733_gem_mmap,
 	.gem_uvm_ops = &drm_gem_cma_uvm_ops,
 	.dumb_create = a733_dumb_create,
 	.dumb_destroy = drm_gem_dumb_destroy,
 	.prime_handle_to_fd = drm_gem_prime_handle_to_fd,
 	.prime_fd_to_handle = drm_gem_prime_fd_to_handle,
+	.gem_prime_export = a733_prime_export,
 	.gem_prime_mmap = a733_prime_mmap,
 	.gem_prime_get_sg_table = drm_gem_cma_prime_get_sg_table,
 	.gem_prime_import_sg_table = drm_gem_cma_prime_import_sg_table,
-	.gem_prime_vmap = drm_gem_cma_prime_vmap,
+	.gem_prime_vmap = a733_prime_vmap,
 	.gem_prime_vunmap = drm_gem_cma_prime_vunmap,
 	.name = "sun60idrm",
 	.desc = "A733 fixed-mode native KMS",
@@ -470,6 +628,7 @@ a733_register(struct a733_drm *sc)
 mode:
 	/* No callback can use the DRM vblank storage after this removal. */
 	if (sc->vblank_irq) {
+		a733_drm_vblank_history_reset(sc, false);
 		(void)sun60i_a733_de352_set_vblank_handler(sc->client, NULL, NULL);
 		sc->vblank_irq = false;
 		dev->irq_enabled = false;
@@ -548,7 +707,7 @@ a733_startup_enqueue(void *arg)
 	}
 	mutex_spin_exit(&sc->startup_lock);
 	if (enqueue)
-		workqueue_enqueue(sc->queue, &sc->startup_work, NULL);
+		workqueue_enqueue(sc->queue, &sc->startup_work, sc->worker_cpu);
 }
 
 static void
@@ -603,7 +762,8 @@ a733_startup_init(struct a733_drm *sc, bool observe_only)
 	callout_setfunc(&sc->startup_timer, a733_startup_enqueue, sc);
 	sc->startup_stopped = observe_only;
 	error = workqueue_create(&sc->queue, "a733kms", a733_dispatch, sc,
-	    PRI_NONE, IPL_SOFTCLOCK, WQ_MPSAFE);
+	    PRI_NONE, IPL_SOFTCLOCK, WQ_MPSAFE |
+	    (sc->worker_cpu != NULL ? WQ_PERCPU : 0));
 	if (error != 0) {
 		sc->startup_stopped = true;
 		return error;
@@ -675,16 +835,18 @@ static void
 a733_pool_create(struct a733_drm *sc, bus_dma_tag_t parent)
 {
 	int error, nsegs = 0;
+	const bus_size_t bytes = sc->shadow_enabled ?
+	    UINT64_C(64) << 20 : A733_DRM_POOL_BYTES;
 
 	error = bus_dmatag_subregion(parent, 0, A733_DRM_POOL_LIMIT - 1,
 	    &sc->pool_tag, BUS_DMA_NOWAIT);
 	if (error == 0) {
-		error = bus_dmamem_alloc(sc->pool_tag, A733_DRM_POOL_BYTES,
+		error = bus_dmamem_alloc(sc->pool_tag, bytes,
 		    PAGE_SIZE, 0, &sc->pool_segment, 1, &nsegs, BUS_DMA_NOWAIT);
 		if (error == 0 && (nsegs != 1 ||
-		    sc->pool_segment.ds_len != A733_DRM_POOL_BYTES ||
+		    sc->pool_segment.ds_len != bytes ||
 		    sc->pool_segment.ds_addr >
-		    A733_DRM_POOL_LIMIT - A733_DRM_POOL_BYTES)) {
+		    A733_DRM_POOL_LIMIT - bytes)) {
 			bus_dmamem_free(sc->pool_tag, &sc->pool_segment, nsegs);
 			error = ERANGE;
 		}
@@ -702,7 +864,7 @@ a733_pool_create(struct a733_drm *sc, bus_dma_tag_t parent)
 	    sc->pool_segment.ds_len, PAGE_SIZE, NULL, NULL, NULL, 0, VM_SLEEP,
 	    IPL_NONE);
 	aprint_normal_dev(sc->device, "reserved %u MiB for KMS buffers\n",
-	    (u_int)(A733_DRM_POOL_BYTES >> 20));
+	    (u_int)(bytes >> 20));
 }
 
 static void
@@ -716,12 +878,16 @@ a733_attach(device_t parent, device_t self, void *aux)
 	(void)parent;
 	sc->device = self;
 	mutex_init(&sc->lock, MUTEX_DEFAULT, IPL_NONE);
+	cv_init(&sc->idle, "a733idle");
+	mutex_init(&sc->vblank_history_lock, MUTEX_DEFAULT, IPL_VM);
 	mutex_init(&sc->pool_lock, MUTEX_DEFAULT, IPL_NONE);
 	sc->phandle = fdtbus_get_phandle(faa->faa_phandle, "display-engine");
 	aprint_naive("\n");
 	aprint_normal(": native KMS frontend\n");
 	if (sc->phandle <= 0)
 		return;
+	sc->shadow_enabled = of_hasprop(faa->faa_phandle,
+	    "emberbsd,shadow-scanout");
 	a733_pool_create(sc, faa->faa_dmat);
 	/* Use the same recovery convention as the other native A733 owners. */
 	error = OF_getproplen(faa->faa_phandle, "netbsd,observe-only");
@@ -729,6 +895,13 @@ a733_attach(device_t parent, device_t self, void *aux)
 		sc->fault = EINVAL;
 		sc->startup_stopped = true;
 		return;
+	}
+	uint32_t cpu;
+	if (of_getprop_uint32(faa->faa_phandle, "emberbsd,kms-worker-cpu",
+	    &cpu) == 0 && cpu < ncpu) {
+		sc->worker_cpu = cpu_lookup(cpu);
+		if (sc->worker_cpu != NULL)
+			aprint_normal_dev(self, "KMS work on CPU %u\n", cpu);
 	}
 	error = a733_startup_init(sc, error == 0);
 	if (error != 0) {

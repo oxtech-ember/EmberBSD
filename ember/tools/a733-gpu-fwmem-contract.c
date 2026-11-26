@@ -8,7 +8,7 @@
 #include <string.h>
 #include "sun60i_a733_gpu_fwimage.h"
 #include "sun60i_a733_gpu_fwinit.h"
-#include "powervr/pvr_rogue_fwif.h"
+#include "dev/powervr/fwif/pvr_rogue_fwif.h"
 #include "sun60i_a733_gpu_mips.h"
 #include "pvr_ge8300.h"
 #include "pvr_fwcompute.h"
