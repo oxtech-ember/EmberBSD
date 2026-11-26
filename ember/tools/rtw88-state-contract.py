@@ -195,6 +195,7 @@ for name in ('ieee80211_setmode','ieee80211_media_change'):
 band.append('#pragma GCC diagnostic push\n#pragma GCC diagnostic ignored "-Wsign-compare"\n'+shared_body(ieee,'ieee80211_media2rate','int')+'#pragma GCC diagnostic pop\n')
 for name,result in [('ieee80211_reset_scan','static void'),('ieee80211_begin_scan','void'),('ieee80211_next_scan','int')]:
     band.append(shared_body(node,name,result))
+band.append(shared_body(shared, 'ieee80211_sta_left_transition', 'static void'))
 (out/'native-band-shared.inc').write_text('\n'.join(band))
 full=re.search(r'^ieee80211_newstate\(.*?^}',shared,re.M|re.S).group()
 prefix=full[full.index('\tostate = ic->ic_state;'):full.index('\tswitch (nstate) {')]

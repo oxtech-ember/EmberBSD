@@ -15,6 +15,10 @@ done
 {
     printf "#include <stdbool.h>\n#include <stddef.h>\n#include <stdint.h>\n"
     sed -n "/^struct rtw88_dma {/,/^};/p; /^struct rtw88_bus_ops {/,/^};/p" "$src/sys/dev/ic/rtw88var.h"
+    # The inline bootstrap delay uses these bus fields from the device state.
+    awk '/^struct rtw88_softc \{/ { in_softc = 1; print; next }
+         in_softc && /sc_ops;|sc_bus;|sc_bootstrap_wait/ { print }
+         in_softc && /^};/ { print; exit }' "$src/sys/dev/ic/rtw88var.h"
 } > "$work/dev/ic/rtw88var.h"
 "$CC" -std=c11 -Wall -Wextra -Werror ${RTW88_TEST_CFLAGS:-} -I"$work" \
     "$tools/rtw8723d-edca-contract.c" "$src/sys/dev/ic/rtw8723d_edca.c" \
