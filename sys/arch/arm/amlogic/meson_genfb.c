@@ -131,7 +131,7 @@ static int	meson_genfb_scale_helper(SYSCTLFN_PROTO);
 void		meson_genfb_set_console_dev(device_t);
 void		meson_genfb_ddb_trap_callback(int);
 
-static int meson_genfb_console_phandle = -1;
+static int meson_genfb_console_phandle __unused = -1;
 static device_t meson_genfb_console_dev = NULL;
 
 CFATTACH_DECL_NEW(meson_genfb, sizeof(struct meson_genfb_softc),
