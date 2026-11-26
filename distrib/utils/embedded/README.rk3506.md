@@ -1,6 +1,6 @@
 # Build a Luckfox Lyra Zero W SD image
 
-Use the embedded image builder with the common earmv7hf `GENERIC` outputs. The first bring-up image has one FAT partition and starts the kernel from U-Boot. The full layout also places a matching EmberBSD userland in an FFS partition named `netbsd-root`.
+Use the embedded image builder with the common earmv7hf `GENERIC` outputs. The console image uses a FAT boot partition and a raw U-Boot partition. The full layout also places a matching EmberBSD userland in an FFS partition named `netbsd-root`.
 
 ## Inputs
 
@@ -17,11 +17,12 @@ The board profile identifies the loader package, versions, hardware applicabilit
 export TOOL_MKUBOOTIMAGE="$tooldir/bin/nbmkubootimage"
 export TOOL_MAKEFS="$tooldir/bin/nbmakefs"
 export TOOL_GPT="$tooldir/bin/nbgpt"
-export TOOL_CKSUM="$tooldir/bin/nbcksum"
 export TOOL_MTREE="$tooldir/bin/nbmtree"
 export TOOL_OBJCOPY="$host_prefix/bin/llvm-objcopy"
 export TOOL_PYTHON="$host_prefix/bin/python3.15"
 export TOOL_FDTGET="$host_prefix/bin/fdtget"
+export TOOL_FDTPUT="$host_prefix/bin/fdtput"
+export TOOL_DTC="$host_prefix/bin/dtc"
 export RK3506_UBOOT
 
 # Prepare the console image. makefs reads the user and group files from the OS tree.
@@ -46,7 +47,9 @@ Apply the private configuration in the static root producer. Select the root dev
 
 Use a regular output file. The builder prepares a new file before replacing an existing image. The FAT partition starts at 16 MiB. U-Boot reads `boot.scr` there and passes the external DTB to the ARM kernel. The script places the legacy image header at 0x02000000. The first instruction then runs at 0x02000040, as required by the evbarm initial section mapping.
 
-Inspect both GPT copies, read the loader back at byte 32768 and extract the kernel, DTB and boot script from FAT. Compare the bytes with the selected inputs. Physical acceptance requires a cold boot on the target, console output from the selected kernel, and, for a full installation, a mounted root and a network login.
+The first-stage loader selects the second stage from microSD. The Armbian SPL reads the original FIT at sector 16384. The Rockchip 2017.09 SPL reads the GPT partition named `uboot` at sector 20480. The image builder packs a second FIT for the Rockchip OP-TEE handoff there. It checks the pinned combined loader, the configuration and the SHA-256 of each of the three payloads. Both FITs contain the same U-Boot, OP-TEE and control DTB. The builder accepts the hash-only configuration in the selected package. A signed configuration requires its original signing process.
+
+Inspect both GPT copies, read the combined loader back at byte 32768, compare the three payloads in the `uboot` FIT and extract the kernel, DTB and boot script from FAT. Compare the bytes with the selected inputs. Physical acceptance requires a cold boot on the target, console output from the selected kernel, and, for a full installation, a mounted root and a network login.
 
 Test the kernel header and CRC checks, init link resolution and the console device with the selected host tools.
 
