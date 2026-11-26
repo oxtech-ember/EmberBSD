@@ -100,9 +100,10 @@ struct a733_drm {
 	struct drm_connector connector;
 	struct sun60i_a733_de352_state native;
 	bool lock, busy;
+	unsigned idle;
 	int fault;
-	void *client, *queue;
-	bool vblank_irq, vblank_on;
+	void *client, *queue, *worker_cpu;
+	bool vblank_irq, vblank_on, shadow_enabled;
 };
 typedef int64_t ktime_t;
 static int64_t ktime_to_ns(ktime_t t){ return t; }
@@ -110,6 +111,7 @@ struct a733_commit {
 	struct work work;
 	struct completion done;
 	struct drm_atomic_state *state;
+	uint64_t owner_id;
 	bool nonblock;
 };
 static struct a733_drm *current;
@@ -357,6 +359,41 @@ static int drm_atomic_helper_check(struct drm_device *d, struct drm_atomic_state
 	CHECK(d == current->dev && s->refs == 1);
 	return check_error;
 }
+struct a733_vblank_stamp { uint64_t sequence, time_ns; };
+static void a733_drm_vblank_history_reset(struct a733_drm *sc, bool active)
+{ CHECK(sc == current && active != sc->vblank_on); }
+static int a733_presented_stamp(struct a733_drm *sc,
+    const struct sun60i_a733_de352_completion *done, struct a733_vblank_stamp *out)
+{ (void)sc; (void)done; (void)out; CHECK(false); return EIO; }
+static uint64_t a733_event_owner(struct a733_drm *sc, const struct drm_crtc_state *crtc)
+{ (void)sc; (void)crtc; CHECK(false); return 0; }
+static void membar_sync(void) { CHECK(false); }
+static int a733_submit_frame(struct a733_drm *sc, const struct a733_drm_fb *fb,
+    const struct sun60i_a733_drm_frame *frame, bool fenced, uint64_t owner,
+    bool vblank, struct sun60i_a733_de352_completion *done)
+{
+	(void)fenced;
+	(void)vblank;
+	CHECK(owner == 0);
+	return sun60i_a733_drm_frame_submit(sc->client, &sc->native,
+	    fb->object, frame, done);
+}
+
+static int hz = 100;
+static unsigned ticks;
+static unsigned getticks(void) { return ticks; }
+static void cv_broadcast(unsigned *cv)
+{ CHECK(cv == &current->idle && current->lock && !current->busy); }
+static int cv_timedwait(unsigned *cv, bool *lock, unsigned timeout)
+{
+	CHECK(cv == &current->idle && lock == &current->lock && *lock);
+	ticks += timeout;
+	return EWOULDBLOCK;
+}
+static struct drm_plane_state *
+drm_atomic_get_old_plane_state(struct drm_atomic_state *state, struct drm_plane *plane)
+{ (void)state; (void)plane; return NULL; }
+
 #include "worker.c"
 static void
 reset(struct a733_drm *sc, struct drm_device *dev, struct drm_atomic_state *state, struct a733_drm_fb *fb, struct drm_gem_cma_object *object)
@@ -618,6 +655,15 @@ main(void)
 		CHECK(vblank_off_calls==((irq&&!failure)?1u:0u));
 		CHECK(sc.vblank_on==(irq&&failure));
 	}
+	reset(&sc, &dev, &state, &fb, &object);
+	sc.shadow_enabled = true;
+	sc.busy = true;
+	state.crtc.active = false;
+	CHECK(a733_drm_atomic_commit(&dev, &state, false) == -ETIMEDOUT);
+	CHECK(sc.busy && !sc.lock && !pending && !setup_calls);
+	sc.fault = EIO;
+	CHECK(a733_drm_atomic_commit(&dev, &state, false) == -EIO);
+	CHECK(setup_calls == 0);
 	printf("PASS %u bounded worker and atomic admission checks\n", checks);
 	return 0;
 }

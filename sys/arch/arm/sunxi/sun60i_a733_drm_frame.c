@@ -8,6 +8,8 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #include <sys/errno.h>
 #include <sys/systm.h>
 #include <linux/dma-fence.h>
+#include <linux/dma-buf.h>
+#include <drm/drm_prime.h>
 #include <linux/dma-resv.h>
 #include <linux/jiffies.h>
 #include <linux/slab.h>
@@ -223,4 +225,104 @@ sun60i_a733_drm_frame_submit(struct sun60i_a733_de352_client *client,
 	if (error == 0)
 		*completion = done;
 	return error;
+}
+
+static struct drm_gem_object *
+shadow_exporter(struct drm_gem_cma_object *src)
+{
+	struct dma_buf_attachment *attach = src->base.import_attach;
+	struct drm_gem_object *obj;
+	struct dma_buf *buf;
+
+	if (src->sgt == NULL || attach == NULL)
+		return NULL;
+	buf = attach->dmabuf;
+	if (buf->ops->release != drm_gem_dmabuf_release ||
+	    buf->resv != src->base.resv)
+		return NULL;
+	obj = buf->priv;
+	if (obj == NULL || obj->resv != buf->resv || obj->size != src->base.size ||
+	    obj->funcs == NULL || obj->funcs->begin_cpu_read == NULL ||
+	    obj->funcs->end_cpu_read == NULL)
+		return NULL;
+	return obj;
+}
+
+bool
+sun60i_a733_drm_frame_has_import_reader(struct drm_gem_cma_object *src)
+{
+
+	return shadow_exporter(src) != NULL;
+}
+
+int
+sun60i_a733_drm_frame_shadow_copy(const struct sun60i_a733_de352_state *state,
+    struct drm_gem_cma_object *source, struct drm_gem_cma_object *shadow,
+    const struct sun60i_a733_drm_frame *in)
+{
+	struct sun60i_a733_de352_frame source_map, shadow_map;
+	struct a733_scanout *reader;
+	struct drm_gem_object *exporter = NULL;
+	const void *pixels;
+	size_t bytes;
+	int error;
+
+	error = scanout_frame(state, source, in, &source_map);
+	if (error != 0)
+		return error;
+	error = scanout_frame(state, shadow, in, &shadow_map);
+	if (error != 0)
+		return error;
+	if (source->base.resv == shadow->base.resv ||
+	    source->vaddr == NULL || shadow->vaddr == NULL || shadow->sgt != NULL)
+		return EINVAL;
+	if (source->sgt != NULL) {
+		exporter = shadow_exporter(source);
+		if (exporter == NULL)
+			return EOPNOTSUPP;
+	}
+	bytes = (size_t)in->pitch * in->height;
+	/* Reject overlapping DMA spans even if the GEM objects are distinct. */
+	const uint64_t src = source_map.map->dm_segs[0].ds_addr;
+	const uint64_t dst = shadow_map.map->dm_segs[0].ds_addr;
+	if (src < dst + bytes && dst < src + bytes)
+		return EINVAL;
+	reader = kzalloc(sizeof(*reader), GFP_KERNEL);
+	if (reader == NULL)
+		return ENOMEM;
+	spin_lock_init(&reader->lock);
+	dma_fence_init(&reader->fence, &scanout_ops, &reader->lock,
+	    dma_fence_context_alloc(1), 1);
+	pixels = source->vaddr;
+	error = scanout_publish(reader, source->base.resv);
+	if (error == 0 && exporter != NULL)
+		error = exporter->funcs->begin_cpu_read(exporter, bytes, &pixels);
+	if (error == 0) {
+		memcpy(shadow->vaddr, pixels, bytes);
+		if (exporter != NULL)
+			exporter->funcs->end_cpu_read(exporter);
+	}
+	scanout_finish(reader, false);
+	dma_fence_put(&reader->fence);
+	return error;
+}
+
+int
+sun60i_a733_drm_frame_shadow_present(
+    struct sun60i_a733_de352_client *client,
+    const struct sun60i_a733_de352_state *state,
+    struct drm_gem_cma_object *shadow, const struct sun60i_a733_drm_frame *in,
+    void *cookie, int (*retain)(void *), void (*release)(void *),
+    struct sun60i_a733_de352_completion *completion)
+{
+	struct sun60i_a733_de352_frame frame;
+	int error;
+
+	error = scanout_frame(state, shadow, in, &frame);
+	if (error != 0)
+		return error;
+	frame.cookie = cookie;
+	frame.retain = retain;
+	frame.release = release;
+	return sun60i_a733_de352_submit_shadow(client, &frame, completion);
 }

@@ -161,6 +161,18 @@ struct drm_gem_object_funcs {
 	 */
 	void (*vunmap)(struct drm_gem_object *obj, void *vaddr);
 
+#ifdef __NetBSD__
+	/*
+	 * Temporarily expose a borrowed CPU read span from an exporter. The
+	 * importer owns a reference and has waited for the producer, published
+	 * a READ fence, and excluded untracked device writes independently.
+	 * A successful begin must be paired with end before releasing the
+	 * fence. Return native errno and decline unsafe CPU aliases.
+	 */
+	int (*begin_cpu_read)(struct drm_gem_object *, size_t, const void **);
+	void (*end_cpu_read)(struct drm_gem_object *);
+#endif
+
 	/**
 	 * @mmap:
 	 *

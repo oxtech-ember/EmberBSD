@@ -196,6 +196,15 @@ def check_zero4_graphics(npu_observe, graphics):
     added = {(hdmi, name) for name in
              ("vdd08-supply", "vcc18-supply", "allwinner,external-resistor")}
     added.add((engine, "output"))
+    graphics_profile = {
+        (engine, "emberbsd,online-rcq-vblank"): b"",
+        (engine, "emberbsd,scanout-field-probe"): b"",
+        (display, "emberbsd,shadow-scanout"): b"",
+        (display, "emberbsd,kms-worker-cpu"): (7).to_bytes(4, "big"),
+    }
+    for key, value in graphics_profile.items():
+        require(graphics.get(key) == value, f"Zero 4 graphics profile {key}")
+    added.update(graphics_profile)
     init_on_demand = ("/soc/npu@3600000", "netbsd,init-on-demand")
     require(graphics.get(init_on_demand) == b"", "Zero 4 graphics NPU init on demand")
     added.add(init_on_demand)

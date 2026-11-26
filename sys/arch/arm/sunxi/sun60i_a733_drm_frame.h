@@ -26,4 +26,13 @@ int sun60i_a733_drm_frame_submit(struct sun60i_a733_de352_client *,
     const struct sun60i_a733_de352_state *, struct drm_gem_cma_object *,
     const struct sun60i_a733_drm_frame *,
     struct sun60i_a733_de352_completion *);
+/* The worker must finish the producer fence before copying an import. */
+bool sun60i_a733_drm_frame_has_import_reader(struct drm_gem_cma_object *);
+int sun60i_a733_drm_frame_shadow_copy(const struct sun60i_a733_de352_state *,
+    struct drm_gem_cma_object *, struct drm_gem_cma_object *,
+    const struct sun60i_a733_drm_frame *);
+int sun60i_a733_drm_frame_shadow_present(struct sun60i_a733_de352_client *,
+    const struct sun60i_a733_de352_state *, struct drm_gem_cma_object *,
+    const struct sun60i_a733_drm_frame *, void *, int (*)(void *),
+    void (*)(void *), struct sun60i_a733_de352_completion *);
 #endif

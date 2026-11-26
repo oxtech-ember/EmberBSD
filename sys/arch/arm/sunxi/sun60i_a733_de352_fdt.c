@@ -11,6 +11,9 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #include <sys/param.h>
 #include <sys/bus.h>
 #include <sys/device.h>
+#include <sys/endian.h>
+#include <sys/kmem.h>
+#include <sys/kthread.h>
 #include <sys/container_of.h>
 #include <sys/mutex.h>
 #include <sys/once.h>
@@ -18,6 +21,7 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #include <sys/sysctl.h>
 #include <sys/systm.h>
 #include <sys/time.h>
+#include <sys/workqueue.h>
 #include <dev/clk/clk_backend.h>
 #include <dev/fdt/fdtvar.h>
 #include <arm/sunxi/sun60i_a733_ccu.h>
@@ -158,10 +162,74 @@ struct sun60i_a733_de352_client {
 struct de352_frame {
 	struct sun60i_a733_de352_frame info;
 	struct sun60i_a733_de352_dma *dma;
-	bool held;
+	bool held, shadow;
+};
+
+#define DE352_SHADOW_RETIRE_MAX 3
+struct de352_shadow_retire {
+	struct de352_frame frame;
+	uint64_t sequence;
+	unsigned edges;
+};
+
+/* Read-only observation of the online DE at the physical TV0 interrupt. */
+#define DE352_EDGE_ROWS 128
+struct de352_edge_record {
+	uint64_t ticket, sequence, irq_ns, posted_ns, verified_ns;
+	uint32_t first_status, last_status, matches, sample_age_ns;
+};
+struct de352_edge_history {
+	uint64_t count;
+	struct de352_edge_record row[DE352_EDGE_ROWS];
+};
+enum {
+	POST_PHASE_NO_IRQ = 1, POST_PHASE_TV0_READ, POST_PHASE_DE_READ,
+	POST_PHASE_IRQ_RACE, POST_PHASE_TV0_STATUS, POST_PHASE_ACTIVE,
+	POST_PHASE_DE_SYNC_RELEASED, POST_PHASE_DE_STATUS, POST_PHASE_SAFE,
+	POST_PHASE_FIELD_TRANSITION
+};
+struct de352_post_phase {
+	uint64_t ticket, sequence, irq_ns, posted_ns, verified_ns, sampled_ns;
+	struct sun60i_a733_tv0_phase before, after;
+	uint32_t first, last, matches, reason;
+};
+struct de352_post_history {
+	uint64_t count;
+	struct de352_post_phase row[DE352_EDGE_ROWS];
+};
+CTASSERT(sizeof(struct de352_post_phase) == 96);
+
+struct de352_early_row {
+	uint64_t ticket, sequence, irq_ns, blank_ns;
+	uint32_t attempts, first_debug, last_debug, first_gint, last_gint;
+	uint32_t first_us, last_us, valid, no_phase, no_line, no_access, changed;
+};
+struct de352_early_history {
+	uint64_t count;
+	struct de352_early_row row[DE352_EDGE_ROWS];
+};
+
+struct de352_edge {
+	kmutex_t lock;
+	sun60i_a733_vblank_fn consumer;
+	void *arg;
+	struct workqueue *worker;
+	struct work work;
+	bool scheduled;
+	uint32_t address, queue, previous_address;
+	uint64_t previous_idle_sequence;
+	uint64_t blank_ns;
+	uint64_t ticket, posted_ns, verified_ns;
+	bool armed, irq_readback;
+	struct de352_edge_history history;
+	struct de352_post_history post;
+	struct de352_early_history early;
 };
 
 struct sun60i_de352_softc {
+	struct de352_edge edge;
+	bool field_probe, bsp_vblank;
+	int verify_each_flip;
 	device_t dev;
 	int phandle, power_phandle, output_phandle;
 	bus_space_tag_t bst;
@@ -173,6 +241,8 @@ struct sun60i_de352_softc {
 	struct sun60i_a733_de352_dma *dma;
 	struct sun60i_a733_output_mode mode;
 	struct de352_memory_snapshot memory;
+	bus_space_handle_t memory_iommu, memory_nsi;
+	bool memory_mapped;
 	struct sun60i_a733_de352_guard *guard;
 	struct de352_cold_state cold;
 	struct de352_cold_trace cold_trace;
@@ -188,6 +258,9 @@ struct sun60i_de352_softc {
 	uint64_t vblank;
 	struct sun60i_a733_de352_client client;
 	struct de352_frame active, pending;
+	struct de352_shadow_retire shadow_retire[DE352_SHADOW_RETIRE_MAX];
+	unsigned shadow_retire_count;
+
 };
 
 static ONCE_DECL(de352_once);
@@ -221,12 +294,354 @@ static const struct device_compatible_entry de352_compat[] = {
 	{ .compat = "allwinner,display-engine-v352" }, DEVICE_COMPAT_EOL
 };
 
+static uint64_t de352_replacement_extra(const struct sun60i_a733_output_mode *);
+
 static uint64_t
 de352_now(void)
 {
 	struct timespec ts;
 	nanouptime(&ts);
 	return (uint64_t)ts.tv_sec * UINT64_C(1000000000) + ts.tv_nsec;
+}
+
+/*
+ * Bracket the DE reads with owner-checked scanline samples. Do not hold
+ * edge.lock across provider calls (the TV0 IRQ nests intr_lock outside
+ * edge.lock). The ticket and newest record must survive both samples.
+ */
+static struct de352_edge_record *
+de352_edge_pending(struct de352_edge *e, uint64_t sequence)
+{
+	struct de352_edge_record *r;
+
+	if (!e->armed || e->history.count == 0)
+		return NULL;
+	r = &e->history.row[(e->history.count - 1) % DE352_EDGE_ROWS];
+	if (r->ticket != e->ticket || r->sequence != sequence ||
+	    r->sample_age_ns != 0 || de352_now() - r->irq_ns >= e->blank_ns)
+		return NULL;
+	return r;
+}
+
+static void
+de352_early_note(struct sun60i_de352_softc *sc, uint64_t sequence,
+    const struct sun60i_a733_tv0_phase *phase, unsigned reason)
+{
+	struct de352_edge *e = &sc->edge;
+	struct de352_early_row *r;
+	uint64_t age;
+
+	if (!sc->field_probe)
+		return;
+	mutex_spin_enter(&e->lock);
+	if (!e->armed || e->early.count == 0)
+		goto out;
+	r = &e->early.row[(e->early.count - 1) % DE352_EDGE_ROWS];
+	if (r->sequence != sequence || r->ticket != e->ticket)
+		goto out;
+	age = de352_now() - r->irq_ns;
+	if (r->attempts++ == 0) {
+		r->first_debug = phase->debug;
+		r->first_gint = phase->gint0;
+		r->first_us = age / 1000;
+	}
+	r->last_debug = phase->debug;
+	r->last_gint = phase->gint0;
+	r->last_us = age / 1000;
+	switch (reason) {
+	case 0: r->valid++; break;
+	case 1: r->no_phase++; break;
+	case 2: r->no_line++; break;
+	case 3: r->no_access++; break;
+	case 4: r->changed++; break;
+	}
+out:
+	mutex_spin_exit(&e->lock);
+}
+
+struct de352_edge_sample {
+	uint32_t first, queue, address, offline, last;
+};
+
+/* Sampling the online registers needs only the reserved and clocked DE. */
+static bool
+de352_sample_edge(struct sun60i_de352_softc *sc, struct de352_edge_sample *s)
+{
+	return bus_space_peek_4(sc->bst, sc->bsh, 0x8104, &s->first) == 0 &&
+	    bus_space_peek_4(sc->bst, sc->bsh, 0x8114, &s->queue) == 0 &&
+	    bus_space_peek_4(sc->bst, sc->bsh, 0x1c1010, &s->address) == 0 &&
+	    bus_space_peek_4(sc->bst, sc->bsh, 0x80d0, &s->offline) == 0 &&
+	    bus_space_peek_4(sc->bst, sc->bsh, 0x8104, &s->last) == 0;
+}
+
+static uint32_t
+de352_edge_matches(const struct de352_edge_sample *s, uint32_t queue,
+    uint32_t address)
+{
+	return (s->queue == queue ? 1U : 0U) |
+	    (s->address == address ? 2U : 0U) |
+	    ((s->offline & 1) == 0 ? 4U : 0U);
+}
+
+static void
+de352_edge_measure(struct sun60i_de352_softc *sc, uint64_t sequence)
+{
+	struct de352_edge *e = &sc->edge;
+	struct de352_edge_record *r;
+	struct de352_edge_sample sample;
+	uint32_t before, after;
+	uint64_t now, ticket;
+	bool valid;
+	struct sun60i_a733_tv0_phase phase = {0};
+	int phase_error = 0;
+
+	if (sc->field_probe)
+		phase_error = sun60i_a733_output_sample_tv0_phase(
+		    sc->output_phandle, sc, sequence, &phase);
+	if (sun60i_a733_output_sample_blank_line(sc->output_phandle, sc,
+	    sequence, &before) != 0) {
+		de352_early_note(sc, sequence, &phase, phase_error ? 1 : 2);
+		return;
+	}
+	mutex_spin_enter(&e->lock);
+	r = de352_edge_pending(e, sequence);
+	ticket = e->ticket;
+	valid = r != NULL && de352_sample_edge(sc, &sample);
+	mutex_spin_exit(&e->lock);
+	if (!valid || sun60i_a733_output_sample_blank_line(sc->output_phandle,
+	    sc, sequence, &after) != 0 || after < before) {
+		de352_early_note(sc, sequence, &phase, valid ? 4 : 3);
+		return;
+	}
+	de352_early_note(sc, sequence, &phase, 0);
+	mutex_spin_enter(&e->lock);
+	r = de352_edge_pending(e, sequence);
+	if (r != NULL && r->ticket == ticket) {
+		now = de352_now();
+		r->first_status = sample.first;
+		r->last_status = sample.last;
+		r->matches = de352_edge_matches(&sample, e->queue, e->address);
+		r->sample_age_ns = (uint32_t)(now - r->irq_ns);
+		if ((r->first_status & 0x14) == 0 && (r->last_status & 0x14) == 0 &&
+		    r->matches == 5 && sample.address == e->previous_address)
+			e->previous_idle_sequence = sequence;
+	}
+	mutex_spin_exit(&e->lock);
+}
+
+static void
+de352_edge_work(struct work *work, void *cookie)
+{
+	struct sun60i_de352_softc *sc = cookie;
+	struct de352_edge *e = &sc->edge;
+	uint64_t sequence = 0;
+
+	(void)work;
+	mutex_spin_enter(&e->lock);
+	e->scheduled = false;
+	if (e->armed && e->history.count != 0)
+		sequence = e->history.row[(e->history.count - 1) %
+		    DE352_EDGE_ROWS].sequence;
+	mutex_spin_exit(&e->lock);
+	if (sequence != 0)
+		de352_edge_measure(sc, sequence);
+}
+
+/*
+ * A733 manual 15.2.7.3 starts line numbering at 1 on VSA. 15.2.10.10
+ * puts output active after VBP+1 lines. The separate START_DELAY
+ * releases DE_SYNC at the end of its named line (15.2.10.6).
+ * Leave a whole line of margin at each cutoff.
+ */
+static unsigned
+de352_post_phase_result(const struct de352_post_phase *p)
+{
+	const struct sun60i_a733_tv0_phase *before = &p->before, *after = &p->after;
+	const uint32_t lo = before->debug & 0xffff;
+	const uint32_t hi = after->debug & 0xffff;
+	const uint32_t vbp = after->basic4 & 0x7fff;
+	const uint32_t delay = (after->control >> 4) & 0xffff;
+	const uint32_t irq_mask = 0x40004000;
+
+	if (before->control != after->control || before->basic4 != after->basic4 ||
+	    (after->control & 0x80100000) != 0x80000000 ||
+	    ((before->debug | after->debug) & 0x60000000) != 0 ||
+	    (before->gint0 & irq_mask) != 0x40000000 ||
+	    (after->gint0 & irq_mask) != 0x40000000 || lo == 0 || hi < lo)
+		return POST_PHASE_TV0_STATUS;
+	if (hi > vbp)
+		return POST_PHASE_ACTIVE;
+	if (hi >= delay)
+		return POST_PHASE_DE_SYNC_RELEASED;
+	if ((p->first & 0x14) != 4 || (p->last & 0x14) != 4 ||
+	    p->matches != 7)
+		return POST_PHASE_DE_STATUS;
+	return POST_PHASE_SAFE;
+}
+
+static void
+de352_measure_post_phase(struct sun60i_de352_softc *sc)
+{
+	struct de352_edge *e = &sc->edge;
+	struct de352_post_phase p = { .reason = POST_PHASE_NO_IRQ };
+	const struct de352_edge_record *r;
+	struct de352_edge_sample sample;
+	uint32_t expected_queue, expected_addr;
+	uint64_t now;
+
+	KASSERT(mutex_owned(&sc->lock));
+	mutex_spin_enter(&e->lock);
+	if (!e->armed || e->verified_ns == 0) {
+		mutex_spin_exit(&e->lock);
+		return;
+	}
+	p.ticket = e->ticket;
+	p.posted_ns = e->posted_ns;
+	p.verified_ns = e->verified_ns;
+	expected_queue = e->queue;
+	expected_addr = e->address;
+	if (e->history.count != 0) {
+		r = &e->history.row[(e->history.count - 1) % DE352_EDGE_ROWS];
+		if (r->ticket == p.ticket) {
+			p.sequence = r->sequence;
+			p.irq_ns = r->irq_ns;
+		}
+	}
+	mutex_spin_exit(&e->lock);
+
+	if (p.irq_ns == 0)
+		goto record;
+	p.reason = POST_PHASE_TV0_READ;
+	if (sun60i_a733_output_sample_tv0_phase(sc->output_phandle, sc,
+	    p.sequence, &p.before) != 0)
+		goto record;
+
+	/* sc->lock keeps this ticket and the display lease across the reads. */
+	p.reason = POST_PHASE_DE_READ;
+	if (!de352_sample_edge(sc, &sample))
+		goto record;
+	p.first = sample.first;
+	p.last = sample.last;
+	p.matches = de352_edge_matches(&sample, expected_queue, expected_addr);
+	p.reason = POST_PHASE_IRQ_RACE;
+	if (sun60i_a733_output_sample_tv0_phase(sc->output_phandle, sc,
+	    p.sequence, &p.after) != 0)
+		goto record;
+	p.reason = de352_post_phase_result(&p);
+record:
+	now = de352_now();
+	p.sampled_ns = now;
+	mutex_spin_enter(&e->lock);
+	/* Correlate a vendor idle vblank with the completed transfer.
+	 * This observation alone never sends a page flip or releases storage. */
+	if (sc->field_probe && p.reason == POST_PHASE_DE_SYNC_RELEASED &&
+	    e->previous_idle_sequence == p.sequence && p.sequence != 0 &&
+	    p.matches == 7 && (p.first & 0x14) == 0x14 &&
+	    (p.last & 0x14) == 0x14 &&
+	    (p.after.debug & 0xffff) < (p.after.basic4 & 0x7fff))
+		p.reason = POST_PHASE_FIELD_TRANSITION;
+	if (p.reason == POST_PHASE_SAFE || p.reason == POST_PHASE_FIELD_TRANSITION) {
+		r = &e->history.row[(e->history.count - 1) % DE352_EDGE_ROWS];
+		if (!e->armed || p.ticket != e->ticket ||
+		    r->sequence != p.sequence || r->ticket != p.ticket ||
+		    p.posted_ns > p.irq_ns || p.irq_ns > p.verified_ns ||
+		    p.sampled_ns - p.irq_ns >= e->blank_ns)
+			p.reason = POST_PHASE_IRQ_RACE;
+	}
+	e->post.row[e->post.count++ % DE352_EDGE_ROWS] = p;
+	mutex_spin_exit(&e->lock);
+}
+
+/*
+ * The worker already verified this immutable request before the interrupt.
+ * Confirm the same online queue and pixel address at this field boundary.
+ * The TV0 interrupt owns the outer spin lock. Do not call the output provider
+ * or release any DMA reference here.
+ */
+static void
+de352_confirm_irq(struct sun60i_de352_softc *sc, struct de352_edge_record *r,
+    const struct sun60i_a733_irq_window *window)
+{
+	const struct de352_edge *e = &sc->edge;
+	struct de352_edge_sample s;
+	uint64_t age;
+	uint32_t before, after;
+
+	if (!e->irq_readback || r->verified_ns == 0 ||
+	    r->posted_ns > r->verified_ns || r->verified_ns > r->irq_ns ||
+	    e->blank_ns == 0 || window == NULL ||
+	    !window->blank_line(window->cookie, &before))
+		return;
+	/* AArch64 peek uses the current LWP fault buffer. The IRQ uses only
+	 * the live DE aperture already verified under this ticket. */
+	s.first = bus_space_read_4(sc->bst, sc->bsh, 0x8104);
+	if ((s.first & 0x14) != 4)
+		return;
+	s.queue = bus_space_read_4(sc->bst, sc->bsh, 0x8114);
+	s.address = bus_space_read_4(sc->bst, sc->bsh, 0x1c1010);
+	s.offline = bus_space_read_4(sc->bst, sc->bsh, 0x80d0);
+	s.last = bus_space_read_4(sc->bst, sc->bsh, 0x8104);
+	if ((s.last & 0x14) != 4 ||
+	    de352_edge_matches(&s, e->queue, e->address) != 7 ||
+	    !window->blank_line(window->cookie, &after) || after < before)
+		return;
+	age = de352_now() - r->irq_ns;
+	if (age == 0 || age >= e->blank_ns || age > UINT32_MAX)
+		return;
+	r->matches = 7;
+	r->first_status = s.first;
+	r->last_status = s.last;
+	r->sample_age_ns = (uint32_t)age;
+}
+
+static void
+de352_edge_irq(void *arg, uint64_t sequence,
+    const struct sun60i_a733_irq_window *window)
+{
+	struct sun60i_de352_softc *sc = arg;
+	struct de352_edge *edge = &sc->edge;
+	sun60i_a733_vblank_fn consumer;
+	void *cookie;
+
+	mutex_spin_enter(&edge->lock);
+	if (edge->armed && edge->posted_ns != 0) {
+		struct de352_edge_history *h = &edge->history;
+		struct de352_edge_record *r = &h->row[h->count % DE352_EDGE_ROWS];
+
+		r->ticket = edge->ticket;
+		r->sequence = sequence;
+		r->irq_ns = de352_now();
+		r->posted_ns = edge->posted_ns;
+		r->verified_ns = edge->verified_ns;
+		r->first_status = r->last_status = r->matches = r->sample_age_ns = 0;
+		h->count++;
+		de352_confirm_irq(sc, r, window);
+		if (sc->field_probe) {
+			struct de352_early_history *early = &edge->early;
+			early->row[early->count++ % DE352_EDGE_ROWS] =
+			    (struct de352_early_row){
+				.ticket = r->ticket, .sequence = sequence,
+				.irq_ns = r->irq_ns, .blank_ns = edge->blank_ns
+			    };
+		}
+		if (r->sample_age_ns == 0 && edge->worker != NULL && !edge->scheduled) {
+			edge->scheduled = true;
+			workqueue_enqueue(edge->worker, &edge->work, NULL);
+		}
+	}
+	consumer = edge->consumer;
+	cookie = edge->arg;
+	mutex_spin_exit(&edge->lock);
+	if (consumer != NULL)
+		consumer(cookie, sequence);
+}
+
+static void
+de352_edge_disarm(struct sun60i_de352_softc *sc)
+{
+	mutex_spin_enter(&sc->edge.lock);
+	sc->edge.armed = false;
+	mutex_spin_exit(&sc->edge.lock);
 }
 
 static int
@@ -280,7 +695,8 @@ de352_field(struct sun60i_de352_softc *sc, uint32_t reg,
 	return (after & mask) == value ? 0 : EIO;
 }
 
-static int de352_cold_verify(struct sun60i_de352_softc *);
+static int de352_cold_verify(struct sun60i_de352_softc *,
+    bus_space_handle_t);
 
 /* Caller holds the one display reservation. No IOMMU or NSI write is made. */
 static int
@@ -310,14 +726,20 @@ de352_memory(struct sun60i_de352_softc *sc)
 	    (clocks[0][A733_DISPLAY_MEMORY_PERIPH_STATUS] & 0x02000000) == 0 ||
 	    (clocks[0][A733_DISPLAY_MEMORY_NSI] & 0xdf000000) != 0xc3000000)
 		return EOPNOTSUPP;
-	error = bus_space_map(sc->bst, DE352_IOMMU1_BASE, DE352_IOMMU1_SIZE,
-	    0, &ih);
-	if (error != 0)
-		return error;
-	error = bus_space_map(sc->bst, DE352_NSI_BASE, DE352_NSI_SIZE, 0, &nh);
-	if (error != 0) {
-		bus_space_unmap(sc->bst, ih, DE352_IOMMU1_SIZE);
-		return error;
+	if (sc->memory_mapped) {
+		ih = sc->memory_iommu;
+		nh = sc->memory_nsi;
+	} else {
+		error = bus_space_map(sc->bst, DE352_IOMMU1_BASE,
+		    DE352_IOMMU1_SIZE, 0, &ih);
+		if (error != 0)
+			return error;
+		error = bus_space_map(sc->bst, DE352_NSI_BASE, DE352_NSI_SIZE,
+		    0, &nh);
+		if (error != 0) {
+			bus_space_unmap(sc->bst, ih, DE352_IOMMU1_SIZE);
+			return error;
+		}
 	}
 	for (u_int s = 0; s < 2 && error == 0; s++) {
 		for (u_int i = 0; i < __arraycount(iregs) && error == 0; i++)
@@ -325,22 +747,38 @@ de352_memory(struct sun60i_de352_softc *sc)
 		for (u_int i = 0; i < __arraycount(nregs) && error == 0; i++)
 			error = bus_space_peek_4(sc->bst, nh, nregs[i], &nsi[s][i]);
 	}
-	bus_space_unmap(sc->bst, nh, DE352_NSI_SIZE);
-	bus_space_unmap(sc->bst, ih, DE352_IOMMU1_SIZE);
 	if (error != 0)
-		return error;
+		goto out;
 	memcpy(sc->memory.iommu, iommu, sizeof(iommu));
 	memcpy(sc->memory.nsi, nsi, sizeof(nsi));
 	sc->memory.valid |= 2;
 	if (memcmp(iommu[0], iommu[1], sizeof(iommu[0])) != 0 ||
-	    memcmp(nsi[0], nsi[1], sizeof(nsi[0])) != 0)
-		return EBUSY;
+	    memcmp(nsi[0], nsi[1], sizeof(nsi[0])) != 0) {
+		error = EBUSY;
+		goto out;
+	}
 	/* Unknown bypass/global-disable behavior is not an identity mapping. */
 	if (iommu[0][0] != 0x16 || (iommu[0][1] & 4) == 0 ||
 	    iommu[0][2] != 1 || iommu[0][3] != 1 || iommu[0][4] != 0 ||
-	    (nsi[0][0] & 3) != 0 || (nsi[0][2] & 1) == 0)
-		return EOPNOTSUPP;
-	return sc->cold_initialized ? de352_cold_verify(sc) : 0;
+	    (nsi[0][0] & 3) != 0 || (nsi[0][2] & 1) == 0) {
+		error = EOPNOTSUPP;
+		goto out;
+	}
+	if (sc->cold_initialized)
+		error = de352_cold_verify(sc, ih);
+out:
+	if (!sc->memory_mapped) {
+		if (error == 0 && sc->step == 10 && sc->retained) {
+			/* The successful DE owner has a boot-long lease. */
+			sc->memory_iommu = ih;
+			sc->memory_nsi = nh;
+			sc->memory_mapped = true;
+		} else {
+			bus_space_unmap(sc->bst, nh, DE352_NSI_SIZE);
+			bus_space_unmap(sc->bst, ih, DE352_IOMMU1_SIZE);
+		}
+	}
+	return error;
 }
 
 /* A complete stable capture must precede this restricted local profile. */
@@ -494,21 +932,16 @@ de352_cold_same(struct de352_cold_state *expected,
 }
 
 static int
-de352_cold_verify(struct sun60i_de352_softc *sc)
+de352_cold_verify(struct sun60i_de352_softc *sc, bus_space_handle_t ih)
 {
 	struct de352_cold_state current;
-	bus_space_handle_t ih;
 	int error;
 
 	if (sc->guard == NULL || !sc->guard->published)
 		return EINVAL;
-	error = bus_space_map(sc->bst, DE352_IOMMU1_BASE, DE352_IOMMU1_SIZE, 0, &ih);
-	if (error != 0)
-		return error;
 	error = de352_cold_read(sc, ih, &current, NULL);
 	if (error == 0)
 		error = de352_cold_same(&sc->cold, &current);
-	bus_space_unmap(sc->bst, ih, DE352_IOMMU1_SIZE);
 	return error;
 }
 
@@ -912,11 +1345,35 @@ de352_poll(struct sun60i_de352_softc *sc, uint32_t mask,
     struct de352_rcq_trace *t)
 {
 	const uint64_t start = de352_now();
-	uint64_t elapsed;
+	uint64_t elapsed, tried = 0;
 	int error;
 
 	for (;;) {
 		error = de352_read(sc, 0x8104, &sc->last_status);
+		if (sc->field_probe && sc->pending.shadow && error == 0 &&
+		    (sc->last_status & 0x14) == 0) {
+			struct de352_edge *e = &sc->edge;
+			uint64_t sequence = 0;
+
+			mutex_spin_enter(&e->lock);
+			if (e->armed && e->history.count != 0) {
+				const struct de352_edge_record *r = &e->history.row[
+				    (e->history.count - 1) % DE352_EDGE_ROWS];
+				if (r->ticket == e->ticket)
+					sequence = r->sequence;
+			}
+			mutex_spin_exit(&e->lock);
+			if (sequence != 0 && sequence != tried) {
+				de352_edge_measure(sc, sequence);
+				/* TV0 can still report the final line at interrupt
+				 * entry. Retry on later hardware polls while this
+				 * exact ticket and blank are still current. */
+				mutex_spin_enter(&e->lock);
+				if (de352_edge_pending(e, sequence) == NULL)
+					tried = sequence;
+				mutex_spin_exit(&e->lock);
+			}
+		}
 		elapsed = de352_now() - start;
 		if (t != NULL) {
 			t->poll_us = de352_elapsed_us(elapsed);
@@ -937,7 +1394,8 @@ de352_poll(struct sun60i_de352_softc *sc, uint32_t mask,
 
 /* The request is a command. It need not remain set after the write. */
 static int
-de352_request(struct sun60i_de352_softc *sc, struct de352_rcq_trace *t)
+de352_request(struct sun60i_de352_softc *sc, struct de352_rcq_trace *t,
+    bool once)
 {
 	const uint64_t start = de352_now();
 	uint64_t elapsed;
@@ -965,11 +1423,15 @@ de352_request(struct sun60i_de352_softc *sc, struct de352_rcq_trace *t)
 			if (error == 0 && control != 0)
 				error = EBUSY;
 			if (error == 0) {
+				mutex_spin_enter(&sc->edge.lock);
 				error = bus_space_poke_4(sc->bst, sc->bsh,
 				    0x8110, control | 1);
 				bus_space_barrier(sc->bst, sc->bsh, 0x8110, 4,
 				    BUS_SPACE_BARRIER_WRITE);
 				submitted = error == 0;
+				if (submitted && sc->edge.armed)
+					sc->edge.posted_ns = de352_now();
+				mutex_spin_exit(&sc->edge.lock);
 			}
 		}
 		splx(level);
@@ -978,6 +1440,8 @@ de352_request(struct sun60i_de352_softc *sc, struct de352_rcq_trace *t)
 			t->request_us = de352_elapsed_us(elapsed);
 		if (error != 0 || submitted)
 			return error;
+		if (once)
+			return EAGAIN;
 		if (elapsed >= DE352_TIMEOUT_NS)
 			return ETIMEDOUT;
 		delay(10);
@@ -1024,7 +1488,33 @@ de352_rcq_words(const struct sun60i_a733_de352_dma *dma,
 	memcpy(words, list, sizeof(list));
 }
 
-/* The last poll read succeeded; the display resources are still retained. */
+/*
+ * The queue changes only the pixel address on this active, owned output.
+ * The first commit, a different plane setup and the drain path check every
+ * register. A new latch needs a distinct pixel address.
+ */
+static bool
+de352_address_flip(struct sun60i_de352_softc *sc,
+    const struct sun60i_a733_de352_dma *dma)
+{
+	uint32_t old[RCQ_COPY_WORDS], next[RCQ_COPY_WORDS];
+
+	if (!sc->bsp_vblank || !sc->field_probe || sc->verify_each_flip ||
+	    sc->output_stopped || dma == NULL || dma->disabled ||
+	    sc->active.dma == NULL || sc->active.dma->disabled ||
+	    !sc->active.held || !sc->pending.held || !sc->active.shadow ||
+	    !sc->pending.shadow || sc->pending.dma != dma ||
+	    sc->shadow_retire_count >= DE352_SHADOW_RETIRE_MAX)
+		return false;
+	de352_rcq_words(sc->active.dma, old);
+	de352_rcq_words(dma, next);
+	if (old[4] == next[4])
+		return false;
+	old[4] = next[4];
+	return memcmp(old, next, sizeof(old)) == 0;
+}
+
+/* The last poll read succeeded and the display resources are retained. */
 static void
 de352_rcq_timeout_sample(struct sun60i_de352_softc *sc,
     const struct sun60i_a733_de352_dma *dma,
@@ -1052,18 +1542,14 @@ de352_rcq_timeout_sample(struct sun60i_de352_softc *sc,
 }
 
 static int
-de352_submit_dma(struct sun60i_de352_softc *sc,
-    struct sun60i_a733_de352_dma *dma, bool initial)
+de352_prepare_dma(struct sun60i_de352_softc *sc,
+    struct sun60i_a733_de352_dma *dma, bool initial,
+    struct de352_submit_trace *t)
 {
-	uint32_t words[RCQ_COPY_WORDS];
-	struct de352_submit_trace *t = initial && sc->step == 8 &&
-	    sc->submit_trace.valid == 1 ? &sc->submit_trace : NULL;
-	struct de352_rcq_trace *rcq = initial ? (t != NULL ? &t->rcq : NULL) :
-	    &sc->update_trace.rcq;
 	uint32_t value;
 	int error;
 
-	de352_rcq_words(dma, words);
+	de352_edge_disarm(sc);
 	if (t != NULL)
 		t->phase = ST_MEMORY;
 	if (!initial)
@@ -1113,48 +1599,142 @@ de352_submit_dma(struct sun60i_de352_softc *sc,
 	error = de352_read(sc, 0x8104, &value);
 	if (error != 0 || (value & 0x0c) != 0)
 		return error != 0 ? error : EIO;
+	if (!initial && !dma->disabled) {
+		struct de352_edge *edge = &sc->edge;
+		const bool irq_readback = de352_address_flip(sc, dma);
+
+		mutex_spin_enter(&edge->lock);
+		edge->irq_readback = irq_readback;
+		edge->ticket++;
+		/* The admitted single-plane modes fit this 64-bit calculation. */
+		edge->blank_ns = sc->mode.vtotal > sc->mode.vdisplay &&
+		    sc->mode.pixel_clock_hz != 0 ?
+		    UINT64_C(1000000000) * sc->mode.htotal *
+		    (sc->mode.vtotal - sc->mode.vdisplay) / sc->mode.pixel_clock_hz : 0;
+		edge->posted_ns = edge->verified_ns = 0;
+		edge->address = dma->layer.address_low;
+		edge->previous_address = sc->active.dma != NULL ?
+		    sc->active.dma->layer.address_low : sc->dma->layer.address_low;
+		edge->previous_idle_sequence = 0;
+		edge->queue = (uint32_t)dma->queue.address;
+		edge->armed = true;
+		mutex_spin_exit(&edge->lock);
+	}
+	return 0;
+}
+
+static int
+de352_verify_dma(struct sun60i_de352_softc *sc,
+    struct sun60i_a733_de352_dma *dma, bool initial,
+    struct de352_submit_trace *t)
+{
+	uint32_t words[RCQ_COPY_WORDS], value;
+	const bool address_only = !initial && de352_address_flip(sc, dma);
+	const u_int first = address_only ? 4 : 0;
+	const u_int end = address_only ? 5 : __arraycount(words);
+	int error;
+
+	de352_rcq_words(dma, words);
+	if (t != NULL)
+		t->phase = ST_COPY;
+	if (!initial)
+		sc->update_trace.submit_phase = ST_COPY;
+	/* Confirm the changed address even when FINISH and TV0 are timely. */
+	for (u_int i = first; i < end; i++) {
+		const uint32_t reg = i == __arraycount(words) - 1 ?
+		    0x281000 : 0x1c1000 + 4 * i;
+		if (!initial) {
+			sc->update_trace.reg = reg;
+			sc->update_trace.expected = words[i];
+		}
+		error = de352_read(sc, reg, &value);
+		if (!initial && error == 0)
+			sc->update_trace.observed = value;
+		if (error != 0 || value != words[i])
+			return error != 0 ? error : EIO;
+	}
+	if (!initial)
+		sc->update_trace.submit_phase = ST_DONE;
+	mutex_spin_enter(&sc->edge.lock);
+	if (sc->edge.armed)
+		sc->edge.verified_ns = de352_now();
+	mutex_spin_exit(&sc->edge.lock);
+	if (sc->pending.shadow)
+		de352_measure_post_phase(sc);
+	return 0;
+}
+
+/*
+ * Sleep through the transfer when the queue is still running. An IRQ which
+ * races REQUEST can only wake this worker. FINISH and the field ticket
+ * decide whether the buffer can be presented.
+ */
+static int
+de352_wait_transfer(struct sun60i_de352_softc *sc, uint64_t generation)
+{
+	uint32_t status;
+	uint64_t observed, budget;
+	int error;
+
+	if (generation == UINT64_MAX)
+		return 0;
+	error = de352_read(sc, 0x8104, &status);
+	if (error != 0 || (status & 4) != 0)
+		return error;
+	budget = de352_replacement_extra(&sc->mode);
+	if (budget == 0)
+		return 0;
+	error = sun60i_a733_output_wait_vblank_irq(sc->output_phandle, sc,
+	    generation + 1, de352_now() + budget, &observed);
+	if (error == ETIMEDOUT || error == EOPNOTSUPP)
+		return 0;
+	return error;
+}
+
+static int
+de352_submit_dma(struct sun60i_de352_softc *sc,
+    struct sun60i_a733_de352_dma *dma, bool initial)
+{
+	uint32_t words[RCQ_COPY_WORDS];
+	struct de352_submit_trace *t = initial && sc->step == 8 &&
+	    sc->submit_trace.valid == 1 ? &sc->submit_trace : NULL;
+	struct de352_rcq_trace *rcq = initial ? (t != NULL ? &t->rcq : NULL) :
+	    &sc->update_trace.rcq;
+	uint64_t generation = UINT64_MAX;
+	int error;
+
+	error = de352_prepare_dma(sc, dma, initial, t);
+	if (error != 0)
+		return error;
 	if (t != NULL)
 		t->phase = ST_REQUEST;
 	if (!initial)
 		sc->update_trace.submit_phase = ST_REQUEST;
-	error = de352_request(sc, rcq);
+	if (!initial && de352_address_flip(sc, dma)) {
+		error = sun60i_a733_output_sample_vblank_irq(sc->output_phandle,
+		    sc, &generation);
+		if (error == EOPNOTSUPP)
+			generation = UINT64_MAX;
+		else if (error != 0)
+			return error;
+	}
+	error = de352_request(sc, rcq, false);
+	if (error == 0)
+		error = de352_wait_transfer(sc, generation);
 	if (error == 0 && t != NULL)
 		t->phase = ST_POLL;
 	if (error == 0 && !initial)
 		sc->update_trace.submit_phase = ST_POLL;
 	if (error == 0) {
 		error = de352_poll(sc, 4, rcq);
-		if (!initial && error == ETIMEDOUT)
+		if (!initial && error == ETIMEDOUT) {
+			de352_rcq_words(dma, words);
 			de352_rcq_timeout_sample(sc, dma, words);
+		}
 	}
 	if (error != 0)
 		return error;
-	if (t != NULL)
-		t->phase = ST_COPY;
-	if (!initial)
-		sc->update_trace.submit_phase = ST_COPY;
-	/* A flag alone is not proof that this list reached the owned registers. */
-	for (u_int i = 0; i < __arraycount(words) - 1; i++) {
-		if (!initial) {
-			sc->update_trace.reg = 0x1c1000 + 4 * i;
-			sc->update_trace.expected = words[i];
-		}
-		error = de352_read(sc, 0x1c1000 + 4 * i, &value);
-		if (!initial && error == 0)
-			sc->update_trace.observed = value;
-		if (error != 0 || value != words[i])
-			return error != 0 ? error : EIO;
-	}
-	if (!initial) {
-		sc->update_trace.reg = 0x281000;
-		sc->update_trace.expected = words[RCQ_COPY_WORDS - 1];
-	}
-	error = de352_read(sc, 0x281000, &value);
-	if (!initial && error == 0)
-		sc->update_trace.observed = value;
-	if (error == 0 && !initial && value == sc->update_trace.expected)
-		sc->update_trace.submit_phase = ST_DONE;
-	return error != 0 ? error : value == words[RCQ_COPY_WORDS - 1] ? 0 : EIO;
+	return de352_verify_dma(sc, dma, initial, t);
 }
 
 static int
@@ -1400,6 +1980,30 @@ de352_sysctl(SYSCTLFN_ARGS)
 }
 
 static int
+de352_sysctl_verify_flips(SYSCTLFN_ARGS)
+{
+	struct sun60i_de352_softc *sc = container_of((int *)rnode->sysctl_data,
+	    struct sun60i_de352_softc, verify_each_flip);
+	struct sysctlnode node = *rnode;
+	int value, error;
+
+	mutex_enter(&sc->lock);
+	value = sc->verify_each_flip;
+	mutex_exit(&sc->lock);
+	node.sysctl_data = &value;
+	node.sysctl_size = sizeof(value);
+	error = sysctl_lookup(SYSCTLFN_CALL(&node));
+	if (error != 0 || newp == NULL)
+		return error;
+	if (value != 0 && value != 1)
+		return EINVAL;
+	mutex_enter(&sc->lock);
+	sc->verify_each_flip = value != 0;
+	mutex_exit(&sc->lock);
+	return 0;
+}
+
+static int
 de352_sysctl_memory(SYSCTLFN_ARGS)
 {
 	struct sun60i_de352_softc *sc = rnode->sysctl_data;
@@ -1626,6 +2230,7 @@ de352_attach(device_t parent, device_t self, void *aux)
 	sc->bst = faa->faa_bst;
 	sc->dmat = faa->faa_dmat;
 	mutex_init(&sc->lock, MUTEX_DEFAULT, IPL_NONE);
+	mutex_init(&sc->edge.lock, MUTEX_DEFAULT, IPL_VM);
 	aprint_naive("\n");
 	aprint_normal(": A733 DE3.52, explicit single-plane probe only\n");
 	if (fdtbus_get_reg(sc->phandle, 0, &address, &size) != 0 ||
@@ -1655,6 +2260,13 @@ de352_attach(device_t parent, device_t self, void *aux)
 	de352_provider = sc;
 	mutex_exit(&de352_registry_lock);
 	sc->valid = true;
+	sc->field_probe = of_hasprop(faa->faa_phandle, "emberbsd,scanout-field-probe");
+	sc->bsp_vblank = sc->field_probe && of_hasprop(faa->faa_phandle,
+	    "emberbsd,online-rcq-vblank");
+	/* This diagnostic is optional. Normal display still works without it. */
+	if (workqueue_create(&sc->edge.worker, "deedge", de352_edge_work, sc,
+	    PRI_SOFTCLOCK, IPL_VM, WQ_MPSAFE) != 0)
+		sc->edge.worker = NULL;
 	if (sysctl_createv(&sc->sysctllog, 0, NULL, &node, 0, CTLTYPE_NODE,
 	    device_xname(self), NULL, NULL, 0, NULL, 0,
 	    CTL_HW, CTL_CREATE, CTL_EOL) != 0)
@@ -1703,6 +2315,11 @@ de352_attach(device_t parent, device_t self, void *aux)
 	    CTLTYPE_STRUCT, "phy_trace", SYSCTL_DESCR("Cached PHY I2C comparison"),
 	    de352_sysctl_phy_trace, 0, sc, sizeof(struct sun60i_a733_hdmi_phy_trace),
 	    CTL_CREATE, CTL_EOL);
+	(void)sysctl_createv(&sc->sysctllog, 0, &node, NULL, CTLFLAG_READWRITE,
+	    CTLTYPE_INT, "verify_flips", SYSCTL_DESCR("Check all plane words and the PHY on each flip"),
+	    de352_sysctl_verify_flips, 0, &sc->verify_each_flip, sizeof(int),
+	    CTL_CREATE, CTL_EOL);
+
 }
 
 CFATTACH_DECL_NEW(sun60i_a733_de, sizeof(struct sun60i_de352_softc),
@@ -1765,7 +2382,7 @@ sun60i_a733_de352_acquire(int phandle, const void *owner,
 		return ENXIO;
 	mutex_enter(&sc->lock);
 	error = de352_state_locked(sc, &state);
-	if (error == 0 && sc->client.owner != NULL)
+	if (error == 0 && (sc->client.owner != NULL))
 		error = EBUSY;
 	if (error == 0) {
 		sc->client.owner = owner;
@@ -1810,9 +2427,29 @@ sun60i_a733_de352_set_vblank_handler(struct sun60i_a733_de352_client *client,
 	/* A removal is allowed after a later DE failure. */
 	if (error == 0 && fn != NULL)
 		error = de352_state_locked(sc, &state);
-	if (error == 0)
+	if (error == 0) {
+		struct de352_edge *edge = &sc->edge;
+		sun60i_a733_vblank_fn old_fn;
+		void *old_arg;
+
+		mutex_spin_enter(&edge->lock);
+		old_fn = edge->consumer;
+		old_arg = edge->arg;
+		mutex_spin_exit(&edge->lock);
+		if (old_fn == NULL && fn != NULL) {
+			/* The first interrupt may arrive as soon as binding succeeds. */
+			mutex_spin_enter(&edge->lock);
+			edge->consumer = fn;
+			edge->arg = arg;
+			mutex_spin_exit(&edge->lock);
+		}
 		error = sun60i_a733_output_set_vblank_handler(sc->output_phandle,
-		    sc, fn, arg);
+		    sc, fn != NULL ? de352_edge_irq : NULL, fn != NULL ? sc : NULL);
+		mutex_spin_enter(&edge->lock);
+		edge->consumer = error == 0 ? fn : old_fn;
+		edge->arg = error == 0 ? (fn != NULL ? arg : NULL) : old_arg;
+		mutex_spin_exit(&edge->lock);
+	}
 	mutex_exit(&sc->lock);
 	return error;
 }
@@ -1862,7 +2499,6 @@ de352_replace_ready(struct sun60i_de352_softc *sc)
 	return 0;
 }
 
-/* Bound the extra chance to one mode period and one scheduler tick. */
 static uint64_t
 de352_replacement_extra(const struct sun60i_a733_output_mode *mode)
 {
@@ -1884,20 +2520,18 @@ de352_replacement_extra(const struct sun60i_a733_output_mode *mode)
 
 /* Samples newer than the post-RCQ baseline retire the old storage. */
 static int
-de352_replacement_vblank(struct sun60i_de352_softc *sc,
-    struct sun60i_a733_de352_completion *completion)
+de352_replacement_after(struct sun60i_de352_softc *sc,
+    struct sun60i_a733_de352_completion *completion, uint64_t baseline,
+    int error)
 {
 	struct de352_update_trace *trace = &sc->update_trace;
-	uint64_t baseline, last, sequence, start, raw;
+	uint64_t last, sequence, start, raw;
 	uint64_t limit = DE352_TIMEOUT_NS, extra;
 	bool irq, final_irq_sampled = false, extra_probe = false;
 	bool final_extra_sampled = false;
-	int error;
 
 	trace->wait_phase = UW_BASELINE;
 	trace->wait_samples = 1;
-	error = sun60i_a733_output_observed_vblank(sc->output_phandle, sc,
-	    &baseline);
 	if (error != 0 && error != ENOENT)
 		return error;
 	trace->initial_baseline = trace->baseline =
@@ -2016,6 +2650,18 @@ deadline:
 	}
 }
 
+static int
+de352_replacement_vblank(struct sun60i_de352_softc *sc,
+    struct sun60i_a733_de352_completion *completion)
+{
+	uint64_t baseline = 0;
+	int error;
+
+	error = sun60i_a733_output_observed_vblank(sc->output_phandle, sc,
+	    &baseline);
+	return de352_replacement_after(sc, completion, baseline, error);
+}
+
 /* Sample after the wait has failed, before the owner latches the fault. */
 static void
 de352_sample_tv0_timeout(struct sun60i_de352_softc *sc)
@@ -2045,14 +2691,194 @@ de352_frame_drop(struct de352_frame *frame, bool retired)
 		frame->info.release(frame->info.cookie);
 }
 
+/*
+ * Require the IRQ-side observation of this RCQ ticket, independently of
+ * worker scheduling and its later output check. Never infer missed edges.
+ */
+static bool
+de352_shadow_edge(struct sun60i_de352_softc *sc, uint64_t sequence,
+    struct de352_edge_record *record)
+{
+	struct de352_edge *edge = &sc->edge;
+	const struct de352_edge_history *h = &edge->history;
+	bool found = false, pending;
+
+	mutex_spin_enter(&edge->lock);
+	/* DE352 BSP prepares the event at the RCQ request and gates it on
+	 * the next online idle vblank. For the explicit lab profile also
+	 * require the old address at that IRQ, a fresh completed request,
+	 * and all new words before the first active TV0 line. The private
+	 * or fenced surface remains retained through the retirement FIFO.
+	 */
+	if (edge->post.count != 0) {
+		const struct de352_post_phase *p = &edge->post.row[
+		    (edge->post.count - 1) % DE352_EDGE_ROWS];
+
+		if (p->ticket == edge->ticket && p->sequence == sequence &&
+		    (p->reason == POST_PHASE_SAFE || (sc->bsp_vblank &&
+		    p->reason == POST_PHASE_FIELD_TRANSITION &&
+		    (p->first & 0x1c) == 0x1c && (p->last & 0x1c) == 0x1c &&
+		    (p->before.debug & 0xffff) == ((p->before.control >> 4) & 0xffff) &&
+		    (p->after.debug & 0xffff) == (p->before.debug & 0xffff)))) {
+			*record = (struct de352_edge_record){
+				.ticket = p->ticket, .sequence = p->sequence,
+				.irq_ns = p->irq_ns, .posted_ns = p->posted_ns,
+				.verified_ns = p->verified_ns,
+				.first_status = p->first, .last_status = p->last,
+				.matches = p->matches,
+				.sample_age_ns = p->sampled_ns - p->irq_ns
+			};
+			mutex_spin_exit(&edge->lock);
+			return true;
+		}
+	}
+	pending = de352_edge_pending(edge, sequence) != NULL;
+	mutex_spin_exit(&edge->lock);
+	if (pending)
+		de352_edge_measure(sc, sequence);
+
+	mutex_spin_enter(&edge->lock);
+	for (uint64_t i = 0; i < h->count && i < DE352_EDGE_ROWS; i++) {
+		const struct de352_edge_record *r =
+		    &h->row[(h->count - 1 - i) % DE352_EDGE_ROWS];
+
+		if (r->ticket != edge->ticket || r->sequence < sequence)
+			break;
+		if (r->sequence != sequence)
+			continue;
+		if (r->sample_age_ns != 0 && r->matches == 7 &&
+		    (r->first_status & 0x14) == 4 &&
+		    (r->last_status & 0x14) == 4 && r->posted_ns != 0 &&
+		    r->posted_ns <= r->verified_ns &&
+		    r->verified_ns <= r->irq_ns) {
+			*record = *r;
+			found = true;
+		}
+		break;
+	}
+	mutex_spin_exit(&edge->lock);
+	return found;
+}
+
+/* ENOENT means take the ordinary replacement barrier. */
+static int
+de352_shadow_vblank(struct sun60i_de352_softc *sc,
+    struct sun60i_a733_de352_completion *completion, uint64_t *baseline,
+    int *baseline_error, bool address_only)
+{
+	struct de352_edge_record record;
+	uint64_t generation, validated, limit;
+	int error;
+
+	if (sc->edge.consumer == NULL)
+		return ENOENT;
+	error = sun60i_a733_output_sample_vblank_irq(sc->output_phandle, sc,
+	    &generation);
+	if (error != 0)
+		return error == EOPNOTSUPP ? ENOENT : error;
+	if (generation <= sc->vblank || !de352_shadow_edge(sc, generation,
+	    &record)) {
+		if (generation == UINT64_MAX)
+			return EOVERFLOW;
+		limit = de352_now() + de352_replacement_extra(&sc->mode);
+		error = sun60i_a733_output_wait_vblank_irq(sc->output_phandle,
+		    sc, generation + 1, limit, &generation);
+		if (error != 0)
+			return error == ETIMEDOUT || error == EOPNOTSUPP ?
+			    ENOENT : error;
+		if (generation <= sc->vblank ||
+		    !de352_shadow_edge(sc, generation, &record))
+			return ENOENT;
+	}
+	/* The ticket, current online queue, copied address and TV0 phase
+	 * identify this field. Its timestamp comes from the real interrupt. */
+	if (address_only || (generation == *baseline && *baseline_error == 0)) {
+		validated = generation;
+	} else {
+		error = sun60i_a733_output_observed_vblank(sc->output_phandle,
+		    sc, &validated);
+		if (error == ENOENT && validated > *baseline) {
+			*baseline = validated;
+			*baseline_error = error;
+		}
+		if (error != 0)
+			return error;
+	}
+	if (validated < generation)
+		return EPROTO;
+	if (validated != generation &&
+	    !de352_shadow_edge(sc, validated, &record))
+		return ENOENT;
+	completion->observed_sequence = record.sequence;
+	completion->observed_time_ns = record.irq_ns;
+	return 0;
+}
+
+/*
+ * Called after successful DE memory validation. Two distinctly verified
+ * successor edges retire a shadow. The ordinary post-replacement barrier
+ * is newer than every queued entry and also covers them.
+ */
+static unsigned
+de352_shadow_collect(struct sun60i_de352_softc *sc, uint64_t sequence,
+    bool fast, struct de352_frame *retired)
+{
+	unsigned kept = 0, n = 0;
+
+	for (unsigned i = 0; i < sc->shadow_retire_count; i++) {
+		struct de352_shadow_retire entry = sc->shadow_retire[i];
+
+		if (fast && sequence > entry.sequence) {
+			entry.sequence = sequence;
+			entry.edges++;
+		}
+		if (!fast || entry.edges >= 2)
+			retired[n++] = entry.frame;
+		else
+			sc->shadow_retire[kept++] = entry;
+	}
+	for (unsigned i = kept; i < sc->shadow_retire_count; i++)
+		memset(&sc->shadow_retire[i], 0, sizeof(sc->shadow_retire[i]));
+	sc->shadow_retire_count = kept;
+	return n;
+}
+
+static bool
+de352_shadow_alias(const struct de352_frame *a, const struct de352_frame *b)
+{
+	if (a->dma == NULL || b->dma == NULL || a->dma->disabled ||
+	    b->dma->disabled)
+		return false;
+	return a->dma->pixels.address <
+	    (uint64_t)b->dma->pixels.address + b->dma->pixels.bytes &&
+	    b->dma->pixels.address <
+	    (uint64_t)a->dma->pixels.address + a->dma->pixels.bytes;
+}
+
+static bool
+de352_shadow_held(const struct sun60i_de352_softc *sc,
+    const struct de352_frame *next)
+{
+	if ((next->shadow || sc->active.shadow) &&
+	    de352_shadow_alias(next, &sc->active))
+		return true;
+	for (unsigned i = 0; i < sc->shadow_retire_count; i++)
+		if (de352_shadow_alias(next, &sc->shadow_retire[i].frame))
+			return true;
+	return false;
+}
+
 static int
 de352_update(struct sun60i_a733_de352_client *client,
     const struct sun60i_a733_de352_frame *frame,
-    struct sun60i_a733_de352_completion *out, bool stop)
+    struct sun60i_a733_de352_completion *out, bool stop, bool shadow)
 {
-	struct sun60i_a733_de352_completion completion;
+	struct sun60i_a733_de352_completion completion = { 0 };
 	struct sun60i_a733_de352_state state = { 0 };
-	struct de352_frame next = { 0 }, retired = { 0 };
+	struct de352_frame next = { .shadow = shadow };
+	struct de352_frame retired[DE352_SHADOW_RETIRE_MAX + 1];
+	unsigned retired_count = 0;
+	bool fast = false, finish_releases;
 	struct sun60i_de352_softc *sc;
 	int error;
 
@@ -2104,6 +2930,8 @@ de352_update(struct sun60i_a733_de352_client *client,
 	} else if (frame == NULL)
 		error = sun60i_a733_de352_dma_prepare_disabled(state.dmat, &next.dma);
 	mutex_enter(&sc->lock);
+	if (error == 0 && de352_shadow_held(sc, &next))
+		error = EBUSY;
 	if (error == 0) {
 		if (sc->output_stopped) {
 			sc->update_trace.phase = UT_START;
@@ -2124,7 +2952,34 @@ de352_update(struct sun60i_a733_de352_client *client,
 			client->attempted = true;
 		if (error == 0) {
 			sc->update_trace.phase = UT_VBLANK;
-			error = de352_replacement_vblank(sc, &completion);
+			if (shadow && (sc->active.dma == NULL ||
+			    sc->active.shadow) &&
+			    sc->shadow_retire_count < DE352_SHADOW_RETIRE_MAX) {
+				uint64_t baseline = 0;
+				const bool address_only = de352_address_flip(sc, next.dma);
+				int sample = ENOENT;
+
+				/* A qualified address-only update uses the ticket
+				 * observed at TV0. An uncertain edge still takes
+				 * the full PHY check and two-field retirement. */
+				error = 0;
+				if (!address_only) {
+					sample = sun60i_a733_output_observed_vblank(
+					    sc->output_phandle, sc, &baseline);
+					error = sample;
+				}
+				if (error == 0 || error == ENOENT)
+					error = de352_shadow_vblank(sc, &completion,
+					    &baseline, &sample, address_only);
+				fast = error == 0;
+				if (error == ENOENT && address_only)
+					error = de352_replacement_vblank(sc, &completion);
+				else if (error == ENOENT)
+					error = de352_replacement_after(sc, &completion,
+					    baseline, sample);
+			} else {
+				error = de352_replacement_vblank(sc, &completion);
+			}
 			if (error == ETIMEDOUT) {
 				(void)sun60i_a733_output_cached_tv0_trace(
 				    sc->output_phandle, &sc->update_trace.tv0);
@@ -2142,13 +2997,33 @@ de352_update(struct sun60i_a733_de352_client *client,
 				sc->output_stopped = true;
 		}
 		if (error != 0) {
+			de352_edge_disarm(sc);
 			sc->result = error;
 			(void)sun60i_a733_ccu_display_fault(sc->de0, sc, error);
 			(void)sun60i_a733_output_fault(sc->output_phandle, sc, error);
 		} else {
-			retired = sc->active;
+			retired_count = de352_shadow_collect(sc,
+			    completion.observed_sequence, fast, retired);
+			if (sc->active.dma != NULL) {
+				if (fast) {
+					struct de352_shadow_retire *entry;
+
+					KASSERT(sc->active.shadow);
+					KASSERT(sc->shadow_retire_count <
+					    DE352_SHADOW_RETIRE_MAX);
+					entry = &sc->shadow_retire[
+					    sc->shadow_retire_count++];
+					*entry = (struct de352_shadow_retire){
+						.frame = sc->active,
+						.sequence = completion.observed_sequence
+					};
+				} else {
+					retired[retired_count++] = sc->active;
+				}
+			}
 			sc->active = next;
 			sc->vblank = completion.observed_sequence;
+			completion.shadow_fast = fast;
 			*out = completion;
 		}
 	}
@@ -2158,13 +3033,23 @@ de352_update(struct sun60i_a733_de352_client *client,
 	sc->update_trace.valid = 3;
 	if (error == 0 || next.dma == NULL || !next.dma->published)
 		memset(&sc->pending, 0, sizeof(sc->pending));
-	client->busy = false;
+	de352_edge_disarm(sc);
+	finish_releases = shadow;
+	for (unsigned i = 0; i < retired_count; i++)
+		finish_releases |= retired[i].shadow;
+	if (!finish_releases)
+		client->busy = false;
 	mutex_exit(&sc->lock);
 
 	if (error != 0 && (next.dma == NULL || !next.dma->published))
 		de352_frame_drop(&next, false);
-	if (retired.dma != NULL)
-		de352_frame_drop(&retired, true);
+	for (unsigned i = 0; i < retired_count; i++)
+		de352_frame_drop(&retired[i], true);
+	if (finish_releases) {
+		mutex_enter(&sc->lock);
+		client->busy = false;
+		mutex_exit(&sc->lock);
+	}
 	return error;
 }
 
@@ -2175,19 +3060,59 @@ sun60i_a733_de352_submit(struct sun60i_a733_de352_client *client,
 {
 	if (frame == NULL)
 		return EINVAL;
-	return de352_update(client, frame, out, false);
+	return de352_update(client, frame, out, false, false);
+}
+
+int
+sun60i_a733_de352_submit_shadow(struct sun60i_a733_de352_client *client,
+    const struct sun60i_a733_de352_frame *frame,
+    struct sun60i_a733_de352_completion *out)
+{
+	if (frame == NULL)
+		return EINVAL;
+	return de352_update(client, frame, out, false, true);
+}
+
+int
+sun60i_a733_de352_observe_current(struct sun60i_a733_de352_client *client,
+    struct sun60i_a733_de352_completion *out)
+{
+	struct sun60i_a733_de352_completion done = { 0 };
+	struct sun60i_a733_de352_state state;
+	struct sun60i_de352_softc *sc;
+	int error;
+
+	if (client == NULL || out == NULL ||
+	    (sc = de352_lookup(0, client)) == NULL)
+		return EINVAL;
+	mutex_enter(&sc->lock);
+	error = de352_state_locked(sc, &state);
+	if (error == 0 && (client->owner == NULL || client->busy ||
+	    sc->output_stopped || sc->active.dma == NULL ||
+	    sc->active.dma->disabled))
+		error = EBUSY;
+	if (error == 0)
+		error = de352_replacement_vblank(sc, &done);
+	if (error == 0)
+		error = de352_memory(sc);
+	if (error == 0) {
+		sc->vblank = done.observed_sequence;
+		*out = done;
+	}
+	mutex_exit(&sc->lock);
+	return error;
 }
 
 int
 sun60i_a733_de352_disable_plane(struct sun60i_a733_de352_client *client,
     struct sun60i_a733_de352_completion *out)
 {
-	return de352_update(client, NULL, out, false);
+	return de352_update(client, NULL, out, false, false);
 }
 
 int
 sun60i_a733_de352_stop(struct sun60i_a733_de352_client *client,
     struct sun60i_a733_de352_completion *out)
 {
-	return de352_update(client, NULL, out, true);
+	return de352_update(client, NULL, out, true, false);
 }

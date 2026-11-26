@@ -22,11 +22,12 @@ def main():
         default=tools.parents[1] / "sys/arch/arm/sunxi/sun60i_a733_drm.c")
     args = parser.parse_args()
     text = args.source.read_text()
-    framebuffer = section(text, "static void\na733_fb_destroy", "\nstatic int\na733_dumb_create")
+    framebuffer = section(text, "static void\na733_fb_destroy", "\nstruct drm_gem_cma_object *\na733_drm_alloc_cma")
+    expose = section(text, "static bool\na733_expose_cpu", "static int\na733_gem_mmap")
     mmap = section(text, "static int\na733_prime_mmap", "\nstatic struct drm_driver")
     with tempfile.TemporaryDirectory(prefix="a733-drm-buffer-") as tmp:
         work = Path(tmp)
-        (work / "buffer.c").write_text(framebuffer + mmap)
+        (work / "buffer.c").write_text(framebuffer + expose + mmap)
         command = (shlex.split(os.environ.get("CC", "cc")) +
             ["-std=c11", "-Wall", "-Wextra", "-Werror"] +
             shlex.split(os.environ.get("A733_DRM_CFLAGS", "")) +

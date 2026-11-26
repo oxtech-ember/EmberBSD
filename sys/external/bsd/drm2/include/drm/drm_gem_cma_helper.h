@@ -57,6 +57,9 @@ struct drm_gem_cma_object {
 	void *vaddr;
 	vmem_addr_t vmem_addr;
 	struct vmem *vmem_pool;
+	/* A733 mapping and export state under its KMS device lock. */
+	bool shadow_cpu_mapped, shadow_copying, a733_prime_exposed;
+	uint64_t a733_allocation_id;
 };
 
 #define	to_drm_gem_cma_obj(GEM_OBJ)					      \

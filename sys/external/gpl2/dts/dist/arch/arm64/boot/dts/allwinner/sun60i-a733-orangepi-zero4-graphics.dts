@@ -7,3 +7,14 @@
 &npu {
 	netbsd,init-on-demand;
 };
+
+/* Enable verified private scanout for the native Zero 4 HDMI output. */
+&de0 {
+	emberbsd,online-rcq-vblank;
+	emberbsd,scanout-field-probe;
+};
+
+&display {
+	emberbsd,shadow-scanout;
+	emberbsd,kms-worker-cpu = <7>;
+};
