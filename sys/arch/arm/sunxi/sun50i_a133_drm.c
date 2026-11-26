@@ -40,6 +40,7 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #include <linux/dma-fence.h>
 #include <linux/jiffies.h>
 #include <linux/ktime.h>
+#include <drm/ember_drm_flip.h>
 #include <drm/drm_atomic.h>
 #include <drm/drm_atomic_helper.h>
 #include <drm/drm_connector.h>
@@ -521,59 +522,6 @@ a133_prime_mmap(struct drm_gem_object *obj, off_t *offp, size_t size,
 /* Atomic commits */
 
 static void
-a133_commit_event(struct a133_drm *sc, struct drm_crtc_state *state,
-    uint64_t frame, uint64_t time_ns, int error)
-{
-	struct drm_pending_vblank_event *event = state->event;
-	struct drm_pending_event *base;
-	unsigned long flags;
-
-	if (event == NULL)
-		return;
-	base = &event->base;
-	spin_lock_irqsave(&sc->dev->event_lock, flags);
-	state->event = NULL;
-	if (error == 0) {
-		/* The time the new buffer started to be scanned out. */
-		event->pipe = drm_crtc_index(&sc->crtc);
-		event->event.vbl.sequence = (uint32_t)frame;
-		event->event.vbl.tv_sec = time_ns / 1000000000;
-		event->event.vbl.tv_usec = (time_ns % 1000000000) / 1000;
-		drm_send_event_locked(sc->dev, base);
-	} else {
-		if (base->fence != NULL) {
-			dma_fence_set_error(base->fence, -error);
-			(void)dma_fence_signal(base->fence);
-		}
-		if (base->completion != NULL) {
-			complete_all(base->completion);
-			if (base->completion_release != NULL)
-				base->completion_release(base->completion);
-			base->completion = NULL;
-			base->completion_release = NULL;
-		}
-	}
-	spin_unlock_irqrestore(&sc->dev->event_lock, flags);
-	if (error != 0)
-		drm_event_cancel_free(sc->dev, base);
-}
-
-static int
-a133_wait_fence(struct dma_fence *fence)
-{
-	long waited;
-	int status;
-
-	if (fence == NULL)
-		return 0;
-	waited = dma_fence_wait_timeout(fence, false, msecs_to_jiffies(1000));
-	if (waited <= 0)
-		return waited < 0 ? (int)-waited : ETIMEDOUT;
-	status = dma_fence_get_status(fence);
-	return status > 0 ? 0 : status < 0 ? -status : EIO;
-}
-
-static void
 a133_commit_work(struct work *work, void *cookie)
 {
 	struct a133_commit *job = container_of(work, struct a133_commit, work);
@@ -600,7 +548,7 @@ a133_commit_work(struct work *work, void *cookie)
 		object = &fb->object->base;
 	}
 	error = crtc->active && plane->fb != NULL ?
-	    a133_wait_fence(plane->fence) : 0;
+	    ember_drm_flip_wait_producer(plane->fence) : 0;
 	if (error == 0 && sc->vblank_irq) {
 		if (crtc->active && !sc->vblank_on) {
 			drm_crtc_vblank_on(&sc->crtc);
@@ -632,7 +580,7 @@ a133_commit_work(struct work *work, void *cookie)
 	sc->busy = false;
 	cv_broadcast(&sc->idle_cv);
 	mutex_exit(&sc->lock);
-	a133_commit_event(sc, crtc, frame, time_ns, error);
+	ember_drm_flip_finish(&sc->crtc, &crtc->event, frame, time_ns, error);
 	if (vblank_ref)
 		drm_crtc_vblank_put(&sc->crtc);
 	if (!crtc->active && sc->vblank_on) {

@@ -18,10 +18,9 @@ def main():
         default=tools.parents[1] / "sys/arch/arm/sunxi/sun60i_a733_drm_atomic.c")
     args = parser.parse_args()
     text = args.source.read_text()
-    fence = text.index("static int\na733_explicit_fence")
-    helpers = text.index("static int\na733_shadow_retain", fence)
-    worker = text.index("void\na733_drm_work", helpers)
-    text = text[fence:helpers] + text[worker:]
+    flip = (tools.parents[1] / "sys/external/bsd/drm2/drm/ember_drm_flip.c").read_text()
+    producer = flip[flip.index("int\nember_drm_flip_wait_producer"):]
+    text = producer + text[text.index("void\na733_drm_work"):]
     with tempfile.TemporaryDirectory(prefix="a733-drm-worker-") as tmp:
         work = Path(tmp)
         (work / "worker.c").write_text(text)

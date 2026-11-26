@@ -19,6 +19,7 @@ SRCS+=	drm_cdevsw.c
 SRCS+=	drm_gem_vm.c
 SRCS+=	drm_module.c
 SRCS+=	drm_sysctl.c
+SRCS+=	ember_drm_flip.c
 
 # pci bus ids -- doesn't depend on all of pci, just the header files
 SRCS+=	drm_pci_busid.c
