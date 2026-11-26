@@ -615,6 +615,7 @@ vendor ALLWIN		0x8516	ALLWIN Tech
 vendor MOSCHIP		0x9710	MosChip Semiconductor
 vendor NETGEAR4		0x9846	Netgear
 vendor xxFTDI		0x9e88	FTDI
+vendor AICSEMI		0xa69c	AICSemi
 vendor CACE		0xcace	CACE Technologies
 vendor COMPARE		0xcdab	Compare
 vendor DATAAPEX		0xdaae	DataApex
@@ -785,6 +786,9 @@ product ARANEUS ALEA		0x0001	Alea I/II TRNG
 
 /* Aincomm products */
 product AINCOMM AWU2000B	0x1001	AWU2000B
+
+/* AICSemi products */
+product AICSEMI AIC8800DC	0x88dc	AIC8800DC
 
 /* AIPTEK International products */
 product AIPTEK2 PENCAM_MEGA_1_3 0x504a	PenCam Mega 1.3
