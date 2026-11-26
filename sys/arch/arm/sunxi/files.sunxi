@@ -107,7 +107,7 @@ file	arch/arm/sunxi/sun50i_a133_ppu.c		sun50i_a133_ppu
 file	arch/arm/sunxi/sun50i_a133_ppu_power.c	sun50i_a133_ppu
 
 # Explicit A133 GE8300 firmware owner. Attach never starts firmware.
-device	sun50ia133gpu
+device	sun50ia133gpu: pvrfw_fdt
 attach	sun50ia133gpu at fdt with sun50i_a133_gpu
 file	arch/arm/sunxi/sun50i_a133_gpu.c		sun50i_a133_gpu
 file	arch/arm/sunxi/sun50i_a133_gpu_owner.c	sun50i_a133_gpu
@@ -149,59 +149,24 @@ file	arch/arm/sunxi/sun60i_a733_hdmi_phy.c	sunxi_a733_ccu
 file	arch/arm/sunxi/sun60i_a733_tv0.c		sunxi_a733_ccu
 
 # Origin: EmberBSD; observe-only A733 GPU attach and opt-in bootstrap.
-define	pvrnative: drmkms_sched
-define	sun60ipvr: pvrnative
-makeoptions pvrnative "CPPFLAGS.pvrnative"+="${CPPFLAGS.drmkms}"
-file	external/bsd/drm2/powervr/pvr_drv.c	pvrnative
-file	external/bsd/drm2/powervr/pvr_bo.c	pvrnative
-file	external/bsd/drm2/powervr/pvr_file.c	pvrnative
-file	external/bsd/drm2/powervr/pvr_heap.c	pvrnative
-file	external/bsd/drm2/powervr/pvr_query.c	pvrnative
-file	external/bsd/drm2/powervr/pvr_vm.c	pvrnative
-file	external/bsd/drm2/powervr/pvr_stream.c	pvrnative
-file	external/bsd/drm2/powervr/pvr_context.c	pvrnative
-file	external/bsd/drm2/powervr/pvr_freelist.c	pvrnative
-file	external/bsd/drm2/powervr/pvr_exec.c	pvrnative
-file	external/bsd/drm2/powervr/pvr_hwrt.c	pvrnative
-file	external/bsd/drm2/powervr/pvr_exec_hwrt.c	pvrnative
-file	external/bsd/drm2/powervr/pvr_submit.c	pvrnative
-device	sun60igpuid: firmload, sun60ipvr
+device	sun60igpuid: firmload, pvrfw_fdt, pvrnative
 attach	sun60igpuid at fdt with sun60i_a733_gpu
 file	arch/arm/sunxi/sun60i_a733_gpu.c	sun60i_a733_gpu
 file	arch/arm/sunxi/sun60i_a733_gpu_fwinfo.c	sun60i_a733_gpu
-file	dev/powervr/pvr_fwinfo.c			sun60i_a733_gpu | pvr_ge8300_experimental | sun50i_a133_gpu
 file	arch/arm/sunxi/sun60i_a733_gpu_fwimage.c	sun60i_a733_gpu
-file	dev/powervr/pvr_fwimage.c			sun60i_a733_gpu | pvr_ge8300_experimental | sun50i_a133_gpu
 file	arch/arm/sunxi/sun60i_a733_gpu_mips.c	sun60i_a733_gpu
-file	dev/powervr/pvr_mips.c			sun60i_a733_gpu | pvr_ge8300_experimental | sun50i_a133_gpu
-include	"dev/powervr/files.powervr"
-file	dev/powervr/pvr_ge8300.c		sun60i_a733_gpu | pvr_ge8300_experimental | sun50i_a133_gpu
 file	arch/arm/sunxi/sun60i_a733_gpu_fwmem.c	sun60i_a733_gpu
-file	dev/powervr/pvr_fwmem.c			sun60i_a733_gpu | pvr_ge8300_experimental | sun50i_a133_gpu
 file	arch/arm/sunxi/sun60i_a733_gpu_fwinit.c	sun60i_a733_gpu
-file	dev/powervr/pvr_fwinit.c			sun60i_a733_gpu | pvr_ge8300_experimental | sun50i_a133_gpu
 file	arch/arm/sunxi/sun60i_a733_gpu_fwstart.c	sun60i_a733_gpu
-file	dev/powervr/pvr_fwstart.c			sun60i_a733_gpu | pvr_ge8300_experimental | sun50i_a133_gpu
 file	arch/arm/sunxi/sun60i_a733_gpu_fwboot.c	sun60i_a733_gpu
-file	dev/powervr/pvr_fwboot.c			sun60i_a733_gpu | pvr_ge8300_experimental | sun50i_a133_gpu
-file	dev/powervr/pvr_fw_handshake.c		sun60i_a733_gpu | pvr_ge8300_experimental | sun50i_a133_gpu
-file	dev/powervr/pvr_fwprobe.c			sun60i_a733_gpu | sun50i_a133_gpu
 file	arch/arm/sunxi/sun60i_a733_gpu_fwprobe.c	sun60i_a733_gpu
 file	arch/arm/sunxi/sun60i_a733_gpu_fwservice.c	sun60i_a733_gpu
 file	arch/arm/sunxi/sun60i_a733_gpu_fwbridge.c	sun60i_a733_gpu
-file	external/bsd/drm2/powervr/pvr_fwbridge.c	pvrnative
-file	dev/powervr/pvr_fwcompute.c			sun60i_a733_gpu | sun50i_a133_gpu
 file	arch/arm/sunxi/sun60i_a733_gpu_fwcompute.c	sun60i_a733_gpu
-file	dev/powervr/pvr_fwcompute_file.c		sun60i_a733_gpu | sun50i_a133_gpu
 file	arch/arm/sunxi/sun60i_a733_gpu_fwcompute_file.c	sun60i_a733_gpu
-file	dev/powervr/pvr_fwcompute_cmd.c			sun60i_a733_gpu | sun50i_a133_gpu
 file	arch/arm/sunxi/sun60i_a733_gpu_fwcompute_cmd.c	sun60i_a733_gpu
-file	dev/powervr/pvr_fwcompute_vm.c			sun60i_a733_gpu | sun50i_a133_gpu
 file	arch/arm/sunxi/sun60i_a733_gpu_fwcompute_vm.c	sun60i_a733_gpu
-file	dev/powervr/pvr_fwheap.c			sun60i_a733_gpu | sun50i_a133_gpu
-file	dev/powervr/pvr_fwservice.c		sun60i_a733_gpu | sun50i_a133_gpu
 file	arch/arm/sunxi/sun60i_a733_gpu_fwheap.c	sun60i_a733_gpu
-file	dev/powervr/pvr_mmu.c			sun60i_a733_gpu | sun50i_a133_gpu
 file	arch/arm/sunxi/sun60i_a733_gpu_mmu.c	sun60i_a733_gpu
 file	arch/arm/sunxi/sun60i_a733_gpu_vm.c	sun60i_a733_gpu
 
@@ -588,7 +553,3 @@ defflag	opt_soc.h			SOC_SUN50I_H6: SOC_SUN50I
 defflag	opt_soc.h			SOC_SUN50I_A100: SOC_SUN50I
 defflag	opt_a133_wlan_warm.h		A133_YS_M33_WLAN_WARM: SOC_SUN50I_A100
 defflag	opt_soc.h			SUNXI_A133_GPU_FDT: SOC_SUN50I_A100
-
-# Explicit metadata/image preparation only; no firmware execution.
-defflag	opt_pvr_fw.h			PVR_GE8300_EXPERIMENTAL
-defflag	opt_pvr_fw.h			PVR_GE8300_DRM: pvrnative
