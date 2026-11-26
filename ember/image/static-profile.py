@@ -666,20 +666,33 @@ def output_programs(settings, extra=''):
     return selected + (('bin/' + Path(extra).name,) if extra else ())
 
 
+def network_root_spec(device, partition):
+    import re
+    if device.startswith('NAME='):
+        if partition or not re.fullmatch(r'NAME=[A-Za-z0-9][A-Za-z0-9_.-]*', device):
+            raise ValueError('select a plain wedge name without a partition letter')
+        return device
+    if not re.fullmatch(r'[A-Za-z]+[0-9]*', device):
+        raise ValueError('network root device must be a device name without a partition')
+    if not re.fullmatch(r'[a-p]?', partition):
+        raise ValueError('network root partition must be a disk partition letter or empty')
+    return 'ROOT.' + partition if partition else '/dev/' + device
+
+
 def network_device_selection(settings, root_device, root_partition='a', application=False):
     """Select standard network devices and the console-tools GUI additions."""
-    import re
-    if not re.fullmatch(r'[A-Za-z]+[0-9]*', root_device):
-        raise ValueError('network root device must be a device name without a partition')
-    if not re.fullmatch(r'[a-p]?', root_partition):
-        raise ValueError('network root partition must be a disk partition letter or empty')
+    root_spec = network_root_spec(root_device, root_partition)
     nodes = settings['device_nodes']
-    root_partitioned = root_device + root_partition
-    nodes += ('r' + root_partitioned,)
-    make_devices = ('bpf', root_device, *settings.get('device_make_groups', ()))
+    if root_spec.startswith('NAME='):
+        make_root = 'dk'
+        block_nodes = ()
+    else:
+        make_root = root_device
+        block_nodes = (root_device + root_partition,)
+        nodes += ('r' + block_nodes[0],)
+    make_devices = ('bpf', make_root, *settings.get('device_make_groups', ()))
     if 'ptm' in nodes:
         make_devices += ('ptm',)
-    block_nodes = (root_partitioned,)
     if application:
         nodes += ('ttyE0', 'wsmouse0', 'iic0')
         make_devices += ('wscons', 'iic0')
@@ -794,10 +807,7 @@ def stage_network(root, source, overlay, interface, pwd_mkdb, dhcpcd_dest,
         raise ValueError('network overlay must be an existing directory')
     if not __import__('re').fullmatch(r'[A-Za-z0-9_.-]+', interface):
         raise ValueError('network interface must be a plain interface name')
-    if not __import__('re').fullmatch(r'[A-Za-z]+[0-9]*', root_device):
-        raise ValueError('network root device must be a device name without a partition')
-    if not __import__('re').fullmatch(r'[a-p]?', root_partition):
-        raise ValueError('network root partition must be a disk partition letter or empty')
+    root_spec = network_root_spec(root_device, root_partition)
     if root_filesystem not in ('ffs', 'littlefs'):
         raise ValueError('network root filesystem must be ffs or littlefs')
     if openssh_crypto not in ('openssl', 'builtin'):
@@ -835,7 +845,6 @@ def stage_network(root, source, overlay, interface, pwd_mkdb, dhcpcd_dest,
     write_if_different(root / 'etc/ttys',
         'console "/usr/libexec/getty default" vt100 off secure\n'
         'constty "/usr/libexec/getty std.115200" vt100 on secure\n')
-    root_spec = f'ROOT.{root_partition}' if root_partition else f'/dev/{root_device}'
     fsck_pass = 1 if root_filesystem == 'ffs' else 0
     write_if_different(root / 'etc/fstab',
         f'{root_spec} / {root_filesystem} rw {fsck_pass} {fsck_pass}\n'
@@ -1328,7 +1337,8 @@ def run_console(arguments):
                    os.environ.get('EMBER_CONSOLE_OVERLAY', '') if settings['compact'] else '')
         network_interface = os.environ.get('EMBER_NETWORK_INTERFACE', '')
         network_root_device = os.environ.get('EMBER_NETWORK_ROOT_DEVICE', '')
-        network_root_partition = os.environ.get('EMBER_NETWORK_ROOT_PARTITION', 'a')
+        network_root_partition = os.environ.get('EMBER_NETWORK_ROOT_PARTITION',
+                                                '' if network_root_device.startswith('NAME=') else 'a')
         mdns_source = (os.environ.get('EMBER_MDNS_SOURCE', '')
                        if 'mdns' in selected_toolsets else '')
         wolfssl_prefix = os.environ.get('EMBER_WOLFSSL_PREFIX', '') if is_network else ''
@@ -1345,10 +1355,7 @@ def run_console(arguments):
                 raise SDKError('EMBER_NETWORK_INTERFACE must select the target interface')
             if not re.fullmatch(r'[A-Za-z0-9_.-]+', network_interface):
                 raise SDKError('EMBER_NETWORK_INTERFACE must be an interface name')
-            if not re.fullmatch(r'[A-Za-z]+[0-9]*', network_root_device):
-                raise SDKError('EMBER_NETWORK_ROOT_DEVICE must select a device name without a partition')
-            if not re.fullmatch(r'[a-p]?', network_root_partition):
-                raise SDKError('EMBER_NETWORK_ROOT_PARTITION must select a disk partition letter or be empty')
+            network_root_spec(network_root_device, network_root_partition)
             if not overlay:
                 raise SDKError('EMBER_NETWORK_OVERLAY must name the selected runtime overlay')
             if wolfssl_prefix:

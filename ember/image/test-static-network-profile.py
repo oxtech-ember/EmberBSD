@@ -724,6 +724,16 @@ except ValueError:
     valid_root_device = True
 else:
     valid_root_device = False
+named = profile.network_device_selection(selected, 'NAME=netbsd-root', '')
+check(named[2] == ('bpf', 'dk') and not named[3] and
+      profile.network_root_spec('NAME=netbsd-root', '') == 'NAME=netbsd-root',
+      'a named GPT wedge uses the standard MAKEDEV wedge group and its filesystem label')
+for label, part in [('NAME=', ''), ('NAME=bad node', ''), ('NAME=netbsd-root', 'a')]:
+    try:
+        profile.network_root_spec(label, part)
+    except ValueError:
+        continue
+    raise SystemExit('FAIL: invalid network wedge selector accepted')
 check(valid_root_device, 'root device input excludes an already-partitioned name')
 check(set(profile.output_programs(selected)) ==
       {'bin/console-tools', *(destination for _, destination in selected['install_map'])},
@@ -829,6 +839,12 @@ with tempfile.TemporaryDirectory(prefix='static-network-') as temporary:
           (out / 'etc/ifconfig.wifi0').read_text() == 'inet6 accept_rtadv\nup\n' and
           'hostname=' in rc_conf and 'ember-mosaico' not in rc_conf,
           'runtime interface uses the rc file mechanism and hostname remains overlay-selected')
+    wedge_root = temporary / 'wedge-root'
+    wedge_root.mkdir()
+    profile.stage_network(wedge_root, source, overlay, 'wifi0', pwd_mkdb, dhcp_dest,
+                          'NAME=netbsd-root', '')
+    check((wedge_root / 'etc/fstab').read_text().splitlines()[0] == 'NAME=netbsd-root / ffs rw 1 1',
+          'named root staging preserves the GPT label for mount and fsck')
     check('ROOT.a / ffs rw 1 1' in (out / 'etc/fstab').read_text() and
           '/tmp tmpfs rw' in (out / 'etc/fstab').read_text() and
           '/var/run tmpfs rw' in (out / 'etc/fstab').read_text() and

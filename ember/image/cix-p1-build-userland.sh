@@ -369,6 +369,20 @@ if [ "${1:-}" = --console-selected ]; then
                 echo "Missing or duplicate block device: $node" >&2; exit 1
             }
         done
+        case "$network_root_device" in
+        NAME=*)
+            "$selected_awk" '
+                $1 ~ /^[.]\/rdk[0-9]+$/ && $2 == "type=char" { raw[substr($1, 4)]++; sub(/^[.]/, "./dev"); print }
+                $1 ~ /^[.]\/dk[0-9]+$/ && $2 == "type=block" { block[substr($1, 3)]++; sub(/^[.]/, "./dev"); print }
+                END {
+                    if (!("dk0" in block)) exit 1
+                    for (name in raw) if (raw[name] != 1 || block[name] != 1) exit 1
+                    for (name in block) if (raw[name] != 1 || block[name] != 1) exit 1
+                }
+            ' "$out/devices-all.spec" >> "$root_spec" || {
+                echo 'Missing or inconsistent target disk wedge nodes.' >&2; exit 1
+            };;
+        esac
         rm -f "$out/devices-all.spec"
         exit 0
     fi
