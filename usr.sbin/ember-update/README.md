@@ -122,6 +122,50 @@ below the installation floor. Service stop permits the current storage
 operation to finish. A stop after arming leaves the one-shot request for the
 next restart.
 
+## One-time transition from the former FFS updater
+
+An enrolled legacy system fetches the transition with its existing signed
+client. It prepares the other root and arms its normal one-shot boot. The
+confirmed root keeps its original programs, policy, package database and
+kernel. The transition requires a profile that the former U-Boot installer
+supports.
+
+The publisher assembles the final `etc.tar.xz` first. Include one file in the
+transition's signed **base** set at
+`/usr/share/ember-update/handoff/PROFILE.json`. Set `profile` to the complete
+native hardware profile from the image description's `slots` object. Set
+`generation` to the transition generation and `etc_sha256` to the SHA-256 of
+the exact compressed etc set. Record the file in base's METALOG and mtree.
+The signed boot, base, etc and optional comp sets must describe the same
+target. The generic image and subsequent releases require no transition
+file. The original controller also checks that its rc script and program are
+executable in the prepared root and that the snapshot's installed Python can
+import SSL. Include an executable, inactive `/etc/rc.d/ember_os_update` in
+the transition etc set when the normal etc set has retired that service.
+
+On the first boot of the candidate, `/etc/rc.d/ember_update` invokes the
+local handoff before starting its scheduler. The old services yield to their
+native replacement. The handoff checks the legacy profile, target, set roles
+and defaults archive against the signed base file. The boot adapter must
+report a consumed trial whose prepared SHA-256 equals the exact legacy
+release.json. The handoff copies those bytes to the native OS and installation
+receipts and copies the original etc archive with mode 0600. The installed
+generation becomes the native lower bound. The former controller only armed
+a generation above both its installed and previously attempted generation.
+A failure before confirmation keeps that controller and its attempt floor
+on the previous root.
+
+The handoff checks the stock running kernel and local health, then verifies
+the archive of the former controller configuration. It imports the original
+rc flags immediately after the system defaults are sourced. Later site
+settings in rc.conf and rc.conf.d keep their priority. A durable journal
+identifies the confirmed bytes if power fails during the firmware commit.
+Success retires the old configuration as `/etc/ember-os-update.migrated.json`.
+Later transactions use native installation plans. Remove the transition
+record and temporary rc script in the next standard release after devices
+have confirmed the transition. The previous slot remains available until a
+subsequent authorized update prepares it.
+
 ## Local state for applications
 
 The controller atomically replaces the world-readable
@@ -156,3 +200,7 @@ envelopes and a separate local copy of the release anchor. The test checks
 both signatures, the hash binding, time limits, and altered envelopes.
 Run `tests/store.sh` for package selection, manual promotion and installed
 desktop binding. Set `CC`, `CPPFLAGS`, and `LDFLAGS` to select the host SDK.
+
+On NetBSD, run `tests/handoff.sh CLIENT INPUT PROFILE RC_SCRIPT` as root for
+the offline transition test. Use the artifacts listed in the test header.
+The test creates and removes a chroot with a boot-adapter model.

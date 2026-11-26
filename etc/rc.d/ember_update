@@ -15,6 +15,48 @@ command_args=watch
 pidfile=/var/run/ember_update.pid
 required_files=/etc/ember-update-profile.json
 
+# Insert the old defaults before site overrides. The shell still evaluates
+# the system rc.conf and each service-specific file in their original order.
+handoff_policy()
+{
+	load_rc_config_var ember_os_update ember_os_update
+	load_rc_config_var ember_pkg_update ember_pkg_update
+	os=NO packages=NO enabled=NO
+	if checkyesno ember_os_update; then os=YES enabled=YES; fi
+	if checkyesno ember_pkg_update; then packages=YES enabled=YES; fi
+	file=/etc/rc.conf
+	if grep -Fxq '# EmberBSD native update migration' "$file"; then return 0; fi
+	tmp=$(mktemp /etc/.rc.conf.XXXXXXXX) || return 1
+	trap 'rm -f "$tmp"' EXIT HUP INT TERM
+	cp -p "$file" "$tmp" || return 1
+	awk -v os="$os" -v packages="$packages" -v enabled="$enabled" '
+	    { print }
+	    /^[[:space:]]*\.[[:space:]]+\/etc\/defaults\/rc[.]conf[[:space:]]*$/ {
+	      print "# EmberBSD native update migration"
+	      print "ember_update=" enabled
+	      print "ember_update_os=" os
+	      print "ember_update_packages=" packages
+	      imported++
+	    }
+	    END { if (imported != 1) exit 1 }
+	' "$file" > "$tmp" || return 1
+	mv -f "$tmp" "$file"
+}
+
+case "$1" in
+owns-legacy)
+	[ -x "$command" ] && [ -x /usr/libexec/ember-install-slot ] &&
+	    { [ -f "$required_files" ] || [ -f /etc/ember-os-update.json ]; }
+	exit $?
+	;;
+handoff-policy) handoff_policy; exit $? ;;
+start)
+	if [ -f /etc/ember-os-update.json ]; then
+		"$command" handoff && [ ! -f /etc/ember-os-update.json ] || exit 1
+	fi
+	;;
+esac
+
 load_rc_config "$name"
 # A manually staged trial still needs a health check at the next boot.
 if [ "$1" = start ] && [ -f "$required_files" ] && ! checkyesno ember_update; then

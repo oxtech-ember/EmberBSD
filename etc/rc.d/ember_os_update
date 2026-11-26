@@ -17,5 +17,13 @@ pidfile=/var/run/${name}.pid
 required_files=/etc/ember-os-update.json
 command_args="watch </dev/null 2>&1 | /usr/bin/logger -p daemon.info -t $name &"
 
+case "$1" in
+*start)
+	if [ -x /etc/rc.d/ember_update ] && /etc/rc.d/ember_update owns-legacy; then
+		exit 0
+	fi
+	;;
+esac
+
 load_rc_config "$name"
 run_rc_command "$1"

@@ -74,6 +74,11 @@ cycle(const char *op, const char *directory, bool immediate,
 	trusted(DATABASE, true);
 	int lock = take_lock("/var/run/ember-update.lock");
 	ui = load_ui();
+	if (eu_equal(op, "handoff")) {
+		handoff();
+		close(lock);
+		return 0;
+	}
 	read_policy(&policy);
 	load_hardware(&hw);
 	if (!hw.single)
@@ -218,6 +223,8 @@ main(int argc, char **argv)
 			err(1, "output");
 		return 0;
 	}
+	if (argc == 2 && eu_equal(op, "handoff"))
+		return cycle(op, NULL, false, NULL);
 	if (argc == 2 && eu_equal(op, "watch"))
 		return watch();
 	bool local = eu_equal(op, "apply-kernel"), apply = eu_equal(op, "apply"),

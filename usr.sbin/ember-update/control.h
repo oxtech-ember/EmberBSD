@@ -56,6 +56,9 @@ void read_policy(struct policy *);
 bool window_open(const char *, time_t);
 bool reboot_policy(const char *, bool, const char *, time_t);
 const char *kernel_mode(const struct eu_json *);
+bool handoff_inputs(const struct eu_json *, const struct eu_json *,
+		    const struct eu_json *, const char *);
+void handoff(void);
 void load_hardware(struct hardware *);
 void slot_status(struct slots *);
 bool reconcile(const struct slots *, const struct hardware *, bool);
