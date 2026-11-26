@@ -77,6 +77,40 @@ Debug controls:
 | `sysctl -w hw.rtw89.debug=3` | Also print each received frame header |
 | `sysctl -w hw.rtw89.hwdebug=<mask>` | Set the rtw89 `RTW89_DBG_*` message mask |
 | `modload -i debug=<n> if_rtw89` | Set `hw.rtw89.debug` before attachment |
+| `sysctl hw.rtw89.txagg` | Show the number of frames given to the MAC for A-MPDU aggregation |
+
+## HT and VHT
+
+The shared net80211 owners negotiate HT and VHT. The driver supplies
+the local capabilities and programs the hardware. It does not parse
+HT, VHT or block-ack elements itself.
+
+| Function | Owner |
+| --- | --- |
+| HT20 and VHT offer, AP response check, beacon withdrawal | net80211 [`ieee80211_ht20.c`](../../../net80211/ieee80211_ht20.c), [`ieee80211_vht_ies.c`](../../../net80211/ieee80211_vht_ies.c) |
+| RX block-ack window, reorder and hole timeout | net80211 [`ieee80211_rxba.c`](../../../net80211/ieee80211_rxba.c); `rtwx` gives the timer (`ic_rxba_ops`) |
+| TX block-ack (originator) sessions | net80211 `ieee80211_txba_request()` and `ieee80211_txba_window()` |
+| WME parameters of the AP | net80211; `rtwx` applies them with the rtw89 `conf_tx` operation from a work queue |
+| Rate selection, short GI, LDPC | rtw89 firmware rate adaptation, from the `ieee80211_sta` fields that the bridge fills |
+| Block-ack responses on the air | MAC; the chip creates dynamic BA CAM entries |
+| A-MPDU of transmitted frames | MAC, for unicast QoS data of a TID with an established session |
+
+Local capabilities:
+
+- HT20 with MCS 0-15 on a 2T2R chip (MCS 0-7 on 1T1R), long GI and BCC
+  reception, maximum RX A-MPDU 65535 bytes, no MPDU start spacing.
+- VHT at the 40 or 80 MHz channel that the AP announces, MCS 0-9 on each
+  stream, RX LDPC, short GI reception at 80 MHz and the maximum A-MPDU
+  length exponent 7. No 160 MHz, STBC or beamforming.
+- At association, the bridge tunes the channel to the negotiated width and
+  gives the firmware the HT and VHT words of the AP. The firmware then
+  transmits with short GI and LDPC when the AP receives them.
+- The kernel log reports the negotiated link, for example
+  `rtwx0: VHT80 link on channel 64 (center 58), TX map 0xfffa, SGI 1, LDPC 1`.
+
+The receive path accepts MPDUs up to 4096 bytes, so an A-MSDU of 3839
+bytes or a VHT MPDU of 3895 bytes fits one buffer. The transmit path keeps
+data in the interface send queue while the best-effort DMA ring is full.
 
 ## Validation
 
@@ -96,9 +130,37 @@ The physical device passed these checks with the module:
   about 13 Mbit/s without receive or transmit errors.
 - Interface down, module unload, module load and a new association.
 
-Boot of the `GENERIC` kernel with built-in `rtwx` is not tested on the
-device. Long-run operation, roaming, 2.4 GHz association and Bluetooth
-coexistence under load are not tested.
+### HT and VHT, 2026-11-26
+
+The same laptop model booted a `GENERIC`-based kernel with built-in
+`rtwx` and the HT/VHT change. The AP is 802.11ax/be, WPA3-SAE with CCMP,
+BSS on 5 GHz channel 64 at 160 MHz. The station negotiated VHT at
+80 MHz (primary 64, center 58) with two streams, short GI and LDPC.
+
+TCP, 128 MiB per run, between the laptop and a second Wi-Fi client of the
+same AP. The second client uses 802.11be at 160 MHz and 2161-2401 Mbit/s,
+so the figures are the limit of the laptop link. The receive time is the
+sender time to the closed connection.
+
+| Kernel | Laptop to peer | Peer to laptop |
+| --- | --- | --- |
+| Legacy 11a, before the change | 24.5 Mbit/s | about 20 Mbit/s |
+| VHT80, RX A-MPDU at most 8191 bytes | 162-179 Mbit/s | 60-75 Mbit/s |
+| VHT80, RX A-MPDU 64 KiB (HT) and exponent 7 (VHT) | 192-214 Mbit/s | 116-127 Mbit/s |
+| Same, 18 min, 44 runs in each direction | 129 Mbit/s mean (93-167) | 95 Mbit/s mean (83-105) |
+
+During the 18-minute run, 11.8 GB moved without a disconnection, ping
+lost 3 of 1076 replies (mean 7 ms) and the interface counted no errors.
+The firmware reported three L1 SER events (`0x1000`-`0x1002`); the chip
+recovered each one without a link loss. The same events occur with the
+legacy profile. Receive used about 8 % of the CPU time in interrupts.
+
+On 2.4 GHz channel 1 the station reached RUN with HT20 MCS 0-15, but the
+SAE authentication of wpa_supplicant timed out each time. The legacy
+profile has the same failure with this AP, so no 2.4 GHz throughput is
+recorded.
+
+Roaming and Bluetooth coexistence under load are not tested.
 
 ### Static analysis
 
@@ -147,8 +209,9 @@ It does not replace kernel or physical-device testing.
 ## Limits
 
 - Station mode only. No access point, monitor or IBSS mode.
-- Legacy 802.11a/b/g rates only. HT, VHT, HE and aggregation are disabled
-  because the NetBSD net80211 does not negotiate them.
+- HT20 and VHT 40/80 MHz with A-MPDU in both directions; see
+  [HT and VHT](#ht-and-vht). HE (802.11ax) and HT40 without VHT are not
+  negotiated, because net80211 has no HE or HT40 owner.
 - Software crypto only. WPA3-Personal uses the opt-in common net80211
   SAE/PMF owner; its new software integration has not yet completed physical
   acceptance. See the [consumer matrix](../../../net80211/docs/wpa3-consumers.md).

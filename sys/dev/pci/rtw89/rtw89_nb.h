@@ -53,6 +53,23 @@ struct rtw89_nb_attach_args {
 #define RTW89_NB_RATE_CCK_MASK	0x00f
 #define RTW89_NB_NRATES		12
 
+/*
+ * The HT and VHT link that net80211 negotiated with the AP.  All zero
+ * means a legacy link.  The capability words are the words of the AP;
+ * the MCS fields are the transmit sets after the intersection.
+ */
+struct rtw89_nb_ht {
+	bool		ht;
+	bool		vht;
+	uint16_t	ht_cap;		/* HT Capabilities Info of the AP */
+	uint8_t		ht_ampdu;	/* A-MPDU Parameters of the AP */
+	uint16_t	ht_mcs;		/* TX HT-MCS 0-15 */
+	uint32_t	vht_cap;	/* VHT Capabilities Info of the AP */
+	uint16_t	vht_map;	/* TX VHT-MCS map */
+	unsigned int	width;		/* 20, 40 or 80 MHz */
+	unsigned int	center;		/* center channel at 40 or 80 MHz */
+};
+
 struct rtw89_nb_bss {
 	uint8_t		bssid[6];
 	uint16_t	aid;
@@ -63,11 +80,24 @@ struct rtw89_nb_bss {
 	uint16_t	basic_rates;
 	unsigned int	chan;
 	unsigned int	freq;
+	struct rtw89_nb_ht ht;		/* used by rtw89_nb_bss_assoc() */
 };
+
+/* EDCA parameters of one access category, in net80211 units. */
+struct rtw89_nb_edca {
+	uint8_t		aifsn;
+	uint8_t		ecw_min;
+	uint8_t		ecw_max;
+	uint16_t	txop;		/* 32 us units */
+};
+
+/* Access categories in net80211 order (WME_AC_BE, BK, VI, VO). */
+#define RTW89_NB_NAC		4
 
 /* Frame flags for rtw89_nb_tx(). */
 #define RTW89_NB_TX_NO_ACK	0x01
 #define RTW89_NB_TX_EAPOL	0x02
+#define RTW89_NB_TX_AMPDU	0x04	/* QoS data of an originator session */
 
 /* Implemented by rtw89_bridge.c and rtw89_compat.c. */
 int	rtw89_compat_init(bus_dma_tag_t);
@@ -84,7 +114,12 @@ int	rtw89_nb_bss_join(struct rtw89_nb *, const struct rtw89_nb_bss *);
 int	rtw89_nb_bss_assoc(struct rtw89_nb *, const struct rtw89_nb_bss *);
 void	rtw89_nb_bss_leave(struct rtw89_nb *);
 int	rtw89_nb_tx_quiet(struct rtw89_nb *, bool);
-int	rtw89_nb_tx(struct rtw89_nb *, const void *, size_t, unsigned int);
+int	rtw89_nb_tx(struct rtw89_nb *, const void *, size_t, unsigned int,
+	    unsigned int);
+bool	rtw89_nb_tx_space(struct rtw89_nb *);
+unsigned int rtw89_nb_nss(struct rtw89_nb *);
+void	rtw89_nb_conf_wme(struct rtw89_nb *,
+	    const struct rtw89_nb_edca[RTW89_NB_NAC]);
 void	rtw89_nb_set_debug(unsigned int);
 extern unsigned int rtw89_debug_mask;
 

@@ -65,9 +65,16 @@ struct rtw89_nb {
 	bool			 started;
 	bool			 vif_added;
 	bool			 tx_quiet;
+	/* EDCA from net80211, applied by wme_work in thread context. */
+	struct work_struct	 wme_work;
+	spinlock_t		 wme_lock;
+	struct rtw89_nb_edca	 wme[RTW89_NB_NAC];
+	bool			 wme_pending;
 };
 
 static struct rtw89_nb *rtw89_nb_attaching;
+
+static void rtw89_nb_wme_work(struct work_struct *);
 
 static inline struct rtw89_nb *
 hw_to_nb(struct ieee80211_hw *hw)
@@ -533,12 +540,15 @@ rtw89_nb_attach(const struct rtw89_nb_attach_args *aa, struct rtw89_nb **nbp)
 		kfree(nb);
 		return ENOMEM;
 	}
+	INIT_WORK(&nb->wme_work, rtw89_nb_wme_work);
+	spin_lock_init(&nb->wme_lock);
 
 	rtw89_nb_attaching = nb;
 	ret = rtw89_8852be_probe(&nb->pdev, aa->aa_device_id);
 	rtw89_nb_attaching = NULL;
 	if (ret) {
 		destroy_workqueue(nb->wq);
+		rtw89_kmutex_destroy(&nb->wme_lock.mtx);
 		kfree(nb);
 		return -ret;
 	}
@@ -552,8 +562,10 @@ rtw89_nb_detach(struct rtw89_nb *nb)
 
 	if (nb->started)
 		rtw89_nb_stop(nb);
+	cancel_work_sync(&nb->wme_work);
 	rtw89_pci_remove(&nb->pdev);
 	destroy_workqueue(nb->wq);
+	rtw89_kmutex_destroy(&nb->wme_lock.mtx);
 	kfree(nb->vif);
 	kfree(nb->sta);
 	kfree(nb);
@@ -600,6 +612,54 @@ rtw89_nb_conf_tx_defaults(struct rtw89_nb *nb)
 		p.txop = defs[ac].txop;
 		p.aifs = defs[ac].aifs;
 		nb->hw->ops->conf_tx(nb->hw, nb->vif, 0, ac, &p);
+	}
+}
+
+/*
+ * net80211 applies the EDCA parameters of the AP under its beacon lock,
+ * where the rtw89 mutex cannot be taken.  Keep the newest set and apply
+ * it from the ordered work queue.
+ */
+void
+rtw89_nb_conf_wme(struct rtw89_nb *nb,
+    const struct rtw89_nb_edca edca[RTW89_NB_NAC])
+{
+
+	spin_lock(&nb->wme_lock);
+	memcpy(nb->wme, edca, sizeof(nb->wme));
+	nb->wme_pending = true;
+	spin_unlock(&nb->wme_lock);
+	queue_work(nb->wq, &nb->wme_work);
+}
+
+static void
+rtw89_nb_wme_work(struct work_struct *w)
+{
+	/* net80211 WME_AC_BE, BK, VI, VO to the mac80211 queue index. */
+	static const u8 map[RTW89_NB_NAC] = {
+		IEEE80211_AC_BE, IEEE80211_AC_BK, IEEE80211_AC_VI,
+		IEEE80211_AC_VO
+	};
+	struct rtw89_nb *nb = container_of(w, struct rtw89_nb, wme_work);
+	struct rtw89_nb_edca edca[RTW89_NB_NAC];
+	struct ieee80211_tx_queue_params p;
+	bool pending;
+	int ac;
+
+	spin_lock(&nb->wme_lock);
+	memcpy(edca, nb->wme, sizeof(edca));
+	pending = nb->wme_pending;
+	nb->wme_pending = false;
+	spin_unlock(&nb->wme_lock);
+	if (!pending || !nb->started || !nb->vif_added)
+		return;
+	for (ac = 0; ac < RTW89_NB_NAC; ac++) {
+		memset(&p, 0, sizeof(p));
+		p.aifs = edca[ac].aifsn;
+		p.cw_min = (1U << edca[ac].ecw_min) - 1;
+		p.cw_max = (1U << edca[ac].ecw_max) - 1;
+		p.txop = edca[ac].txop;
+		nb->hw->ops->conf_tx(nb->hw, nb->vif, 0, map[ac], &p);
 	}
 }
 
@@ -654,6 +714,10 @@ rtw89_nb_stop(struct rtw89_nb *nb)
 
 	if (!nb->started)
 		return;
+	spin_lock(&nb->wme_lock);
+	nb->wme_pending = false;
+	spin_unlock(&nb->wme_lock);
+	cancel_work_sync(&nb->wme_work);
 	rtw89_nb_bss_leave(nb);
 	if (nb->vif_added) {
 		hw->ops->remove_interface(hw, nb->vif);
@@ -738,6 +802,77 @@ rtw89_nb_fill_bss(struct rtw89_nb *nb, const struct rtw89_nb_bss *bss)
 	sta->max_amsdu_subframes = 1;
 }
 
+/*
+ * Give the firmware rate adaptation the negotiated HT and VHT link.  The
+ * AP receives what its capability words announce, so its short guard
+ * interval and LDPC bits enable those encodings for transmission.  STBC
+ * and beamforming stay disabled.
+ */
+static void
+rtw89_nb_fill_ht(struct rtw89_nb *nb, const struct rtw89_nb_ht *ht)
+{
+	struct ieee80211_sta *sta = nb->sta;
+	struct ieee80211_sta_ht_cap *hc = &sta->deflink.ht_cap;
+	struct ieee80211_sta_vht_cap *vc = &sta->deflink.vht_cap;
+	unsigned int nss, i;
+
+	memset(hc, 0, sizeof(*hc));
+	memset(vc, 0, sizeof(*vc));
+	if (!ht->ht)
+		return;
+	hc->ht_supported = true;
+	hc->cap = ht->ht_cap & (IEEE80211_HT_CAP_LDPC_CODING |
+	    IEEE80211_HT_CAP_SUP_WIDTH_20_40 | IEEE80211_HT_CAP_SGI_20 |
+	    IEEE80211_HT_CAP_SGI_40);
+	hc->ampdu_factor = ht->ht_ampdu & 0x3;
+	hc->ampdu_density = (ht->ht_ampdu >> 2) & 0x7;
+	hc->mcs.rx_mask[0] = ht->ht_mcs & 0xff;
+	hc->mcs.rx_mask[1] = ht->ht_mcs >> 8;
+	nss = hc->mcs.rx_mask[1] != 0 ? 2 : 1;
+	if (ht->vht) {
+		vc->vht_supported = true;
+		vc->cap = ht->vht_cap & (IEEE80211_VHT_CAP_RXLDPC |
+		    IEEE80211_VHT_CAP_SHORT_GI_80 |
+		    IEEE80211_VHT_CAP_MAX_A_MPDU_LENGTH_EXPONENT_MASK);
+		vc->vht_mcs.rx_mcs_map = cpu_to_le16(ht->vht_map);
+		vc->vht_mcs.tx_mcs_map = cpu_to_le16(ht->vht_map);
+		for (nss = 0, i = 0; i < 8; i++)
+			if (((ht->vht_map >> (2 * i)) & 0x3) != 0x3)
+				nss = i + 1;
+	}
+	sta->deflink.rx_nss = nss != 0 ? nss : 1;
+	switch (ht->width) {
+	case 80:
+		sta->deflink.bandwidth = IEEE80211_STA_RX_BW_80;
+		break;
+	case 40:
+		sta->deflink.bandwidth = IEEE80211_STA_RX_BW_40;
+		break;
+	default:
+		sta->deflink.bandwidth = IEEE80211_STA_RX_BW_20;
+		break;
+	}
+}
+
+/* Tune the current primary channel to the negotiated 40 or 80 MHz width. */
+static int
+rtw89_nb_set_width(struct rtw89_nb *nb, const struct rtw89_nb_ht *ht)
+{
+	struct ieee80211_hw *hw = nb->hw;
+	struct cfg80211_chan_def *def = &hw->conf.chandef;
+
+	if (!ht->ht || (ht->width != 40 && ht->width != 80) ||
+	    nb->chan.band != NL80211_BAND_5GHZ)
+		return 0;
+	cfg80211_chandef_create(def, &nb->chan, NL80211_CHAN_HT20);
+	def->width = ht->width == 80 ? NL80211_CHAN_WIDTH_80 :
+	    NL80211_CHAN_WIDTH_40;
+	def->center_freq1 = ieee80211_channel_to_frequency(ht->center,
+	    NL80211_BAND_5GHZ);
+	nb->vif->bss_conf.chandef = *def;
+	return -hw->ops->config(hw, IEEE80211_CONF_CHANGE_CHANNEL);
+}
+
 int
 rtw89_nb_bss_join(struct rtw89_nb *nb, const struct rtw89_nb_bss *bss)
 {
@@ -771,7 +906,12 @@ rtw89_nb_bss_assoc(struct rtw89_nb *nb, const struct rtw89_nb_bss *bss)
 
 	if (!nb->started || nb->sta_state != IEEE80211_STA_AUTH)
 		return ENXIO;
+	/* The firmware reads the width at association; tune it first. */
+	ret = rtw89_nb_set_width(nb, &bss->ht);
+	if (ret)
+		return ret;
 	rtw89_nb_fill_bss(nb, bss);
+	rtw89_nb_fill_ht(nb, &bss->ht);
 	nb->vif->cfg.aid = bss->aid;
 	ret = hw->ops->sta_state(hw, nb->vif, nb->sta, IEEE80211_STA_AUTH,
 	    IEEE80211_STA_ASSOC);
@@ -822,6 +962,12 @@ rtw89_nb_bss_leave(struct rtw89_nb *nb)
 	hw->ops->bss_info_changed(hw, nb->vif, &nb->vif->bss_conf,
 	    BSS_CHANGED_BSSID);
 	nb->vif->bss_conf.bssid = NULL;
+	/* The next BSS can be without WME: drop the EDCA of the old AP. */
+	spin_lock(&nb->wme_lock);
+	nb->wme_pending = false;
+	spin_unlock(&nb->wme_lock);
+	if (nb->vif_added)
+		rtw89_nb_conf_tx_defaults(nb);
 }
 
 /* Synchronously gate the MAC scheduler around a station channel change. */
@@ -877,9 +1023,35 @@ rtw89_nb_tx_classify(struct sk_buff *skb)
 		skb->transport_header = off;
 }
 
+/* Spatial streams that both directions of this chip support. */
+unsigned int
+rtw89_nb_nss(struct rtw89_nb *nb)
+{
+	struct rtw89_dev *rtwdev = nb_to_rtwdev(nb);
+
+	return MAX(1, MIN(rtwdev->hal.tx_nss, rtwdev->hal.rx_nss));
+}
+
+/* True when the best-effort data ring can take one more frame. */
+bool
+rtw89_nb_tx_space(struct rtw89_nb *nb)
+{
+	struct rtw89_dev *rtwdev = nb_to_rtwdev(nb);
+
+	if (!nb->started || !nb->vif_added)
+		return false;
+	return rtw89_hci_check_and_reclaim_tx_resource(rtwdev,
+	    rtw89_core_get_ch_dma(rtwdev, rtw89_core_get_qsel(rtwdev, 0))) != 0;
+}
+
+/*
+ * Send one 802.11 frame.  With RTW89_NB_TX_AMPDU, "agg" is the recipient
+ * window of the established originator session of the frame's TID; the
+ * MAC then aggregates the frame with its neighbours of that TID.
+ */
 int
 rtw89_nb_tx(struct rtw89_nb *nb, const void *frame, size_t len,
-    unsigned int flags)
+    unsigned int flags, unsigned int agg)
 {
 	struct ieee80211_hw *hw = nb->hw;
 	struct ieee80211_tx_control control = { 0 };
@@ -933,6 +1105,17 @@ rtw89_nb_tx(struct rtw89_nb *nb, const void *frame, size_t len,
 	if (nb->sta_state >= IEEE80211_STA_NONE &&
 	    ether_addr_equal(hdr->addr1, nb->sta->addr))
 		control.sta = nb->sta;
+	if ((flags & RTW89_NB_TX_AMPDU) != 0 && agg != 0 &&
+	    control.sta != NULL && nb->sta->deflink.ht_cap.ht_supported &&
+	    nb->sta_state == IEEE80211_STA_AUTHORIZED &&
+	    ieee80211_is_data_qos(hdr->frame_control) &&
+	    (flags & (RTW89_NB_TX_NO_ACK | RTW89_NB_TX_EAPOL)) == 0) {
+		struct rtw89_sta *rtwsta = (struct rtw89_sta *)nb->sta->drv_priv;
+
+		/* mac80211 sets this at IEEE80211_AMPDU_TX_OPERATIONAL. */
+		rtwsta->ampdu_params[skb->priority].agg_num = MIN(agg, 64);
+		info->flags |= IEEE80211_TX_CTL_AMPDU;
+	}
 
 	hw->ops->tx(hw, &control, skb);
 	return 0;

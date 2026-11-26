@@ -72,7 +72,8 @@ struct callout { unsigned int opaque; };
 struct mutex { unsigned int opaque; };
 struct rtw89_nb { unsigned int opaque; };
 struct ieee80211com;
-struct rtw89_nb_bss { struct ieee80211com *owner; };
+struct rtw89_nb_ht { unsigned int width; };
+struct rtw89_nb_bss { struct ieee80211com *owner; struct rtw89_nb_ht ht; };
 
 struct ifnet {
 	void *if_softc;
@@ -138,6 +139,7 @@ struct rtw89_softc {
 	struct workqueue *sc_nswq;
 	struct work sc_nswk;
 	struct callout sc_scan_to;
+	struct callout sc_rxba_to;
 	bool sc_scanning;
 	void *sc_tx_sih;
 	uint8_t *sc_txbuf;
@@ -266,8 +268,10 @@ m_copydata(struct mbuf *m, int off, int len, void *data)
 }
 
 static int
-rtw89_nb_tx(struct rtw89_nb *nb, const void *data, int len, unsigned flags)
+rtw89_nb_tx(struct rtw89_nb *nb, const void *data, int len, unsigned flags,
+    unsigned agg)
 {
+	assert(agg == 0);
 	assert(nb == &test_nb && len <= (int)sizeof(bridge_bytes));
 	tx_bridge_calls++;
 	if (tx_event_count < sizeof(tx_events) / sizeof(tx_events[0]))
@@ -493,6 +497,27 @@ static void
 rtw89_fill_bss(struct rtw89_softc *sc, struct rtw89_nb_bss *bss)
 {
 	bss->owner = &sc->sc_ic;
+}
+
+/* The HT/VHT link and RX BA timer have their own net80211 contracts. */
+static void
+rtw89_fill_ht(struct rtw89_softc *sc, struct rtw89_nb_ht *ht)
+{
+	(void)sc;
+	ht->width = 0;
+}
+
+static void
+rtw89_print_link(struct rtw89_softc *sc, const struct rtw89_nb_ht *ht)
+{
+	(void)sc;
+	(void)ht;
+}
+
+static void
+rtw89_rxba_cancel(struct ieee80211com *ic)
+{
+	(void)ic;
 }
 
 static void
@@ -1111,7 +1136,7 @@ test_tx_stale_gate_precedes_crypto_and_bridge(void)
 	make_tx_frame(&m, &ni, true);
 	original = m;
 	tx_gate_allow = false;
-	if (rtw89_tx(&sc, &m, &ni, 0) != ESTALE || tx_gate_calls != 1 ||
+	if (rtw89_tx(&sc, &m, &ni, 0, 0) != ESTALE || tx_gate_calls != 1 ||
 	    tx_crypto_calls != 0 || tx_copy_calls != 0 || tx_bridge_calls != 0 ||
 	    memcmp(&m, &original, sizeof(m)) != 0) {
 		fprintf(stderr, "rejected TX reached crypto, copy or bridge\n");
@@ -1120,7 +1145,7 @@ test_tx_stale_gate_precedes_crypto_and_bridge(void)
 	/* Equal address bytes do not make a replacement node the queued owner. */
 	other = ni;
 	tx_gate_allow = true;
-	if (rtw89_tx(&sc, &m, &other, 0) != ESTALE || tx_gate_calls != 2 ||
+	if (rtw89_tx(&sc, &m, &other, 0, 0) != ESTALE || tx_gate_calls != 2 ||
 	    tx_crypto_calls != 0 || tx_copy_calls != 0 || tx_bridge_calls != 0) {
 		fprintf(stderr, "TX admission did not receive the actual node\n");
 		return 1;
@@ -1140,7 +1165,7 @@ test_tx_encrypts_once_then_submits_ciphertext(void)
 
 	init_station(&sc, &ifp, &ni, &chan);
 	make_tx_frame(&m, &ni, true);
-	if (rtw89_tx(&sc, &m, &ni, 0x25) != 0 || tx_gate_calls != 1 ||
+	if (rtw89_tx(&sc, &m, &ni, 0x25, 0) != 0 || tx_gate_calls != 1 ||
 	    tx_crypto_calls != 1 || tx_copy_calls != 1 || tx_bridge_calls != 1 ||
 	    bridge_len != 40 || bridge_flags != 0x25 || bridge_bytes[31] != 0xec ||
 	    memcmp(bridge_bytes, m.m_data, 40) != 0 ||
@@ -1164,7 +1189,7 @@ test_tx_crypto_failure_and_size_limit_fail_closed(void)
 	init_station(&sc, &ifp, &ni, &chan);
 	make_tx_frame(&m, &ni, true);
 	tx_crypto_fail = true;
-	if (rtw89_tx(&sc, &m, &ni, 0) != ENOBUFS || tx_crypto_calls != 1 ||
+	if (rtw89_tx(&sc, &m, &ni, 0, 0) != ENOBUFS || tx_crypto_calls != 1 ||
 	    tx_copy_calls != 0 || tx_bridge_calls != 0) {
 		fprintf(stderr, "crypto failure reached TX bridge\n");
 		return 1;
@@ -1172,7 +1197,7 @@ test_tx_crypto_failure_and_size_limit_fail_closed(void)
 	reset_counts();
 	make_tx_frame(&m, &ni, false);
 	m.m_pkthdr.len = RTW89_TXBUF_SIZE + 1;
-	if (rtw89_tx(&sc, &m, &ni, 0) != EMSGSIZE || tx_crypto_calls != 0 ||
+	if (rtw89_tx(&sc, &m, &ni, 0, 0) != EMSGSIZE || tx_crypto_calls != 0 ||
 	    tx_copy_calls != 0 || tx_bridge_calls != 0) {
 		fprintf(stderr, "oversized TX was copied into driver buffer\n");
 		return 1;
@@ -1192,7 +1217,7 @@ test_unprotected_tx_preserves_legacy_bridge_result(void)
 	init_station(&sc, &ifp, &ni, &chan);
 	make_tx_frame(&m, &ni, false);
 	bridge_result = EIO;
-	if (rtw89_tx(&sc, &m, &ni, 3) != EIO || tx_gate_calls != 1 ||
+	if (rtw89_tx(&sc, &m, &ni, 3, 0) != EIO || tx_gate_calls != 1 ||
 	    tx_crypto_calls != 0 || tx_copy_calls != 1 || tx_bridge_calls != 1 ||
 	    bridge_len != 32 || bridge_flags != 3 ||
 	    memcmp(bridge_bytes, m.m_data, 32) != 0) {

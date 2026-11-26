@@ -77,6 +77,7 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #define RTW89_PCI_VENDOR	0x10ec
 #define RTW89_PCI_BAR		PCI_BAR(2)
 #define RTW89_TXBUF_SIZE	4096
+#define RTW89_RXFRAME_MAX	4096
 #define RTW89_SCAN_DWELL_MS	200
 
 typedef int (*rtw89_irq_fn)(int, void *);
@@ -128,6 +129,19 @@ struct rtw89_softc {
 	uint64_t		 sc_nsserial;
 	struct callout		 sc_scan_to;
 	bool			 sc_scanning;
+
+	/* HT/VHT provider for net80211 (see rtw89_ht20_admit()). */
+	uint32_t		 sc_ht_generation;
+	unsigned		 sc_nss;		/* spatial streams */
+	volatile unsigned	 sc_txba_wanted;	/* TIDs without a session */
+
+	/* RX block-ack hole timer for net80211 (ic_rxba_ops). */
+	kmutex_t		 sc_rxba_lock;
+	struct callout		 sc_rxba_to;
+	void			*sc_rxba_sih;
+	uint64_t		 sc_rxba_token;
+	uint64_t		 sc_rxba_deadline;
+	uint64_t		 sc_rxba_due;
 };
 
 static int	rtw89_match(device_t, cfdata_t, void *);
@@ -159,11 +173,27 @@ static void	rtw89_tx_softint(void *);
 static void	rtw89_linklost_softint(void *);
 static int	rtw89_intr(void *);
 static void	rtw89_intr_thread(void *);
+static int	rtw89_ht20_admit(struct ieee80211com *,
+		    struct ieee80211_ht20_profile *);
+static int	rtw89_vht_admit(struct ieee80211com *,
+		    const struct ieee80211_vht_channel *, struct ieee80211_vht_cap *);
+static int	rtw89_wme_apply(struct ieee80211com *,
+		    const struct chanAccParams *, unsigned);
+static uint64_t	rtw89_rxba_now(struct ieee80211com *);
+static int	rtw89_rxba_schedule(struct ieee80211com *, uint64_t, uint64_t);
+static void	rtw89_rxba_cancel(struct ieee80211com *);
+static void	rtw89_rxba_timeout(void *);
+static void	rtw89_rxba_softint(void *);
+
+static const struct ieee80211_rxba_ops rtw89_rxba_ops = {
+	rtw89_rxba_now, rtw89_rxba_schedule, rtw89_rxba_cancel
+};
 
 CFATTACH_DECL_NEW(rtwx, sizeof(struct rtw89_softc),
     rtw89_match, rtw89_attach, rtw89_detach, NULL);
 
 static int rtw89_debug;
+static uint64_t rtw89_txagg;	/* frames given to the MAC for an A-MPDU */
 
 static const uint16_t rtw89_products[] = {
 	0xb852,		/* RTL8852BE */
@@ -238,6 +268,12 @@ rtw89_attach(device_t parent, device_t self, void *aux)
 	sc->sc_tx_sih = softint_establish(SOFTINT_NET, rtw89_tx_softint, sc);
 	sc->sc_linklost_sih = softint_establish(SOFTINT_NET,
 	    rtw89_linklost_softint, sc);
+	mutex_init(&sc->sc_rxba_lock, MUTEX_DEFAULT, IPL_NET);
+	callout_init(&sc->sc_rxba_to, CALLOUT_MPSAFE);
+	callout_setfunc(&sc->sc_rxba_to, rtw89_rxba_timeout, sc);
+	/* Not MPSAFE: net80211 runs with the kernel lock. */
+	sc->sc_rxba_sih = softint_establish(SOFTINT_NET, rtw89_rxba_softint,
+	    sc);
 	if (workqueue_create(&sc->sc_nswq, "rtw89ns", rtw89_newstate_task, sc,
 	    PRI_NONE, IPL_NET, 0) != 0) {
 		aprint_error_dev(self, "can't create workqueue\n");
@@ -312,6 +348,7 @@ rtw89_attach_hook(device_t self)
 		return;
 	}
 	rtw89_nb_get_macaddr(sc->sc_nb, ic->ic_myaddr);
+	sc->sc_nss = rtw89_nb_nss(sc->sc_nb);
 
 	ic->ic_ifp = ifp;
 	ic->ic_phytype = IEEE80211_T_OFDM;
@@ -344,9 +381,23 @@ rtw89_attach_hook(device_t self)
 	sc->sc_newstate = ic->ic_newstate;
 	ic->ic_newstate = rtw89_newstate;
 	ic->ic_sta_quiet = rtw89_sta_quiet;
+	/*
+	 * HT and VHT: net80211 negotiates the link, the RX block-ack window
+	 * and the TX block-ack sessions; the firmware selects the rates.
+	 * Register after ieee80211_ifattach(), which clears these providers.
+	 */
+	ic->ic_rxba_ops = &rtw89_rxba_ops;
+	ic->ic_ht20_admit = rtw89_ht20_admit;
+	ic->ic_vht_admit = rtw89_vht_admit;
+	ic->ic_wme.wme_sta_apply = rtw89_wme_apply;
+	ic->ic_caps |= IEEE80211_C_WME;
+	ic->ic_flags |= IEEE80211_F_WME;
 	ieee80211_media_init(ic, ieee80211_media_change,
 	    ieee80211_media_status);
+	ieee80211_wme_initparams(ic);
 	ieee80211_announce(ic);
+	aprint_normal_dev(self, "HT20 MCS0-%u, VHT 40/80 MHz MCS0-9 NSS%u\n",
+	    sc->sc_nss == 2 ? 15 : 7, sc->sc_nss);
 
 	aprint_normal_dev(self, "address %s\n", ether_sprintf(ic->ic_myaddr));
 	if (pmf_device_register(self, NULL, NULL))
@@ -384,6 +435,12 @@ rtw89_detach(device_t self, int flags)
 	if (sc->sc_linklost_sih != NULL)
 		softint_disestablish(sc->sc_linklost_sih);
 	if (sc->sc_txbuf != NULL) {
+		/* The interface is detached: net80211 arms no new timer. */
+		callout_halt(&sc->sc_rxba_to, NULL);
+		callout_destroy(&sc->sc_rxba_to);
+		if (sc->sc_rxba_sih != NULL)
+			softint_disestablish(sc->sc_rxba_sih);
+		mutex_destroy(&sc->sc_rxba_lock);
 		kmem_free(sc->sc_txbuf, RTW89_TXBUF_SIZE);
 		mutex_destroy(&sc->sc_nslock);
 	}
@@ -560,15 +617,22 @@ rtw89_nb_rx(void *arg, const void *frame, size_t len, int rssi,
 		    device_xname(sc->sc_dev), wh->i_fc[0], wh->i_fc[1], len,
 		    rssi, freq, ether_sprintf(wh->i_addr2));
 	}
-	/* net80211 parses management frames in the first mbuf only. */
-	if (len > MCLBYTES) {
+	/*
+	 * net80211 parses management frames in the first mbuf only.  The
+	 * largest MPDU is an A-MSDU of the advertised 3839 bytes (HT) or a
+	 * VHT MPDU of 3895 bytes, so one buffer always holds the frame.
+	 */
+	if (len > RTW89_RXFRAME_MAX) {
 		if_statinc(ifp, if_ierrors);
 		return;
 	}
 	rtw89_beacon_observe(sc, frame, len, freq);
 	MGETHDR(m, M_DONTWAIT, MT_DATA);
 	if (m != NULL && len > MHLEN) {
-		MCLGET(m, M_DONTWAIT);
+		if (len > MCLBYTES)
+			MEXTMALLOC(m, len, M_DONTWAIT);
+		else
+			MCLGET(m, M_DONTWAIT);
 		if ((m->m_flags & M_EXT) == 0) {
 			m_freem(m);
 			m = NULL;
@@ -733,6 +797,236 @@ rtw89_set_curchan(struct rtw89_softc *sc, struct ieee80211_channel *c)
 	if (error)
 		aprint_error_dev(sc->sc_dev, "can't set channel %u (%d)\n",
 		    ieee80211_chan2ieee(ic, c), error);
+}
+
+/* ------------------------------------------------------------------ */
+/* HT, VHT and WME provider for net80211                               */
+/* ------------------------------------------------------------------ */
+
+/*
+ * net80211 calls this with the kernel lock before each HT offer and for
+ * each frame of a committed HT link, so it only reads softc state.  The
+ * MAC answers block-ack requests itself (dynamic BA CAM), selects the
+ * rates in firmware and owns HT protection.  The profile is constant
+ * while the hardware runs; rtw89_init() starts a new generation.
+ */
+static int
+rtw89_ht20_admit(struct ieee80211com *ic, struct ieee80211_ht20_profile *p)
+{
+	struct rtw89_softc *sc = ic->ic_ifp->if_softc;
+
+	if (sc == NULL || sc->sc_nb == NULL || !sc->sc_running ||
+	    sc->sc_csa_quiet || sc->sc_ht_generation == 0 ||
+	    ic->ic_opmode != IEEE80211_M_STA ||
+	    ic->ic_fixed_rate != IEEE80211_FIXED_RATE_NONE)
+		return EOPNOTSUPP;
+	p->generation = sc->sc_ht_generation;
+	p->rx_mcs = p->tx_mcs = sc->sc_nss == 2 ? 0xffff : 0x00ff;
+	p->ready = IEEE80211_HT20_READY_ALL;
+	/*
+	 * Maximum RX A-MPDU 65535 bytes (factor 3), no MPDU start spacing.
+	 * The MAC receives each MPDU of an A-MPDU into its own RX buffer.
+	 */
+	p->ampdu = 0x03;
+	return 0;
+}
+
+/* VHT at the 40 or 80 MHz channel that net80211 derived from the AP. */
+static int
+rtw89_vht_admit(struct ieee80211com *ic,
+    const struct ieee80211_vht_channel *chan, struct ieee80211_vht_cap *cap)
+{
+	struct rtw89_softc *sc = ic->ic_ifp->if_softc;
+
+	memset(cap, 0, sizeof(*cap));
+	if (sc == NULL || sc->sc_nb == NULL || !sc->sc_running ||
+	    sc->sc_csa_quiet || ic->ic_curchan == NULL ||
+	    ic->ic_curchan == IEEE80211_CHAN_ANYC ||
+	    ieee80211_chan2ieee(ic, ic->ic_curchan) != chan->primary ||
+	    (chan->width_mhz != 40 && chan->width_mhz != 80))
+		return EOPNOTSUPP;
+	/* MCS0-9 on each stream; streams 3-8 are not supported. */
+	cap->rx_map = cap->tx_map = sc->sc_nss == 2 ? 0xfffa : 0xfffe;
+	/*
+	 * RX LDPC (bit 4), short GI reception at 80 MHz (bit 5) and the
+	 * maximum A-MPDU length exponent 7 (bits 23-25, 1048575 bytes).
+	 */
+	cap->info = 0x03800030;
+	return 0;
+}
+
+/*
+ * net80211 applies the EDCA parameters of the AP under its beacon lock.
+ * The bridge keeps them and programs the MAC from its work queue.
+ */
+static int
+rtw89_wme_apply(struct ieee80211com *ic, const struct chanAccParams *params,
+    unsigned slot)
+{
+	struct rtw89_softc *sc = ic->ic_ifp->if_softc;
+	struct rtw89_nb_edca edca[RTW89_NB_NAC];
+	unsigned ac;
+
+	(void)slot;	/* rtw89_fill_bss() gives the slot time */
+	if (params == NULL)
+		return EINVAL;
+	if (sc == NULL || sc->sc_nb == NULL || !sc->sc_running)
+		return ENXIO;
+	CTASSERT(WME_NUM_AC == RTW89_NB_NAC);
+	for (ac = 0; ac < RTW89_NB_NAC; ac++) {
+		const struct wmeParams *wp = &params->cap_wmeParams[ac];
+
+		edca[ac].aifsn = wp->wmep_aifsn;
+		edca[ac].ecw_min = wp->wmep_logcwmin;
+		edca[ac].ecw_max = wp->wmep_logcwmax;
+		edca[ac].txop = wp->wmep_txopLimit;
+	}
+	rtw89_nb_conf_wme(sc->sc_nb, edca);
+	return 0;
+}
+
+/* The HT and VHT link that net80211 committed for the associated AP. */
+static void
+rtw89_fill_ht(struct rtw89_softc *sc, struct rtw89_nb_ht *ht)
+{
+	const struct ieee80211_ht20_node *h = &sc->sc_ic.ic_bss->ni_ht20;
+
+	memset(ht, 0, sizeof(*ht));
+	if (!h->valid)
+		return;
+	ht->ht = true;
+	ht->ht_cap = h->peer_cap;
+	ht->ht_ampdu = h->peer_htcap[2];
+	ht->ht_mcs = h->tx_mcs;
+	ht->width = 20;
+	if (h->vht.valid) {
+		ht->vht = true;
+		ht->vht_cap = h->vht.peer.info;
+		ht->vht_map = h->vht.maps.tx_map;
+		ht->width = h->vht.channel.width_mhz;
+		ht->center = h->vht.channel.center;
+	}
+}
+
+static void
+rtw89_print_link(struct rtw89_softc *sc, const struct rtw89_nb_ht *ht)
+{
+	struct ieee80211com *ic = &sc->sc_ic;
+	unsigned chan = ieee80211_chan2ieee(ic, ic->ic_bss->ni_chan);
+
+	if (!ht->ht)
+		aprint_normal_dev(sc->sc_dev, "legacy link on channel %u\n",
+		    chan);
+	else if (!ht->vht)
+		aprint_normal_dev(sc->sc_dev,
+		    "HT20 link on channel %u, TX MCS 0x%04x, SGI %u\n", chan,
+		    ht->ht_mcs, (ht->ht_cap & 0x0020) != 0);
+	else
+		aprint_normal_dev(sc->sc_dev, "VHT%u link on channel %u "
+		    "(center %u), TX map 0x%04x, SGI %u, LDPC %u\n", ht->width,
+		    chan, ht->center, ht->vht_map,
+		    ht->width == 80 ? (ht->vht_cap & 0x20) != 0 :
+		    (ht->ht_cap & 0x40) != 0, (ht->vht_cap & 0x10) != 0);
+}
+
+/*
+ * RX block-ack hole timer.  The MPSAFE callout keeps only numeric tokens;
+ * the node work runs in a softint with the kernel lock.
+ */
+static uint64_t
+rtw89_rxba_now(struct ieee80211com *ic)
+{
+	struct timespec ts;
+
+	(void)ic;
+	getnanouptime(&ts);
+	return (uint64_t)ts.tv_sec * 1000 + (uint64_t)ts.tv_nsec / 1000000;
+}
+
+static int
+rtw89_rxba_ticks(uint64_t now, uint64_t deadline)
+{
+	uint64_t span = deadline > now ? deadline - now : 0;
+
+	if (span > 60000)
+		return 0;
+	return MAX(1, (int)((span * (uint64_t)hz + 999) / 1000));
+}
+
+static int
+rtw89_rxba_schedule(struct ieee80211com *ic, uint64_t deadline,
+    uint64_t token)
+{
+	struct rtw89_softc *sc = ic->ic_ifp->if_softc;
+	int tmo;
+
+	tmo = rtw89_rxba_ticks(rtw89_rxba_now(ic), deadline);
+	if (token == 0 || tmo == 0)
+		return EOVERFLOW;
+	mutex_enter(&sc->sc_rxba_lock);
+	sc->sc_rxba_deadline = deadline;
+	sc->sc_rxba_token = token;
+	sc->sc_rxba_due = 0;
+	callout_schedule(&sc->sc_rxba_to, tmo);
+	mutex_exit(&sc->sc_rxba_lock);
+	return 0;
+}
+
+static void
+rtw89_rxba_cancel(struct ieee80211com *ic)
+{
+	struct rtw89_softc *sc = ic->ic_ifp->if_softc;
+
+	mutex_enter(&sc->sc_rxba_lock);
+	sc->sc_rxba_token = sc->sc_rxba_due = sc->sc_rxba_deadline = 0;
+	callout_stop(&sc->sc_rxba_to);
+	mutex_exit(&sc->sc_rxba_lock);
+}
+
+static void
+rtw89_rxba_timeout(void *arg)
+{
+	struct rtw89_softc *sc = arg;
+	uint64_t now = rtw89_rxba_now(&sc->sc_ic);
+	int tmo;
+
+	mutex_enter(&sc->sc_rxba_lock);
+	if (sc->sc_rxba_token != 0) {
+		if (now < sc->sc_rxba_deadline) {
+			tmo = rtw89_rxba_ticks(now, sc->sc_rxba_deadline);
+			if (tmo != 0)
+				callout_schedule(&sc->sc_rxba_to, tmo);
+		} else {
+			sc->sc_rxba_due = sc->sc_rxba_token;
+			sc->sc_rxba_token = 0;
+			softint_schedule(sc->sc_rxba_sih);
+		}
+	}
+	mutex_exit(&sc->sc_rxba_lock);
+}
+
+static void
+rtw89_rxba_softint(void *arg)
+{
+	struct rtw89_softc *sc = arg;
+	struct ieee80211com *ic = &sc->sc_ic;
+	struct ieee80211_node *ni;
+	uint64_t token;
+	int s;
+
+	mutex_enter(&sc->sc_rxba_lock);
+	token = sc->sc_rxba_due;
+	sc->sc_rxba_due = 0;
+	mutex_exit(&sc->sc_rxba_lock);
+	if (token == 0)
+		return;
+	s = splnet();
+	if (sc->sc_running && ic->ic_bss != NULL) {
+		ni = ieee80211_ref_node(ic->ic_bss);
+		ieee80211_rxba_age(ic, ni, token);
+		ieee80211_free_node(ni);
+	}
+	splx(s);
 }
 
 static int
@@ -961,10 +1255,13 @@ rtw89_newstate_task(struct work *wk, void *arg)
 			if (ic->ic_opmode != IEEE80211_M_STA)
 				break;
 			rtw89_fill_bss(sc, &bss);
+			rtw89_fill_ht(sc, &bss.ht);
 			error = rtw89_nb_bss_assoc(sc->sc_nb, &bss);
 			if (error)
 				aprint_error_dev(sc->sc_dev,
 				    "can't associate (%d)\n", error);
+			else
+				rtw89_print_link(sc, &bss.ht);
 			break;
 		default:
 			break;
@@ -1052,10 +1349,21 @@ static void
 rtw89_tx_softint(void *arg)
 {
 	struct rtw89_softc *sc = arg;
+	struct ieee80211com *ic = &sc->sc_ic;
 	struct ifnet *ifp = &sc->sc_ec.ec_if;
+	unsigned wanted;
 	int s;
 
 	s = splnet();
+	/*
+	 * Ask for originator sessions for the TIDs that rtw89_start() sent
+	 * without one.  The request starts output, so it runs here, outside
+	 * rtw89_start(); net80211 owns state, timeouts and retries.
+	 */
+	wanted = atomic_swap_uint(&sc->sc_txba_wanted, 0);
+	if (wanted != 0 && sc->sc_running && ic->ic_state == IEEE80211_S_RUN &&
+	    ic->ic_bss != NULL && ic->ic_bss->ni_ht20.valid)
+		(void)ieee80211_txba_request(ic, ic->ic_bss, wanted);
 	ifp->if_flags &= ~IFF_OACTIVE;
 	rtw89_start(ifp);
 	splx(s);
@@ -1063,7 +1371,7 @@ rtw89_tx_softint(void *arg)
 
 static int
 rtw89_tx(struct rtw89_softc *sc, struct mbuf *m, struct ieee80211_node *ni,
-    unsigned int flags)
+    unsigned int flags, unsigned int agg)
 {
 	struct ieee80211com *ic = &sc->sc_ic;
 	struct ieee80211_frame *wh;
@@ -1082,7 +1390,41 @@ rtw89_tx(struct rtw89_softc *sc, struct mbuf *m, struct ieee80211_node *ni,
 	if (len > RTW89_TXBUF_SIZE)
 		return EMSGSIZE;
 	m_copydata(m, 0, len, sc->sc_txbuf);
-	return rtw89_nb_tx(sc->sc_nb, sc->sc_txbuf, len, flags);
+	return rtw89_nb_tx(sc->sc_nb, sc->sc_txbuf, len, flags, agg);
+}
+
+/*
+ * Unicast QoS data of a TID with an established originator session goes
+ * out as part of an A-MPDU; return the recipient window.  For a TID
+ * without a session, ask rtw89_tx_softint() to request one.
+ */
+static unsigned int
+rtw89_tx_agg(struct rtw89_softc *sc, struct mbuf *m, struct ieee80211_node *ni,
+    unsigned int *flags)
+{
+	struct ieee80211com *ic = &sc->sc_ic;
+	const struct ieee80211_qosframe *qwh;
+	unsigned int tid, window;
+
+	if (!ni->ni_ht20.valid || m->m_len < (int)sizeof(*qwh))
+		return 0;
+	qwh = mtod(m, const struct ieee80211_qosframe *);
+	if ((qwh->i_fc[0] & (IEEE80211_FC0_TYPE_MASK |
+	    IEEE80211_FC0_SUBTYPE_QOS)) !=
+	    (IEEE80211_FC0_TYPE_DATA | IEEE80211_FC0_SUBTYPE_QOS) ||
+	    IEEE80211_IS_MULTICAST(qwh->i_addr1))
+		return 0;
+	tid = qwh->i_qos[0] & IEEE80211_QOS_TID;
+	if (tid >= IEEE80211_RXBA_TIDS)
+		return 0;
+	window = ieee80211_txba_window(ic, ni, tid);
+	if (window == 0) {
+		atomic_or_uint(&sc->sc_txba_wanted, 1U << tid);
+		return 0;
+	}
+	*flags |= RTW89_NB_TX_AMPDU;
+	rtw89_txagg++;
+	return window;
 }
 
 static void
@@ -1093,7 +1435,7 @@ rtw89_start(struct ifnet *ifp)
 	struct ether_header *eh;
 	struct ieee80211_node *ni;
 	struct mbuf *m;
-	unsigned int flags;
+	unsigned int flags, agg;
 
 	if ((ifp->if_flags & (IFF_RUNNING | IFF_OACTIVE)) != IFF_RUNNING)
 		return;
@@ -1103,7 +1445,7 @@ rtw89_start(struct ifnet *ifp)
 			ifp->if_flags |= IFF_OACTIVE;
 			break;
 		}
-		flags = 0;
+		flags = agg = 0;
 		IF_DEQUEUE(&ic->ic_mgtq, m);
 		if (m != NULL) {
 			ni = M_GETCTX(m, struct ieee80211_node *);
@@ -1112,6 +1454,12 @@ rtw89_start(struct ifnet *ifp)
 		}
 		if (ic->ic_state != IEEE80211_S_RUN)
 			break;
+		/* Keep data in the send queue while the DMA ring is full;
+		 * the next TX completion restarts output. */
+		if (!rtw89_nb_tx_space(sc->sc_nb)) {
+			ifp->if_flags |= IFF_OACTIVE;
+			break;
+		}
 		IFQ_DEQUEUE(&ifp->if_snd, m);
 		if (m == NULL)
 			break;
@@ -1135,9 +1483,11 @@ rtw89_start(struct ifnet *ifp)
 			if_statinc(ifp, if_oerrors);
 			continue;
 		}
+		if ((flags & RTW89_NB_TX_EAPOL) == 0)
+			agg = rtw89_tx_agg(sc, m, ni, &flags);
 sendit:
 		bpf_mtap3(ic->ic_rawbpf, m, BPF_D_OUT);
-		if (rtw89_tx(sc, m, ni, flags) != 0)
+		if (rtw89_tx(sc, m, ni, flags, agg) != 0)
 			if_statinc(ifp, if_oerrors);
 		m_freem(m);
 		if (ni != NULL)
@@ -1163,6 +1513,10 @@ rtw89_init(struct ifnet *ifp)
 		    error);
 		return EIO;
 	}
+	/* A new hardware start invalidates a committed HT link. */
+	if (++sc->sc_ht_generation == 0)
+		sc->sc_ht_generation = 1;
+	sc->sc_txba_wanted = 0;
 	sc->sc_running = true;
 	sc->sc_txstopped = false;
 	sc->sc_txqueue_stopped = false;
@@ -1212,6 +1566,8 @@ rtw89_stop(struct ifnet *ifp, int disable)
 	sc->sc_txqueue_stopped = true;
 	ifp->if_flags &= ~(IFF_RUNNING | IFF_OACTIVE);
 	ifp->if_timer = 0;
+	rtw89_rxba_cancel(ic);
+	callout_halt(&sc->sc_rxba_to, NULL);
 	rtw89_nb_stop(sc->sc_nb);
 	mutex_enter(&sc->sc_nslock);
 	sc->sc_stopping = false;
@@ -1238,6 +1594,10 @@ rtw89_watchdog(struct ifnet *ifp)
 	else
 		timeout = MAX(hz, mstohz((uint32_t)ic->ic_bmisstimeout *
 		    1024 / 1000));
+	/* A full DMA ring sets IFF_OACTIVE; restart output once a second
+	 * in case no TX completion follows. */
+	if ((ifp->if_flags & IFF_OACTIVE) != 0 && !sc->sc_txstopped)
+		softint_schedule(sc->sc_tx_sih);
 	now = getticks();
 	if ((uint32_t)(now - sc->sc_beacon_tick) >= timeout) {
 		sc->sc_beacon_tick = now;
@@ -1313,6 +1673,10 @@ SYSCTL_SETUP(sysctl_hw_rtw89_setup, "sysctl hw.rtw89 setup")
 	    CTLFLAG_READWRITE, CTLTYPE_INT, "hwdebug",
 	    SYSCTL_DESCR("rtw89 debug mask (RTW89_DBG_*)"),
 	    NULL, 0, &rtw89_debug_mask, 0, CTL_CREATE, CTL_EOL);
+	sysctl_createv(clog, 0, &node, NULL, CTLFLAG_PERMANENT |
+	    CTLFLAG_READONLY, CTLTYPE_QUAD, "txagg",
+	    SYSCTL_DESCR("Frames given to the MAC for A-MPDU aggregation"),
+	    NULL, 0, &rtw89_txagg, 0, CTL_CREATE, CTL_EOL);
 }
 
 MODULE(MODULE_CLASS_DRIVER, if_rtw89, "pci");
