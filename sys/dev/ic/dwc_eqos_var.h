@@ -80,6 +80,12 @@ struct eqos_softc {
 	struct eqos_ring	sc_tx;
 	struct eqos_ring	sc_rx;
 
+	int			sc_tx_ioc_interval;
+	int			sc_rx_riwt;
+	int			sc_rx_riwt_programmed;
+	unsigned int		sc_rx_moderated_count;
+	bool			sc_rx_moderated[EQOS_DMA_DESC_COUNT];
+
 	/* receiving context for jumbo frame */
 	bool			sc_rx_discarding;
 	struct mbuf		*sc_rx_receiving_m;
@@ -90,6 +96,7 @@ struct eqos_softc {
 	uint32_t		sc_debug;
 
 	/* Indents indicate groups within evcnt. */
+	struct evcnt		sc_ev_rx_riwt_frames;
 	struct evcnt		sc_ev_intr;
 	struct evcnt		 sc_ev_rxintr;
 	struct evcnt		 sc_ev_txintr;

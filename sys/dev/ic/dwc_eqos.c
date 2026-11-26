@@ -100,6 +100,13 @@ unsigned int eqos_debug;	/* Default value */
 
 #define	TX_MAX_SEGS		128
 
+/* Periodic interrupt even when the watchdog is active. */
+#define EQOS_RX_RIWT_MASK	__BITS(7, 0)
+#define EQOS_RX_RIWT_UNIT	__BITS(17, 16)
+#define EQOS_RX_IOC_INTERVAL	16
+CTASSERT(RX_DESC_COUNT % EQOS_RX_IOC_INTERVAL == 0);
+
+
 #define	EQOS_LOCK(sc)			mutex_enter(&(sc)->sc_lock)
 #define	EQOS_UNLOCK(sc)			mutex_exit(&(sc)->sc_lock)
 #define	EQOS_ASSERT_LOCKED(sc)		KASSERT(mutex_owned(&(sc)->sc_lock))
@@ -119,6 +126,8 @@ unsigned int eqos_debug;	/* Default value */
 	bus_space_write_4((sc)->sc_bst, (sc)->sc_bsh, (reg), (val))
 
 static void	eqos_init_sysctls(struct eqos_softc *);
+static int	eqos_sysctl_rx_riwt(SYSCTLFN_PROTO);
+static int	eqos_sysctl_tx_ioc_interval(SYSCTLFN_PROTO);
 static int	eqos_sysctl_tx_cur_handler(SYSCTLFN_PROTO);
 static int	eqos_sysctl_tx_end_handler(SYSCTLFN_PROTO);
 static int	eqos_sysctl_rx_cur_handler(SYSCTLFN_PROTO);
@@ -304,7 +313,7 @@ eqos_setup_txdesc(struct eqos_softc *sc, int index, int flags,
 		tdes3 = 0;
 		--sc->sc_tx.queued;
 	} else {
-		tdes2 = (flags & EQOS_TDES3_TX_LD) ? EQOS_TDES2_TX_IOC : 0;
+		tdes2 = 0;
 		tdes3 = flags;
 		++sc->sc_tx.queued;
 	}
@@ -320,7 +329,8 @@ eqos_setup_txdesc(struct eqos_softc *sc, int index, int flags,
 }
 
 static int
-eqos_setup_txbuf(struct eqos_softc *sc, int index, struct mbuf *m)
+eqos_setup_txbuf(struct eqos_softc *sc, int index, struct mbuf *m,
+    bool intr)
 {
 	bus_dma_segment_t *segs;
 	int error, nsegs, cur, i;
@@ -371,6 +381,9 @@ eqos_setup_txbuf(struct eqos_softc *sc, int index, struct mbuf *m)
 
 		eqos_setup_txdesc(sc, cur, flags, segs[i].ds_addr,
 		    segs[i].ds_len, m->m_pkthdr.len);
+		if (i == nsegs - 1 && intr)
+			sc->sc_tx.desc_ring[cur].tdes2 |=
+			    htole32(EQOS_TDES2_TX_IOC);
 		flags &= ~EQOS_TDES3_TX_FD;
 		cur = TX_NEXT(cur);
 
@@ -397,6 +410,23 @@ eqos_setup_txbuf(struct eqos_softc *sc, int index, struct mbuf *m)
 static void
 eqos_setup_rxdesc(struct eqos_softc *sc, int index, bus_addr_t paddr)
 {
+	const bool moderated = sc->sc_rx_riwt != 0 &&
+	    index % EQOS_RX_IOC_INTERVAL != 0;
+
+	/*
+	 * Revert to IOC as the old descriptors complete. Keep the
+	 * watchdog programmed until no outstanding descriptor needs it.
+	 */
+	if (sc->sc_rx_moderated[index])
+		sc->sc_rx_moderated_count--;
+	sc->sc_rx_moderated[index] = moderated;
+	if (moderated)
+		sc->sc_rx_moderated_count++;
+	else if (sc->sc_rx_riwt == 0 && sc->sc_rx_moderated_count == 0 &&
+	    sc->sc_rx_riwt_programmed != 0) {
+		WR4(sc, GMAC_DMA_CHAN0_RX_WATCHDOG, 0);
+		sc->sc_rx_riwt_programmed = 0;
+	}
 
 	DPRINTF(EDEB_RXRING, "preparing desc %u\n", index);
 
@@ -408,7 +438,9 @@ eqos_setup_rxdesc(struct eqos_softc *sc, int index, bus_addr_t paddr)
 	    DESC_OFF(index), offsetof(struct eqos_dma_desc, tdes3),
 	    BUS_DMASYNC_PREWRITE);
 	sc->sc_rx.desc_ring[index].tdes3 = htole32(EQOS_TDES3_RX_OWN |
-	    EQOS_TDES3_RX_IOC | EQOS_TDES3_RX_BUF1V);
+	    EQOS_TDES3_RX_BUF1V);
+	if (!moderated)
+		sc->sc_rx.desc_ring[index].tdes3 |= htole32(EQOS_TDES3_RX_IOC);
 }
 
 static int
@@ -838,6 +870,11 @@ eqos_rxintr(struct eqos_softc *sc, int qid)
 			break;
 		}
 
+		if (sc->sc_rx_moderated[index] &&
+		    (tdes3 & (EQOS_TDES3_RX_CTXT | EQOS_TDES3_RX_LD)) ==
+		    EQOS_TDES3_RX_LD)
+			sc->sc_ev_rx_riwt_frames.ev_count++;
+
 		/* now discarding untill the last packet */
 		if (discarding)
 			goto rx_next;
@@ -1036,7 +1073,7 @@ eqos_start_locked(struct eqos_softc *sc)
 	if (!sc->sc_txrunning)
 		return;
 
-	for (cnt = 0, start = sc->sc_tx.cur; ; cnt++) {
+	for (cnt = 0, start = sc->sc_tx.cur; ; ) {
 		if (sc->sc_tx.queued >= TX_DESC_COUNT - TX_MAX_SEGS) {
 			DPRINTF(EDEB_TXRING, "%u sc_tx.queued, ring full\n",
 			    sc->sc_tx.queued);
@@ -1047,7 +1084,8 @@ eqos_start_locked(struct eqos_softc *sc)
 		if (m == NULL)
 			break;
 
-		nsegs = eqos_setup_txbuf(sc, sc->sc_tx.cur, m);
+		nsegs = eqos_setup_txbuf(sc, sc->sc_tx.cur, m,
+		    (cnt + 1) % sc->sc_tx_ioc_interval == 0);
 		if (nsegs <= 0) {
 			DPRINTF(EDEB_TXRING, "eqos_setup_txbuf failed "
 			    "with %d\n", nsegs);
@@ -1063,6 +1101,7 @@ eqos_start_locked(struct eqos_softc *sc)
 		bpf_mtap(ifp, m, BPF_D_OUT);
 
 		sc->sc_tx.cur = TX_SKIP(sc->sc_tx.cur, nsegs);
+		cnt++;
 	}
 
 	DPRINTF(EDEB_TXRING, "tx loop -> cnt = %u, cur: %u, next: %u, "
@@ -1070,6 +1109,13 @@ eqos_start_locked(struct eqos_softc *sc)
 	    sc->sc_tx.queued);
 
 	if (cnt != 0) {
+		const int last = TX_SKIP(sc->sc_tx.cur, TX_DESC_COUNT - 1);
+
+		/*
+		 * The old tail excludes this whole batch. Request completion
+		 * on its last packet before syncing and publishing the tail.
+		 */
+		sc->sc_tx.desc_ring[last].tdes2 |= htole32(EQOS_TDES2_TX_IOC);
 		eqos_dma_sync(sc, sc->sc_tx.desc_map,
 		    start, sc->sc_tx.cur, TX_DESC_COUNT,
 		    BUS_DMASYNC_PREREAD | BUS_DMASYNC_PREWRITE);
@@ -1542,6 +1588,8 @@ eqos_attach(struct eqos_softc *sc)
 		sc->sc_hw_feature[n] = RD4(sc, GMAC_MAC_HW_FEATURE(n));
 	}
 
+	sc->sc_tx_ioc_interval = 1;
+
 	aprint_naive("\n");
 	aprint_normal(": DesignWare EQOS ver 0x%02x (0x%02x)\n",
 	    snpsver, userver);
@@ -1636,6 +1684,8 @@ eqos_attach(struct eqos_softc *sc)
 	    NULL, device_xname(sc->sc_dev), "interrupts");
 
 	/* Per-interrupt type, using main interrupt */
+	evcnt_attach_dynamic(&sc->sc_ev_rx_riwt_frames, EVCNT_TYPE_MISC, NULL,
+	    device_xname(sc->sc_dev), "rx non-IOC frames");
 	evcnt_attach_dynamic(&sc->sc_ev_rxintr, EVCNT_TYPE_INTR,
 	    &sc->sc_ev_intr, device_xname(sc->sc_dev), "rxintr");
 	evcnt_attach_dynamic(&sc->sc_ev_txintr, EVCNT_TYPE_INTR,
@@ -1702,6 +1752,19 @@ eqos_init_sysctls(struct eqos_softc *sc)
 	    0, CTLTYPE_NODE, dvname,
 	    SYSCTL_DESCR("eqos information and settings"),
 	    NULL, 0, NULL, 0, CTL_HW, CTL_CREATE, CTL_EOL);
+	if (rv != 0)
+		goto err;
+
+	rv = sysctl_createv(log, 0, &rnode, NULL, CTLFLAG_READWRITE,
+	    CTLTYPE_INT, "rx_riwt",
+	    SYSCTL_DESCR("RX interrupt watchdog count, 0 uses an IOC per descriptor"),
+	    eqos_sysctl_rx_riwt, 0, (void *)sc, 0, CTL_CREATE, CTL_EOL);
+	if (rv != 0)
+		goto err;
+	rv = sysctl_createv(log, 0, &rnode, NULL, CTLFLAG_READWRITE,
+	    CTLTYPE_INT, "tx_ioc_interval",
+	    SYSCTL_DESCR("TX interrupt packet interval within a DMA batch"),
+	    eqos_sysctl_tx_ioc_interval, 0, (void *)sc, 0, CTL_CREATE, CTL_EOL);
 	if (rv != 0)
 		goto err;
 
@@ -1796,6 +1859,72 @@ err:
 	sc->sc_sysctllog = NULL;
 	device_printf(sc->sc_dev, "%s: sysctl_createv failed, rv = %d\n",
 	    __func__, rv);
+}
+
+static int
+eqos_sysctl_rx_riwt(SYSCTLFN_ARGS)
+{
+	struct sysctlnode node = *rnode;
+	struct eqos_softc *sc = node.sysctl_data;
+	int error, value;
+
+	EQOS_LOCK(sc);
+	value = sc->sc_rx_riwt;
+	EQOS_UNLOCK(sc);
+	node.sysctl_data = &value;
+	error = sysctl_lookup(SYSCTLFN_CALL(&node));
+	if (error != 0 || newp == NULL)
+		return error;
+	if (value < 0 || value > EQOS_RX_RIWT_MASK)
+		return EINVAL;
+
+	EQOS_LOCK(sc);
+	if (value == 0) {
+		sc->sc_rx_riwt = 0;
+		if (sc->sc_rx_moderated_count == 0) {
+			WR4(sc, GMAC_DMA_CHAN0_RX_WATCHDOG, 0);
+			sc->sc_rx_riwt_programmed = 0;
+		}
+	} else if (value == sc->sc_rx_riwt_programmed) {
+		sc->sc_rx_riwt = value;
+	} else if (sc->sc_rx_moderated_count != 0) {
+		/* Do not replace the timer needed by descriptors in flight. */
+		error = EBUSY;
+	} else {
+		WR4(sc, GMAC_DMA_CHAN0_RX_WATCHDOG, value);
+		if ((RD4(sc, GMAC_DMA_CHAN0_RX_WATCHDOG) &
+		    (EQOS_RX_RIWT_MASK | EQOS_RX_RIWT_UNIT)) != value) {
+			WR4(sc, GMAC_DMA_CHAN0_RX_WATCHDOG, 0);
+			sc->sc_rx_riwt_programmed = sc->sc_rx_riwt = 0;
+			error = EOPNOTSUPP;
+		} else {
+			sc->sc_rx_riwt_programmed = sc->sc_rx_riwt = value;
+		}
+	}
+	EQOS_UNLOCK(sc);
+	return error;
+}
+
+static int
+eqos_sysctl_tx_ioc_interval(SYSCTLFN_ARGS)
+{
+	struct sysctlnode node = *rnode;
+	struct eqos_softc *sc = node.sysctl_data;
+	int error, value;
+
+	EQOS_TXLOCK(sc);
+	value = sc->sc_tx_ioc_interval;
+	EQOS_TXUNLOCK(sc);
+	node.sysctl_data = &value;
+	error = sysctl_lookup(SYSCTLFN_CALL(&node));
+	if (error != 0 || newp == NULL)
+		return error;
+	if (value < 1 || value >= TX_DESC_COUNT)
+		return EINVAL;
+	EQOS_TXLOCK(sc);
+	sc->sc_tx_ioc_interval = value;
+	EQOS_TXUNLOCK(sc);
+	return 0;
 }
 
 static int
