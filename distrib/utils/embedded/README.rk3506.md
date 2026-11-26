@@ -33,12 +33,24 @@ export RK3506_UBOOT
     -S "$src" -D "$destdir" -K "$kernels" "$output/lyra-system.img"
 ```
 
+For a prepared static root, give the builder the root tree and its matching BSD mtree specification.
+The tree supplies the userland and startup configuration. The specification supplies the target modes, owners and device nodes.
+The static network profile exports this pair as `root/` and `root.spec`. The card builder creates the FFS partition directly.
+Apply the private configuration in the static root producer. Select the root device for this card when preparing a multi-user tree. The GPT label is `netbsd-root`.
+
+```sh
+"$HOST_SH" "$src/distrib/utils/embedded/mkimage" -h luckfox-lyra-zero-w \
+    -S "$src" -D "$static_output/root" -F "$static_output/root.spec" \
+    -K "$kernels" "$output/lyra-system.img"
+```
+
 Use a regular output file. The builder prepares a new file before replacing an existing image. The FAT partition starts at 16 MiB. U-Boot reads `boot.scr` there and passes the external DTB to the ARM kernel. The script places the legacy image header at 0x02000000. The first instruction then runs at 0x02000040, as required by the evbarm initial section mapping.
 
 Inspect both GPT copies, read the loader back at byte 32768 and extract the kernel, DTB and boot script from FAT. Compare the bytes with the selected inputs. Physical acceptance requires a cold boot on the target, console output from the selected kernel, and, for a full installation, a mounted root and a network login.
 
-Test the legacy header, size and CRC checks with the selected host tools.
+Test the kernel header and CRC checks, init link resolution and the console device with the selected host tools.
 
 ```sh
 "$TOOL_PYTHON" "$src/distrib/utils/embedded/check-armv7-uboot-test.py" "$TOOL_MKUBOOTIMAGE"
+"$TOOL_PYTHON" -B "$src/distrib/utils/embedded/check-prepared-root-test.py"
 ```

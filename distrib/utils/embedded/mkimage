@@ -211,10 +211,11 @@ make_fstab_default() {
 
 usage() {
 	cat << EOF 1>&2
-Usage: $PROG -h <host-arch> [-bdmx] [-U <update-profile.json>] [-B <byte-order>] [-K <kerneldir>] [-S <srcdir>] [-D <destdir>] [-c <custom-files-dir>] [-s <Mb size>] [<image>]
+Usage: $PROG -h <host-arch> [-bdmx] [-U <update-profile.json>] [-B <byte-order>] [-K <kerneldir>] [-S <srcdir>] [-D <destdir>] [-F <root.spec>] [-c <custom-files-dir>] [-s <Mb size>] [<image>]
 
 -U	Enable automatic OS updates with the selected image profile
 -b	Boot only, no sets loaded
+-F	Use the prepared root from -D and its mtree specification
 -r	root device kind (sd, wd, ld)
 -d	Add the debug sets
 -m	Optimize the OS installation to mimimize disk writes for SSDs
@@ -224,7 +225,7 @@ EOF
 }
 
 # First pass for options to get the host and src directories
-OPTS="B:D:K:S:U:bc:dh:mr:s:x"
+OPTS="B:D:F:K:S:U:bc:dh:mr:s:x"
 while getopts "$OPTS" f
 do
 	case $f in
@@ -257,9 +258,11 @@ bsize=65536
 ffsversion=1
 root_overlay=false
 root_overlay_dir=
+supports_root_spec=false
+root_spec=
 
 . "${DIR}/conf/${h}.conf"
-release="/usr/obj/${MACHINE}/release"
+release=
 
 selected_sets="$sets"
 dsets_p=false
@@ -274,6 +277,8 @@ do
 	case $f in
 	B)	endian="-B $OPTARG";;
 	D)	release="$OPTARG";;
+	F)	[ -n "$OPTARG" ] || fail "Provide the root mtree specification"
+		root_spec="$OPTARG";;
 	K)	kernel="$OPTARG";;
 	S)	;;
 	U)	[ -n "$OPTARG" ] || fail "Provide a nonempty update profile"
@@ -299,6 +304,16 @@ do
 	*)	usage;;
 	esac
 done
+if [ -n "$root_spec" ]; then
+	$supports_root_spec || fail "The selected profile does not support a prepared root"
+	[ -n "$release" ] && [ -d "$release" ] && [ -s "$root_spec" ] ||
+	    fail "Select the prepared root with -D and its mtree specification with -F"
+	if [ -n "$bootonly$update_profile$custom" ] || $dsets_p || $xsets_p || $minwrites; then
+		fail "A prepared root supplies its own files and startup configuration"
+	fi
+	cp "$root_spec" "$tmp/selected_sets"
+fi
+release=${release:-/usr/obj/${MACHINE}/release}
 if [ -n "${MKREPRO_TIMESTAMP}" ]; then
 	timestamp_opt="-T ${MKREPRO_TIMESTAMP}"
 	volume_opt=",volume_id=$((${MKREPRO_TIMESTAMP} & 0xffff))"
@@ -351,8 +366,13 @@ if [ -n "$gpt_peer_label" ] || [ "$stage_output" = true ]; then
 fi
 
 validate_inputs
+fs_accounts="$release/etc"
+if [ -n "$root_spec" ]; then
+	# A small static root can omit the passwd and group databases.
+	fs_accounts="$src/etc"
+fi
 
-if [ -z "${bootonly}" ]; then
+if [ -z "${bootonly}$root_spec" ]; then
 	echo ${bar} configuring sets ${bar}
 	(cat "${release}/etc/mtree/NetBSD.dist"
 	for i in $selected_sets; do
@@ -363,8 +383,10 @@ if [ -z "${bootonly}" ]; then
 	done) > "$tmp/selected_sets"
 fi
 
-make_fstab
-customize
+if [ -z "$root_spec" ]; then
+	make_fstab
+	customize
+fi
 populate
 if [ -n "$update_profile" ]; then
 	set --
@@ -408,7 +430,7 @@ if [ -n "${msdosid}" ]; then
 	11|12)	fat_opt=",fat_type=32";;
 	*)	fat_opt=;;
 	esac
-	${MAKEFS} -N ${release}/etc -t msdos \
+	${MAKEFS} -N "$fs_accounts" -t msdos \
 	    -o "volume_label=NETBSD${fat_opt}${volume_opt}" ${timestamp_opt} \
 	    -O $((${init} / 2))m -s $((${boot} / 2))m \
 	    "${image}" ${mnt}/boot
@@ -419,7 +441,7 @@ if [ -z "${bootonly}" ]; then
 	set -- "${release}" "${mnt}"
 	[ -z "${root_overlay_dir}" ] || set -- "$@" "${root_overlay_dir}"
 	[ -z "$update_profile" ] || set -- "$@" "$tmp/update-policy"
-	${MAKEFS} -rx ${endian} -N ${release}/etc -t ffs \
+	${MAKEFS} -rx ${endian} -N "$fs_accounts" -t ffs \
 	    -O ${ffsoffset} ${timestamp_opt} \
 	    -o d=4096,f=${fsize},b=${bsize},v=${ffsversion} -b $((${extra}))m \
 	    -F "$tmp/selected_sets" "${image}" "$@"
