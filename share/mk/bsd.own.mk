@@ -857,7 +857,8 @@ CC_WNO_ADDRESS_OF_PACKED_MEMBER=${${ACTIVE_CC} == "clang" :? -Wno-error=address-
 CC_WNO_ARRAY_BOUNDS=		${${ACTIVE_CC} == "gcc" && ${HAVE_GCC:U0} >= 12:? -Wno-array-bounds :}
 CC_WNO_CAST_FUNCTION_TYPE=	${${ACTIVE_CC} == "gcc" && ${HAVE_GCC:U0} >= 8:? -Wno-cast-function-type :}
 CC_WNO_FORMAT_OVERFLOW=		${${ACTIVE_CC} == "gcc" && ${HAVE_GCC:U0} >= 7:? -Wno-format-overflow :}
-CC_WNO_FORMAT_TRUNCATION=	${${ACTIVE_CC} == "gcc" && ${HAVE_GCC:U0} >= 7:? -Wno-format-truncation :}
+CC_WNO_FORMAT_TRUNCATION=	${${ACTIVE_CC} == "clang" :? -Wno-format-truncation :} \
+				${${ACTIVE_CC} == "gcc" && ${HAVE_GCC:U0} >= 7:? -Wno-format-truncation :}
 CC_WNO_IMPLICIT_FALLTHROUGH=	${${ACTIVE_CC} == "gcc" && ${HAVE_GCC:U0} >= 7:? -Wno-implicit-fallthrough :}
 CC_WNO_MAYBE_UNINITIALIZED=	${${ACTIVE_CC} == "gcc" && ${HAVE_GCC:U0} >= 10:? -Wno-maybe-uninitialized :}
 CC_WNO_MISSING_TEMPLATE_KEYWORD=${${ACTIVE_CC} == "gcc" && ${HAVE_GCC:U0} >= 12:? -Wno-missing-template-keyword :}
