@@ -1,0 +1,44 @@
+{
+  "image": "bcm2712-cm5",
+  "health": "ember/image/ssh-route-health",
+  "slots": {
+    "profile": "bcm2712-cm5-ember64",
+    "model": "netbsd,generic-acpi",
+    "kernel": "(EMBER64)",
+    "watchdog": "bcmpmwdog0",
+    "module_directory": "stand/evbarm/11.1/modules",
+    "modules": [
+      "bcm2712btcom",
+      "bcmexpgpio",
+      "rp1wmcodec",
+      "rpi5button"
+    ],
+    "tree_directory": "",
+    "trees": [],
+    "sets": [
+      "boot",
+      "base",
+      "etc",
+      "comp"
+    ],
+    "adapter": "efiboot",
+    "storage": "ffs",
+    "target": {
+      "arch": "aarch64",
+      "triplet": "aarch64--netbsd",
+      "abi": "netbsd-11",
+      "runtime": "libc++"
+    },
+    "roots": {
+      "A": "netbsd-root",
+      "B": "ember-root-b"
+    },
+    "esp": "EFI",
+    "dmi": {
+      "vendor": "Raspberry Pi Foundation",
+      "product": "Raspberry Pi Compute Module 5"
+    },
+    "reset_provider": "bcm2712-pm"
+  },
+  "efi_loader": "bootaa64.efi"
+}

@@ -36,6 +36,7 @@
 #include <fs/cd9660/iso.h>
 
 #include "efiboot.h"
+#include "efislot.h"
 #include "efiblock.h"
 
 #define	EFI_BLOCK_READAHEAD	(64 * 1024)
@@ -89,9 +90,14 @@ efi_block_parse(const char *fname, struct efi_block_part **pbpart, char **pfile)
 		*pfile = __UNCONST("/");
 	}
 
-	if (strncasecmp(full_path, "hd", 2) != 0)
-		return EINVAL;
-	dev = strtoimax(full_path + 2, &ep, 10);
+	if (strncmp(full_path, "bootpart", 8) == 0) {
+		dev = efi_slot_disk_unit;
+		ep = __UNCONST(full_path + 8);
+	} else {
+		if (strncasecmp(full_path, "hd", 2) != 0)
+			return EINVAL;
+		dev = strtoimax(full_path + 2, &ep, 10);
+	}
 	if (dev < 0 || dev >= efi_nblock)
 		return ENXIO;
 	if (ep[0] < 'a' || ep[0] >= 'a' + MAXPARTITIONS || ep[1] != ':')
@@ -514,6 +520,8 @@ efi_block_probe(void)
 		bdev->dio = dio;
 		bdev->media_id = bio->Media->MediaId;
 		bdev->path = DevicePathFromHandle(efi_block[n]);
+		if (efi_slot_on_disk(efi_bootdp, bdev->path))
+			efi_slot_disk_unit = bdev->index;
 		TAILQ_INIT(&bdev->partitions);
 		TAILQ_INSERT_TAIL(&efi_block_devs, bdev, entries);
 

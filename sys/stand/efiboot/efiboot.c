@@ -27,6 +27,7 @@
  */
 
 #include "efiboot.h"
+#include "efislot.h"
 #include "efifile.h"
 #include "efiblock.h"
 #include "efirng.h"
@@ -206,6 +207,16 @@ efi_cleanup_checked(struct efi_cleanup_result *out)
 		goto done;
 	}
 
+#ifdef EFIBOOT_TRIAL_RESET
+	/* Firmware disables the boot services watchdog on this boundary. */
+	if (efi_slot_watchdog_trial() && !efi_md_trial_reset_arm()) {
+		uefi_call_wrapper(RT->ResetSystem, 4, EfiResetCold,
+		    EFI_DEVICE_ERROR, 0, NULL);
+		for (;;)
+			;
+	}
+#endif
+
 #ifdef EFIBOOT_RUNTIME_ADDRESS
 	efi_cm5_trace("[CM5 EFI] SetVirtualAddressMap enter\r\n");
 	efi_fdt_set_virtual_address_map_checked(memmap, nentries, mapkey,
@@ -214,6 +225,15 @@ efi_cleanup_checked(struct efi_cleanup_result *out)
 	efi_cm5_pending("after VA map");
 #endif
 done:
+#ifdef EFIBOOT_TRIAL_RESET
+	if (efi_slot_watchdog_trial() && (!value.ebs_attempted ||
+	    EFI_ERROR(value.ebs_status))) {
+		uefi_call_wrapper(RT->ResetSystem, 4, EfiResetCold,
+		    EFI_DEVICE_ERROR, 0, NULL);
+		for (;;)
+			;
+	}
+#endif
 	if (out != NULL)
 		*out = value;
 }

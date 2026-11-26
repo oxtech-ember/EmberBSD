@@ -55,6 +55,7 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #include <dev/acpi/acpireg.h>
 #include <dev/acpi/acpivar.h>
 
+#include <arm/broadcom/bcm2835_pmreg.h>
 #include <arm/broadcom/bcm2835_pmwdogvar.h>
 
 /* A cell the boot loader did not report. */
@@ -192,7 +193,6 @@ bcmpmwdog_v3d_status(uint32_t *value)
 }
 
 #ifdef BCM2712_V3D_TAKEOVER
-#define BCM2712_PM_BASE		UINT64_C(0x107d200000)
 #define BCM2712_PM_SIZE		0x308
 #define BCM2712_PM_PASSWORD	0x5a000000
 #define BCM2712_PM_RESET_N	__BIT(6)

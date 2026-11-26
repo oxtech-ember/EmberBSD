@@ -74,6 +74,14 @@ parsebootconf(const char *conf)
 	return perform_bootcfg(conf, &do_bootcfg_command, 32768);
 }
 
+#ifdef EFIBOOT
+int
+parsebootconf_buffer(char *buf)
+{
+	return perform_bootcfg_buffer(buf, &do_bootcfg_command);
+}
+#endif
+
 /*
  * doboottypemenu will render the menu and parse any user input
  */

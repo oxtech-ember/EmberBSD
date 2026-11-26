@@ -38,6 +38,7 @@
 #include "biosdisk_ll.h"
 #include "devopen.h"
 #include "efidisk.h"
+#include <stand/efiboot/efislot.h>
 #include "bootinfo.h"
 
 static struct efidiskinfo_lh efi_disklist;
@@ -88,7 +89,7 @@ efi_disk_probe(void)
 	EFI_BLOCK_IO *bio;
 	EFI_BLOCK_IO_MEDIA *media;
 	EFI_DEVICE_PATH *dp;
-	struct efidiskinfo *edi;
+	struct efidiskinfo *edi, *slot_disk = NULL;
 	int dev, depth = -1;
 
 	TAILQ_INIT(&efi_disklist);
@@ -131,6 +132,8 @@ efi_disk_probe(void)
 			    handles[i], &DevicePathProtocol, (void **)&dp);
 			if (EFI_ERROR(status))
 				goto next;
+			if (efi_slot_on_disk(efi_bootdp, dp))
+				slot_disk = edi;
 			if (efi_device_path_ncmp(efi_bootdp, dp, depth) == 0) {
 				edi->bootdev = true;
 				TAILQ_INSERT_HEAD(&efi_disklist, edi,
@@ -156,6 +159,8 @@ next:
 	dev = 0x80;
 	TAILQ_FOREACH(edi, &efi_disklist, list) {
 		edi->dev = dev++;
+		if (edi == slot_disk && edi->type == BIOSDISK_TYPE_HD)
+			efi_slot_disk_unit = edi->dev - 0x80;
 		if (edi->type == BIOSDISK_TYPE_HD)
 			nefidisks++;
 		if (edi->bootdev)

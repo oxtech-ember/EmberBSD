@@ -34,6 +34,7 @@
 #include "efirng.h"
 #include "module.h"
 #include "bootmenu.h"
+#include "efislot.h"
 
 #ifdef EFIBOOT_FDT
 #include "efifdt.h"
@@ -219,6 +220,7 @@ command_boot(char *arg)
 	efi_block_set_readahead(true);
 	exec_netbsd(kernel, bootargs);
 	efi_block_set_readahead(false);
+	efi_slot_boot_failed();
 }
 
 void
@@ -571,8 +573,20 @@ boot(void)
 {
 	char pathbuf[80];
 	int currname, c;
+	char *slot_config;
+	EFI_STATUS status;
 
-	if (bootcfg_path(pathbuf, sizeof(pathbuf)) == 0) {
+	status = efi_slot_config(efi_li->DeviceHandle, &slot_config);
+	if (!EFI_ERROR(status)) {
+		parsebootconf_buffer(slot_config);
+		if (bootcfg_info.nummenu == 0) {
+			efi_slot_boot_failed();
+			bootprompt();
+		}
+	} else if (status != EFI_NOT_FOUND) {
+		printf("EFI slot configuration unavailable\n");
+		bootprompt();
+	} else if (bootcfg_path(pathbuf, sizeof(pathbuf)) == 0) {
 		twiddle_toggle = 1;
 		parsebootconf(pathbuf);
 	}

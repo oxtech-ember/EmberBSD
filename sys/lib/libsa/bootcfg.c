@@ -99,16 +99,9 @@ bootcfg_do_noop(const char *cmd, char *arg)
  * consdev=com0
  * default=1
 */
-int
-perform_bootcfg(const char *conf, bootcfg_command command, const off_t maxsz)
+static void
+bootcfg_defaults(void)
 {
-	char *bc, *c;
-	int cmenu, cbanner;
-	ssize_t len, off, resid;
-	int fd, err;
-	struct stat st;
-	char *next, *key, *value, *v2;
-
 	/* clear bootcfg structure */
 	memset(&bootcfg_info, 0, sizeof(bootcfg_info));
 
@@ -117,6 +110,17 @@ perform_bootcfg(const char *conf, bootcfg_command command, const off_t maxsz)
 
 	/* automatically switch between letter and numbers on menu */
 	bootcfg_info.menuformat = DEFAULT_FORMAT;
+}
+
+int
+perform_bootcfg(const char *conf, bootcfg_command command, const off_t maxsz)
+{
+	char *bc;
+	ssize_t len, off, resid;
+	int fd, err;
+	struct stat st;
+
+	bootcfg_defaults();
 
 	fd = open(conf, 0);
 	if (fd < 0)
@@ -163,7 +167,17 @@ perform_bootcfg(const char *conf, bootcfg_command command, const off_t maxsz)
 
 	close(fd);
 
-	/* bc is now assumed to contain the whole boot.cfg file (see above) */
+	return perform_bootcfg_buffer(bc, command);
+}
+
+/* The menu keeps pointers into this writable, NUL-terminated buffer. */
+int
+perform_bootcfg_buffer(char *bc, bootcfg_command command)
+{
+	char *c, *next, *key, *value, *v2;
+	int cmenu, cbanner;
+
+	bootcfg_defaults();
 
 	cmenu = 0;
 	cbanner = 0;

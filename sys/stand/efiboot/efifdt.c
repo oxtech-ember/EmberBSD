@@ -28,6 +28,7 @@
  */
 
 #include "efiboot.h"
+#include "efislot.h"
 #include "efifdt.h"
 #include "efiblock.h"
 #include "overlay.h"
@@ -776,6 +777,11 @@ efi_fdt_prepare_boot(const char *fname, const char *args, u_long *marks)
 		return EINVAL;
 	}
 
+#ifdef EFIBOOT_TRIAL_RESET
+	if (efi_slot_watchdog_trial() && efi_fdt_size() == 0)
+		return EINVAL;
+#endif
+
 	if (efi_fdt_size() > 0) {
 		/*
 		 * Load the rndseed as late as possible -- after we
@@ -792,6 +798,14 @@ efi_fdt_prepare_boot(const char *fname, const char *args, u_long *marks)
 		efi_fdt_initrd(initrd_addr, initrd_size);
 		efi_fdt_rndseed(rndseed_addr, rndseed_size);
 		efi_fdt_efirng(efirng_addr, efirng_size);
+#ifdef EFIBOOT_TRIAL_RESET
+		if (efi_slot_watchdog_trial()) {
+			int chosen = fdt_path_offset(fdt_data, "/chosen");
+			if (chosen < 0 || fdt_setprop(fdt_data, chosen,
+			    "emberbsd,trial-watchdog", NULL, 0) != 0)
+				return EINVAL;
+		}
+#endif
 		efi_fdt_bootargs(args);
 		efi_fdt_userconf();
 		efi_fdt_system_table();

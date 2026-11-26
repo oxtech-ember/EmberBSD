@@ -66,6 +66,7 @@ struct bootcfg_def {
 extern struct bootcfg_def bootcfg_info;
 
 int perform_bootcfg(const char *, bootcfg_command, const off_t);
+int perform_bootcfg_buffer(char *, bootcfg_command);
 void bootcfg_do_noop(const char *, char *);
 void print_bootcfg_banner(const char *, const char *);
 void print_bootcfg_banner_color(const char *, const char *, void (*)(int));

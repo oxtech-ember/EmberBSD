@@ -35,6 +35,7 @@
 #include "bootcfg.h"
 #include "bootmod.h"
 #include "bootmenu.h"
+#include <stand/efiboot/efislot.h>
 #include "biosdisk.h"
 #include "devopen.h"
 
@@ -166,6 +167,17 @@ parsebootfile(const char *fname, char **fsname, char **devname, int *unit,
 		if (devlen > MAXDEVNAME)
 			return EINVAL;
 
+		if (devlen == 9 && strncmp(fname, "bootpart", 8) == 0 &&
+		    fname[8] >= 'a' && fname[8] <= 'p') {
+			if (efi_slot_disk_unit < 0)
+				return ENXIO;
+			*fsname = "ufs";
+			*devname = "hd";
+			*unit = efi_slot_disk_unit;
+			*partition = fname[8] - 'a';
+			fname = col + 1;
+			goto out;
+		}
 		if (strstr(fname, "NAME=") == fname) {
 			strlcpy(savedevname, fname, devlen + 1);
 			*fsname = "ufs";
@@ -288,6 +300,8 @@ boot(void)
 {
 	int currname;
 	int c;
+	char *slot_config;
+	EFI_STATUS status;
 #if defined(SUPPORT_NFS) || defined(SUPPORT_TFTP)
 	const struct netboot_fstab *nf;
 #endif
@@ -309,7 +323,17 @@ boot(void)
 #endif
 	default_fsname = "ufs";
 
-	if (!(boot_params.bp_flags & X86_BP_FLAGS_NOBOOTCONF)) {
+	status = efi_slot_config(efi_li->DeviceHandle, &slot_config);
+	if (!EFI_ERROR(status)) {
+		parsebootconf_buffer(slot_config);
+		if (bootcfg_info.nummenu == 0) {
+			efi_slot_boot_failed();
+			bootmenu();
+		}
+	} else if (status != EFI_NOT_FOUND) {
+		printf("EFI slot configuration unavailable\n");
+		bootmenu();
+	} else if (!(boot_params.bp_flags & X86_BP_FLAGS_NOBOOTCONF)) {
 #ifdef EFIBOOTCFG_FILENAME
 		int rv = EINVAL;
 		if (efi_bootdp_type != BOOT_DEVICE_TYPE_NET)
@@ -462,8 +486,10 @@ command_boot(char *arg)
 	char path[512];
 	int howto;
 
-	if (!parseboot(arg, &filename, &howto))
+	if (!parseboot(arg, &filename, &howto)) {
+		efi_slot_boot_failed();
 		return;
+	}
 
 	if (filename != NULL && filename[0] != '\0') {
 		/* try old locations first to appease atf test beds */
@@ -487,6 +513,7 @@ command_boot(char *arg)
 			bootit(names[i][1], howto);
 		}
 	}
+	efi_slot_boot_failed();
 }
 
 void

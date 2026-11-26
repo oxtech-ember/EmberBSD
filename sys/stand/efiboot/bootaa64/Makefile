@@ -11,7 +11,8 @@ EFIBOOT_ACPI=	yes
 EFIBOOT_FDT=	yes
 
 EXTRA_SOURCES=	efibootaa64.c
-EXTRA_SOURCES+=	cache.S
+EXTRA_SOURCES+=	cache.S bcm2712_reset.c
+CPPFLAGS+=	-DEFIBOOT_TRIAL_RESET
 
 COPTS+=		-mgeneral-regs-only -mlittle-endian -fno-jump-tables
 AFLAGS+=	-mlittle-endian

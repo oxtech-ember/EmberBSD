@@ -12,6 +12,10 @@ NEWVERSWHAT?=	"efiboot"
 
 EFIDIR= ${S}/external/bsd/gnu-efi/dist
 GNUEFIARCH?= ${MACHINE_CPU}
+.if ${EFIBOOT_SLOT_TEST:Uno} == "yes"
+CPPFLAGS+= -DEFIBOOT_SLOT_TEST
+.endif
+
 CPPFLAGS+= -I${EFIDIR}/inc -I${EFIDIR}/inc/${GNUEFIARCH}
 CPPFLAGS+= -I${EFIDIR}/inc/protocol
 
@@ -25,7 +29,7 @@ SOURCES+=	boot.c bootmenu.c conf.c console.c dev_net.c devopen.c exec.c \
 		module.c panic.c prompt.c userconf.c
 SOURCES+=	efiboot.c efichar.c efidev.c efigetsecs.c \
 		efifile.c efiblock.c efinet.c efipxe.c efirng.c \
-		efiwatchdog.c efigop.c smbios.c
+		efiwatchdog.c efigop.c smbios.c efislot.c
 
 .if ${EFIBOOT_FDT:Uno} == "yes"
 CPPFLAGS+=	-DEFIBOOT_FDT

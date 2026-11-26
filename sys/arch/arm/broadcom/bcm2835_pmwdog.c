@@ -45,30 +45,11 @@ __KERNEL_RCSID(0, "$NetBSD: bcm2835_pmwdog.c,v 1.3 2024/06/10 06:03:48 mlelstv E
 
 #include <arm/broadcom/bcm2835reg.h>
 #include <arm/broadcom/bcm2835_intr.h>
+#include <arm/broadcom/bcm2835_pmreg.h>
 #include <arm/broadcom/bcm2835_pmwdogvar.h>
 
 #include <dev/fdt/fdtvar.h>
 
-#ifndef BCM2835_PM_DEFAULT_PERIOD
-#define BCM2835_PM_DEFAULT_PERIOD	15	/* seconds */
-#endif
-
-#define	 BCM2835_PM_PASSWORD		0x5a000000
-#define	 BCM2835_PM_PASSWORD_MASK	0xff000000
-
-#define	BCM2835_PM_RSTC		0x1c
-#define	 BCM2835_PM_RSTC_CONFIGMASK	0x00000030
-#define	 BCM2835_PM_RSTC_FULL_RESET	0x00000020
-#define	 BCM2835_PM_RSTC_RESET		0x00000102
-
-#define	BCM2835_PM_RSTS		0x20
-#define  BCM2835_PM_RSTS_PART(x) \
-		((uint16_t)((x) & 0x01) << 0 | (uint16_t)((x) & 0x02) << 1 | \
-		 (uint16_t)((x) & 0x04) << 2 | (uint16_t)((x) & 0x08) << 3 | \
-		 (uint16_t)((x) & 0x10) << 4 | (uint16_t)((x) & 0x20) << 5)
-
-#define	BCM2835_PM_WDOG		0x24
-#define	 BCM2835_PM_WDOG_TIMEMASK	0x000fffff
 
 static struct bcm2835pmwdog_softc *bcm2835pmwdog_sc;
 
@@ -155,8 +136,23 @@ bcmpmwdog_attach_common(struct bcm2835pmwdog_softc *sc)
 	sc->sc_smw.smw_setmode = bcmpmwdog_setmode;
 	sc->sc_smw.smw_tickle = bcmpmwdog_tickle;
 	sc->sc_smw.smw_period = BCM2835_PM_DEFAULT_PERIOD;
-	if (sysmon_wdog_register(&sc->sc_smw) != 0)
+	if (sysmon_wdog_register(&sc->sc_smw) != 0) {
 		aprint_error_dev(sc->sc_dev, "couldn't register watchdog\n");
+		return;
+	}
+	if (OF_getproplen(OF_finddevice("/chosen"),
+	    "emberbsd,trial-watchdog") == 0) {
+		uint32_t mode = bus_space_read_4(sc->sc_iot, sc->sc_ioh,
+		    BCM2835_PM_RSTC);
+		uint32_t count = bus_space_read_4(sc->sc_iot, sc->sc_ioh,
+		    BCM2835_PM_WDOG);
+		if ((mode & BCM2835_PM_RSTC_CONFIGMASK) != BCM2835_PM_RSTC_FULL_RESET ||
+		    (count & BCM2835_PM_WDOG_TIMEMASK) == 0 ||
+		    sysmon_wdog_boot_handoff(&sc->sc_smw) != 0)
+			aprint_error_dev(sc->sc_dev, "trial watchdog handoff failed\n");
+		else
+			aprint_normal_dev(sc->sc_dev, "accepted trial boot watchdog\n");
+	}
 }
 
 static void

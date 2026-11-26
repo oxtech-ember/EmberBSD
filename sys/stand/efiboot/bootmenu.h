@@ -32,6 +32,9 @@
 #define COMMAND_SEPARATOR ';'
 
 int parsebootconf(const char *);
+#ifdef EFIBOOT
+int parsebootconf_buffer(char *);
+#endif
 void doboottypemenu(void);
 
 #endif /* !_BOOTMENU_H */
