@@ -30,7 +30,7 @@ awk '/^#define WLAN_ACTION_(WNM|RADIO_MEASUREMENT) / {print}
     > "$work/actions.h"
 awk '/^#define[[:space:]]+AICWF_(RXHDR_|RX_FLAG_UPLOAD|RX_DECR[[:space:]]|KEY_SLOT_PAIRWISE|HWKEY_NONE|SM_(CONNECT|DISCONNECT)|CONNECT_|AUTH_SAE|BAND_)/ {print}' \
     "$driver" > "$work/aicwf-defs.h"
-cp "$src/sys/dev/sdmmc/if_aicwf_sae.h" "$src/sys/dev/sdmmc/if_aicwf_vht.h" "$src/sys/dev/sdmmc/if_aicwf_sta.h" "$src/sys/net80211/ieee80211_rsn.h" "$src/sys/net80211/ieee80211_sta.h" "$work/"
+cp "$src/sys/dev/ic/aicwf_command.h" "$src/sys/dev/sdmmc/if_aicwf_sae.h" "$src/sys/dev/sdmmc/if_aicwf_vht.h" "$src/sys/dev/sdmmc/if_aicwf_sta.h" "$src/sys/net80211/ieee80211_rsn.h" "$src/sys/net80211/ieee80211_sta.h" "$work/"
 mkdir -p "$work/net80211" "$work/sys"
 cp "$src/sys/net80211/ieee80211_sta_action.h" "$work/net80211/"
 cp "$work/abi.h" "$work/net80211/ieee80211_ioctl.h"
@@ -83,7 +83,7 @@ mkdir -p "$work/sys" "$work/net80211"
 ln -s "$src/sys/net80211/ieee80211_vht_ies.h" "$work/net80211/ieee80211_vht_ies.h"
 printf '#include <stdbool.h>\n#include <stdint.h>\n#include <string.h>\n' > "$work/sys/systm.h"
 ${CC:-cc} -std=c11 -Wall -Wextra -Werror -Wno-unused-parameter \
-    ${AICWF_STA_CFLAGS:-} -include stdbool.h -include stdint.h -I"$work" -I"$src/sys/dev/ic" \
+    ${AICWF_STA_CFLAGS:-} -include stdbool.h -include stdint.h -I"$work" \
     "$work/check.c" "$src/sys/net80211/ieee80211_vht_ies.c" -o "$work/check"
 if [ -n "${TEST_RUNNER:-}" ]; then
     "$TEST_RUNNER" "$work/check" "${AICWF_STA_CASE:-all}"
