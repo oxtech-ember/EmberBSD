@@ -44,6 +44,28 @@
 #define	AICWF_KEY_SLOTS			(IEEE80211_WEP_NKID + 1)
 
 struct aicwf_softc;
+
+/*
+ * write runs in sleepable context with sc_lock held. The core owns the
+ * sc_txbuf allocation. The first len bytes contain one firmware command
+ * or TX descriptor and payload. The bus may add its CRC and zero padding
+ * within AICWF_TX_MAX. Finish DMA or copy the frame before returning.
+ * The core may reuse or erase the buffer immediately.
+ *
+ * reserve is the number of firmware buffers to leave for commands on a
+ * credit-based bus. USB uses separate command and data pipes.
+ * If attempted is non-NULL, clear it before validation and set it just
+ * before submitting the FIFO or USB transfer. An error after submission
+ * leaves delivery uncertain. Return zero for a complete bus transfer,
+ * or a BSD errno for admission, capacity, length, timeout or I/O errors.
+ * The core receives the firmware confirmation separately through aicwf_rx.
+ *
+ * verify is optional. A bus that sets sc_fw_bip_pending must provide it.
+ * The core calls it after ADD_IF in sleepable context with sc_lock free.
+ * It checks the selected BIP firmware readback. Return EPROTO on a
+ * mismatch and propagate transport errors. Zero permits the core's
+ * remaining capability checks.
+ */
 struct aicwf_bus_ops {
 	int (*write)(struct aicwf_softc *, size_t, unsigned int, bool *);
 	int (*verify)(struct aicwf_softc *);
@@ -164,6 +186,20 @@ struct aicwf_softc {
 };
 
 
+/*
+ * Call prepare once in thread context before installing the bus RX callback.
+ * The ops and bus cookie must outlive the prepared station. Complete the
+ * bus-specific startup, station_setup and ifattach in sleepable context.
+ * Deliver each complete RX buffer in thread context. It is borrowed by
+ * aicwf_rx until return. Capture the RX serial under sc_epoch_lock before
+ * deferring delivery.
+ *
+ * On failure or detach, unregister the RX producer so that no new callback
+ * can enter, then call quiesce. Quiesce rejects commands and wakes waiters.
+ * Drain all bus callbacks and deferred RX work before release. Release
+ * detaches the ifnet and frees core workqueues, timers, buffers and locks.
+ * The bus can then free its own resources. Teardown may sleep.
+ */
 void aicwf_prepare(struct aicwf_softc *, device_t,
     const struct aicwf_bus_ops *, void *, bool);
 int aicwf_cmd(struct aicwf_softc *, uint16_t, const void *, size_t, uint16_t,
