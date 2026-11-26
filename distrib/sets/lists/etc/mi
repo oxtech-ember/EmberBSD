@@ -218,8 +218,8 @@
 ./etc/rc.d/dhcrelay				etc-dhcpd-rc
 ./etc/rc.d/dmesg				etc-sys-rc
 ./etc/rc.d/downinterfaces			etc-sys-rc
-./etc/rc.d/ember_os_update			etc-sys-rc
-./etc/rc.d/ember_pkg_update			etc-sys-rc
+./etc/rc.d/ember_os_update			etc-obsolete		obsolete
+./etc/rc.d/ember_pkg_update			etc-obsolete		obsolete
 ./etc/rc.d/ember_update			etc-sys-rc
 ./etc/rc.d/entropy				etc-sys-rc
 ./etc/rc.d/envsys				etc-sys-rc

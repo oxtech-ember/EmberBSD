@@ -4,7 +4,7 @@
 
 .include <bsd.own.mk>
 
-SUBDIR= atrun ember-desktop ember-install-slot ember-os-slot ember-os-update \
+SUBDIR= atrun ember-desktop ember-install-slot ember-os-slot \
 	comsat fingerd ftpd getty httpd identd ld.aout_so \
 	ld.elf_so lfs_cleanerd mail.local makekey rexecd \
 	rlogind rshd rpc.rquotad rpc.rstatd rpc.rusersd rpc.rwalld \

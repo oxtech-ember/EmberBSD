@@ -21,6 +21,7 @@ handoff_policy()
 {
 	load_rc_config_var ember_os_update ember_os_update
 	load_rc_config_var ember_pkg_update ember_pkg_update
+	: "${ember_os_update:=NO}" "${ember_pkg_update:=NO}"
 	os=NO packages=NO enabled=NO
 	if checkyesno ember_os_update; then os=YES enabled=YES; fi
 	if checkyesno ember_pkg_update; then packages=YES enabled=YES; fi

@@ -1329,7 +1329,7 @@
 ./usr/libexec/ember-desktop-install		base-sysutil-bin
 ./usr/libexec/ember-install-slot			base-sysutil-bin
 ./usr/libexec/ember-os-slot			base-sysutil-bin
-./usr/libexec/ember-os-update			base-sysutil-bin
+./usr/libexec/ember-os-update			base-obsolete		obsolete
 ./usr/libexec/ember-runtime-install		base-sysutil-bin	gcc16_runtime
 ./usr/libexec/ember-stage-ffs			base-sysutil-bin
 ./usr/bin/ember-desktop				base-sysutil-bin

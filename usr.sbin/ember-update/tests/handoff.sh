@@ -100,7 +100,8 @@ touch "$root/interrupt"
 refused "cannot confirm the migrated trial"
 grep -Fq "B B null true B $sha" "$root/model"
 rm "$root/interrupt"
-# Resume after a reset following the durable primary marker.
+# Resume after the durable primary marker, even after consuming the public seal.
+rm "$root/usr/share/ember-update/handoff/$profile.json"
 model B B null false B "$sha"
 step
 for f in os-release.json installed.json; do cmp "$root/var/db/ember-update/$f" "$input/release.json"; done
@@ -111,4 +112,14 @@ grep -Fxq ember_update=YES "$root/etc/rc.conf"
 grep -Fxq ember_update_packages=NO "$root/etc/rc.conf"
 grep -Fxq ember_update_os=YES "$root/etc/rc.conf"
 grep -Fxq ember_update_reboot=ask "$root/etc/rc.conf"
+# Exercise an uninterrupted confirmation on a second candidate state.
+cp "$input/seal.json" "$root/usr/share/ember-update/handoff/$profile.json"
+mv "$root/etc/ember-os-update.migrated.json" "$root/etc/ember-os-update.json"
+rm "$root/var/db/ember-update/handoff.json"
+model B A null true B "$sha"
+step
+grep -Fq "B B null true B $sha" "$root/model"
+test ! -e "$root/etc/ember-os-update.json"
+cmp "$root/var/db/ember-update/os-release.json" "$input/release.json"
+test ! -e "$root/usr/share/ember-update/handoff/$profile.json"
 echo 'Confirmed the legacy cohort, including interruption recovery and exact defaults.'

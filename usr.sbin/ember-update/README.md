@@ -140,8 +140,15 @@ The signed boot, base, etc and optional comp sets must describe the same
 target. The generic image and subsequent releases require no transition
 file. The original controller also checks that its rc script and program are
 executable in the prepared root and that the snapshot's installed Python can
-import SSL. Include an executable, inactive `/etc/rc.d/ember_os_update` in
-the transition etc set when the normal etc set has retired that service.
+import SSL. Publish an inactive executable at `/etc/rc.d/ember_os_update` in the transition
+etc set. Publish an inactive executable at `/usr/libexec/ember-os-update` in
+the transition base set. Both can be a two-line shell script that exits zero.
+Record each regular file in its set list, METALOG and mtree. This satisfies
+the old inactive-root preflight without starting either old service. The
+former package rc script stays absent. The standard sets mark all three old
+paths obsolete. Keep the defaults and programs for the installed former
+release available from its immutable signed artifacts.
+[Former FFS updater](https://github.com/oxtech-ember/EmberBSD/tree/3d0b206a05076152a7f8a50515b7c892a2a730db/libexec/ember-os-update)
 
 On the first boot of the candidate, `/etc/rc.d/ember_update` invokes the
 local handoff before starting its scheduler. The old services yield to their
@@ -160,10 +167,14 @@ the archive of the former controller configuration. It imports the original
 rc flags immediately after the system defaults are sourced. Later site
 settings in rc.conf and rc.conf.d keep their priority. A durable journal
 identifies the confirmed bytes if power fails during the firmware commit.
-Success retires the old configuration as `/etc/ember-os-update.migrated.json`.
+The private journal also keeps the verified transition record. Confirmation
+consumes its public copy, including on a retry. Success retires the old configuration as `/etc/ember-os-update.migrated.json`.
 Later transactions use native installation plans. Remove the transition
-record and temporary rc script in the next standard release after devices
-have confirmed the transition. The previous slot remains available until a
+record and temporary programs in the next standard release after devices
+have confirmed the transition. The etc merge preserves local settings. The
+FFS installer checks the previous base mtree before removing the unchanged
+program named in the successor's obsolete list. It retains a modified local
+copy. The previous slot remains available until a
 subsequent authorized update prepares it.
 
 ## Local state for applications

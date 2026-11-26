@@ -362,6 +362,13 @@ update_sets(const struct input *in, const char *root, const char *work)
 	slot_path(baseline, sizeof(baseline), root, DB "/etc.tar.xz");
 	if (mkdir(old, 0700) || mkdir(new, 0700))
 		err(1, "create defaults directories");
+	/* A set is installed over a snapshot. Retire only the original service
+	 * listed as obsolete by this signed successor. */
+	char service[MAXPATHLEN];
+	check_parents(root, "usr/libexec/ember-os-update");
+	slot_path(service,sizeof(service),root,"usr/libexec/ember-os-update");
+	if (access(service,F_OK)==0)
+		run("/usr/libexec/ember-stage-ffs","obsolete-base",root,base,work,NULL);
 	run("/bin/tar", "-xpf", base, "-C", root, "--safe-writes", "--exclude", "./etc/*",
 	    "--exclude", "./var/*", "--exclude", "./usr/pkg", "--exclude", "./usr/local",
 	    "--exclude", "./libdata/firmware", "--exclude", "./usr/libdata/firmware", NULL);

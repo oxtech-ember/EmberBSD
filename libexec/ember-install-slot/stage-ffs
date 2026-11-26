@@ -5,6 +5,54 @@ set -eu
 PATH=/sbin:/usr/sbin:/bin:/usr/bin
 export PATH
 umask 077
+# postinstall uses the successor's obsolete list. An unattended slot also
+# checks the previous set's file digest before removing a site-owned copy.
+obsolete_base()
+{
+	root=$1 archive=$2 work=$3
+	leaf=./usr/libexec/ember-os-update
+	file=$root/${leaf#./}
+	old=$root/etc/mtree/set.base
+	[ "$root" != / ] && [ "$(realpath "$root")" = "$root" ] || return 1
+	for dir in "$root/etc" "$root/etc/mtree" "$root/usr" "$root/usr/libexec"; do
+		[ -d "$dir" ] && [ ! -L "$dir" ] || return 0
+	done
+	[ -f "$file" ] && [ ! -L "$file" ] && [ -f "$old" ] && [ ! -L "$old" ] || return 0
+	digest=$(awk -v file="$leaf" -v mode="mode=0$(stat -f %Lp "$file")" '
+	    $1 == file {
+	      for (i=2; i<=NF; i++) {
+	        if ($i=="type=file") reg=1
+	        if ($i=="uname=root") owner=1
+	        if ($i=="gname=wheel") group=1
+	        if ($i==mode) same=1
+	        if ($i ~ /^sha256=/) hash=substr($i,8)
+	      }
+	      if (reg && owner && group && same) print hash
+	      exit
+	    }' "$old")
+	[ -n "$digest" ] && [ "$(stat -f '%u:%g' "$file")" = 0:0 ] &&
+	    [ "$(sha256 -q "$file")" = "$digest" ] || return 0
+	scratch=$(mktemp -d "$work/obsolete.XXXXXXXX")
+	trap 'rm -rf "$scratch"' EXIT HUP INT TERM
+	if ! tar -xf "$archive" -C "$scratch" ./etc/mtree/set.base ./var/db/obsolete/base; then
+		return 0
+	fi
+	[ -f "$scratch/etc/mtree/set.base" ] && [ ! -L "$scratch/etc/mtree/set.base" ] &&
+	    [ -f "$scratch/var/db/obsolete/base" ] && [ ! -L "$scratch/var/db/obsolete/base" ] || return 1
+	if awk -v file="$leaf" '$1==file { found=1 } END { exit !found }' "$scratch/etc/mtree/set.base"; then
+		return 0
+	fi
+	if grep -Fxq "$leaf" "$scratch/var/db/obsolete/base"; then
+		rm "$file"
+	fi
+}
+
+if [ "$1" = obsolete-base ]; then
+	[ "$#" -eq 4 ] || exit 2
+	obsolete_base "$2" "$3" "$4"
+	exit $?
+fi
+
 work=$1
 device=$2
 shift 2

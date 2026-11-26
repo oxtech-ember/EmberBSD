@@ -214,8 +214,6 @@
 ./etc/rc.d/dhcrelay		type=file mode=0555
 ./etc/rc.d/dmesg		type=file mode=0555
 ./etc/rc.d/downinterfaces	type=file mode=0555
-./etc/rc.d/ember_os_update	type=file mode=0555
-./etc/rc.d/ember_pkg_update	type=file mode=0555
 ./etc/rc.d/ember_update	type=file mode=0555
 ./etc/rc.d/envsys		type=file mode=0555
 ./etc/rc.d/fsck			type=file mode=0555

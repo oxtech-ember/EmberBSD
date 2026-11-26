@@ -19,7 +19,7 @@ CONFIGFILES=\
 		bluetooth bootconf.sh bootparams \
 		ccd certctl_init cgd clearcritlocal cleartmp cron \
 		devpubd dhcpcd dhcpd dhcpd6 dhcrelay dmesg \
-		downinterfaces ember_os_update ember_pkg_update ember_update \
+		downinterfaces ember_update \
 		entropy envsys \
 		fsck fsck_root ftp_proxy ftpd \
 		gpio \

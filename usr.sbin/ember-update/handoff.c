@@ -171,7 +171,12 @@ handoff(void)
 	    snprintf(sealpath, sizeof(sealpath), SEALS "/%s.json", name) >=
 		(int)sizeof(sealpath))
 		fail("unrecognized legacy update controller");
-	struct eu_json *seal = read_record(sealpath, false);
+	struct eu_json *prior = read_record(JOURNAL, true);
+	struct eu_json *seal = read_record(sealpath, true);
+	if (!seal)
+		seal = eu_member(prior, "seal");
+	else if (prior && !same_json(seal, eu_get(prior, "seal")))
+		fail("signed transition differs from the saved trial");
 	trusted(LEGACY "etc.tar.xz", false);
 	if (file_sha(LEGACY "release.json", hash) < 0 ||
 	    file_sha(LEGACY "etc.tar.xz", defaults) < 0 ||
@@ -190,8 +195,7 @@ handoff(void)
 	} else if (eu_save(PROFILE, p, 0644) < 0)
 		fail("cannot install the hardware profile");
 	slot_status(&s);
-	struct eu_json *prior = read_record(JOURNAL, true);
-	bool resume = prior && eu_fields(prior, "slot sha256") &&
+	bool resume = prior && eu_fields(prior, "slot sha256 seal") &&
 		      eu_equal(text_field(prior, "slot"), s.running) &&
 		      eu_equal(text_field(prior, "sha256"), hash);
 	if ((prior && !resume) || s.next[0] || !eu_equal(s.prepared, s.running) ||
@@ -227,6 +231,7 @@ handoff(void)
 		prior = eu_new(EU_OBJECT);
 		eu_put(prior, "slot", eu_text(s.running));
 		eu_put(prior, "sha256", eu_text(hash));
+		eu_put(prior, "seal", seal);
 		if (eu_save(JOURNAL, prior, 0600) < 0)
 			fail("cannot save transition confirmation");
 	}
@@ -243,6 +248,14 @@ handoff(void)
 	    !eu_equal(after.confirmed, s.running) || after.next[0] ||
 	    !eu_equal(after.prepared, s.running) || !eu_equal(after.digest, hash))
 		fail("boot loader did not confirm the transition");
+	/* Keep the verified seal in the private receipt. Resume there if a
+	 * restart interrupts retirement of the public transition entry. */
+	if (unlink(sealpath) < 0 && errno != ENOENT)
+		err(1, "retire transition entry");
+	int seal_directory = open(SEALS, O_RDONLY | O_DIRECTORY);
+	if (seal_directory < 0 || fsync(seal_directory) < 0 ||
+	    close(seal_directory) < 0)
+		err(1, "sync retired transition entry");
 	if (unlink(OWNER) < 0)
 		err(1, "retire legacy controller");
 	int directory = open("/etc", O_RDONLY | O_DIRECTORY);
