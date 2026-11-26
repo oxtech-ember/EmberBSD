@@ -63,14 +63,14 @@ LABEL(func)							;	\
 								;	\
 LLABEL(__C(func,_funcname))					;	\
 	.asciz	__S(func)					;	\
-	.align	0						;	\
+	.align	2, 0						;	\
 	END(NAME(func))
 
 .Lbs_notimpl_message:
 	.ascii	__S(BUS_SPACE)
 	.asciz	"_%s: args at %p"
 
-	.align	0
+	.align	2, 0
 .Lbs_notimpl_panic:
 	adr	r0, .Lbs_notimpl_message
 	b	_C_LABEL(panic)
