@@ -296,14 +296,15 @@ load_input(struct input *in, const struct slot *s, const char *kind, const char 
 }
 
 void
-install_copy(const char *srcdir, const char *src, const char *dstdir, const char *dst, mode_t mode)
+install_copy(const char *srcdir, const char *src, const char *dstdir, const char *dst,
+    mode_t mode, enum install_method method)
 {
 	char a[MAXPATHLEN], b[MAXPATHLEN];
 	check_parents(srcdir, src);
 	check_parents(dstdir, dst);
 	slot_path(a, sizeof(a), srcdir, src);
 	slot_path(b, sizeof(b), dstdir, dst);
-	install_file(a, b, mode);
+	install_file(a, b, mode, method);
 }
 
 /* Compare class, byte order and machine with the running base userland. */
@@ -376,8 +377,8 @@ update_sets(const struct input *in, const char *root, const char *work)
 	run("/bin/tar", "-xpf", baseline, "-C", old, NULL);
 	run("/bin/tar", "-xpf", etc, "-C", new, NULL);
 	merge_defaults(root, old, new);
-	install_file(etc, baseline, 0600);
-	install_copy(in->dir, "update.json", root, DB "/os-release.json", 0600);
+	install_file(etc, baseline, 0600, INSTALL_ATOMIC);
+	install_copy(in->dir, "update.json", root, DB "/os-release.json", 0600, INSTALL_ATOMIC);
 }
 
 /* Install the shared ELF kernel and modules before the adapter prepares its boot files. */
@@ -404,7 +405,7 @@ boot_files(
 	}
 	if (in->os || in->local) {
 		install_check_kernel(src, "netbsd", in->commit, tag, 0);
-		install_copy(src, "netbsd", root, "netbsd", 0555);
+		install_copy(src, "netbsd", root, "netbsd", 0555, INSTALL_ATOMIC);
 		slot_path(path, sizeof(path), root, "etc/modules.conf");
 		f = fopen(path, "r");
 		if (!f && errno != ENOENT)
@@ -432,7 +433,7 @@ boot_files(
 			snprintf(b, sizeof(b), "%s.kmod", m);
 			char dst[MAXPATHLEN];
 			slot_path(dst, sizeof(dst), path, b);
-			install_copy(src, a, root, dst, 0444);
+			install_copy(src, a, root, dst, 0444, INSTALL_ATOMIC);
 		}
 	}
 	install_loader_files(s, dest, in->os || in->local ? src : NULL, in->commit);
@@ -538,7 +539,7 @@ packages(const struct input *in, const char *root)
 		snprintf(leaf, sizeof(leaf), "%s.tgz", name);
 		slot_path(src, sizeof(src), pkgs, leaf);
 		slot_path(dst, sizeof(dst), tmp, leaf);
-		install_file(src, dst, 0600);
+		install_file(src, dst, 0600, INSTALL_ATOMIC);
 		if (!SHA256_File(dst, sha) || strcmp(sha, field(p, "sha256")))
 			errx(1, "staged package hash mismatch: %s", name);
 	}
@@ -618,6 +619,8 @@ populate(const struct slot *s, int dest, const struct input *in, const char *roo
 	    strcmp(mount.f_mntfromname, s->device[dest]) || strcmp(mount.f_fstypename, "ffs") ||
 	    dest == s->running)
 		errx(1, "incorrect mounted destination");
+	if (s->good != s->running || s->back != s->running || s->next >= 0 || s->prepared >= 0)
+		errx(1, "the inactive slot must be disarmed before installation");
 	strlcpy(work, root, sizeof(work));
 	char *slash = strrchr(work, '/');
 	if (!slash || strcmp(slash, "/root"))
@@ -637,9 +640,9 @@ populate(const struct slot *s, int dest, const struct input *in, const char *roo
 		    dprintf(fd, "{\"schema\":\"" LOCAL "\",\"sha256\":\"%s\"}\n", sha) < 0 ||
 		    fsync(fd) || close(fd))
 			err(1, "%s", path);
-		install_copy(root, DB "/local-kernel.json", root, DB "/installed.json", 0600);
+		install_copy(root, DB "/local-kernel.json", root, DB "/installed.json", 0600, INSTALL_ATOMIC);
 	} else
-		install_copy(in->dir, "plan.json", root, DB "/installed.json", 0600);
+		install_copy(in->dir, "plan.json", root, DB "/installed.json", 0600, INSTALL_ATOMIC);
 	hash_file(root, DB "/installed.json", sha);
 	if (strcmp(sha, in->digest))
 		errx(1, "installed plan readback failed");

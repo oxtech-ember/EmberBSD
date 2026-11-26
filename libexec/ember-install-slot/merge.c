@@ -78,26 +78,49 @@ equal(const struct identity *a, const struct identity *b)
 }
 
 void
-install_file(const char *src, const char *dst, mode_t mode)
+install_file(const char *src, const char *dst, mode_t mode, enum install_method method)
 {
 	char tmp[MAXPATHLEN], buf[32768];
 	int in, out, n;
 	ssize_t count, pos, w;
 
-	n = snprintf(tmp, sizeof(tmp), "%s.XXXXXXXX", dst);
-	if (n < 0 || (size_t)n >= sizeof(tmp))
-		errx(1, "path too long");
-	if ((in = open(src, O_RDONLY | O_NOFOLLOW)) == -1 || (out = mkstemp(tmp)) == -1)
-		err(1, "copy %s to %s", src, dst);
+	in = open(src, O_RDONLY | O_NOFOLLOW);
+	if (in == -1)
+		err(1, "open %s", src);
+	if (method == INSTALL_INACTIVE) {
+		/* Preparation disarms the inactive slot before replacing its files. */
+		if (unlink(dst) == -1 && errno != ENOENT)
+			err(1, "remove %s", dst);
+		out = open(dst, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0600);
+	} else {
+		n = snprintf(tmp, sizeof(tmp), "%s.XXXXXXXX", dst);
+		if (n < 0 || (size_t)n >= sizeof(tmp))
+			errx(1, "path too long");
+		out = mkstemp(tmp);
+	}
+	if (out == -1)
+		err(1, "create %s", dst);
 	while ((count = read(in, buf, sizeof(buf))) > 0)
 		for (pos = 0; pos < count; pos += w) {
 			w = write(out, buf + pos, count - pos);
-			if (w <= 0)
-				err(1, "write %s", tmp);
+			if (w <= 0) {
+				if (w == 0)
+					errno = EIO;
+				goto failed;
+			}
 		}
-	if (count < 0 || fchmod(out, mode) || fsync(out) || close(out) || rename(tmp, dst))
-		err(1, "install %s", dst);
+	if (count < 0 || fchmod(out, mode) || fsync(out) || close(out) ||
+	    (method == INSTALL_ATOMIC && rename(tmp, dst)))
+		goto failed;
 	close(in);
+	return;
+
+failed:
+	n = errno;
+	(void)close(out);
+	(void)unlink(method == INSTALL_ATOMIC ? tmp : dst);
+	errno = n;
+	err(1, "install %s", dst);
 }
 
 struct link_group {
@@ -191,7 +214,7 @@ apply(const char *dst, const char *src, struct identity *new, struct link_group 
 			if (!(g->first = strdup(dst)))
 				err(1, "allocate hard link");
 		}
-		install_file(src, dst, new->mode & 07777);
+		install_file(src, dst, new->mode & 07777, INSTALL_ATOMIC);
 	}
 	if (chown(dst, new->uid, new->gid) || chmod(dst, new->mode & 07777))
 		err(1, "%s", dst);

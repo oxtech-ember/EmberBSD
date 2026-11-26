@@ -28,10 +28,10 @@ install_loader_files(const struct slot *s, int dest, const char *source, const c
 	if (!source)
 		src = s->running ? "/boot/os-b" : "/boot";
 	install_check_kernel(src, "netbsd.img", commit, field(s->profile, "kernel"), 1);
-	install_copy(src, "netbsd.img", boot, "netbsd.img", 0644);
+	install_copy(src, "netbsd.img", boot, "netbsd.img", 0644, INSTALL_INACTIVE);
 	for (p = install_array(s->profile, "trees"); p; p = p->next) {
 		const char *tree = install_component(p);
 		slot_path(b, sizeof(b), trees, tree);
-		install_copy(src, source ? tree : b, boot, b, 0644);
+		install_copy(src, source ? tree : b, boot, b, 0644, INSTALL_INACTIVE);
 	}
 }

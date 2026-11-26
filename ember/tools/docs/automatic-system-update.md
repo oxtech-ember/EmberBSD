@@ -45,6 +45,7 @@ The installer holds OS upgrades for a locally installed custom kernel.
 
 The controller verifies a plan and delegates FFS preparation to `ember-install-slot`.
 This program takes a snapshot, prepares the inactive root, merges defaults, applies packages, validates the result and records a receipt.
+The U-Boot adapter writes firmware files directly to the inactive slot. A retry replaces any partial file. The boot volume needs space for both installed kernels.
 A package-only selection follows the same slot transaction. Each slot has its own package database.
 The adapter supplies `status`, `arm`, `cancel` and `confirm`. Its boot protocol reports the actual running root and trial identity.
 U-Boot reads the one-shot markers on FAT. EFI reads the selected menu and consumes its marker on the ESP.
