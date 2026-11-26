@@ -204,7 +204,7 @@ autofs_unmount(struct mount *mp, int mntflags)
 	 */
 	for (;;) {
 		struct autofs_request *ar;
-		int dummy;
+		int dummy = 0;	/* Only the address is used. */
 		bool found;
 
 		found = false;

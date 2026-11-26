@@ -123,6 +123,7 @@ CWARNFLAGS+=	-Wno-unused
 CWARNFLAGS+=	-Wno-switch
 CWARNFLAGS+=	-Wno-strict-prototypes
 CWARNFLAGS+=	-Wno-missing-prototypes
+CWARNFLAGS+=	${${ACTIVE_CC} == "clang" :? -Wno-sometimes-uninitialized :}
 
 CPPFLAGS+=	-I${ZFSDIR}/sys
 CPPFLAGS+=      -I${ZFSDIR}/dist/common

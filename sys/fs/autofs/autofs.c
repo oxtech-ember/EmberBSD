@@ -418,7 +418,7 @@ autofs_trigger(struct autofs_node *anp, const char *component,
     int componentlen)
 {
 	for (;;) {
-		int error, dummy;
+		int error, dummy = 0;	/* Only the address of dummy is used. */
 
 		error = autofs_trigger_one(anp, component, componentlen);
 		if (!error) {

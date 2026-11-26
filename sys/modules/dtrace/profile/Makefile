@@ -18,4 +18,7 @@ CPPFLAGS+=	${${ACTIVE_CC} == "clang" :? -Wno-incompatible-pointer-types-discards
 
 WARNS=		3
 
+# Clang 23 warnings in the CDDL DTrace code.
+CPPFLAGS+=	${${ACTIVE_CC} == "clang" :? -Wno-strict-prototypes :}
+
 .include <bsd.kmodule.mk>
