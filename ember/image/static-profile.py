@@ -742,7 +742,7 @@ def network_crunch_configuration(crunch_programs, wpa_backend):
     if wpa_backend == 'wolfssl':
         libraries.extend(('-lwolfssl', '-lpthread'))
     elif wpa_backend in ('openssl', ''):
-        libraries.append('-lcrypto')
+        libraries.extend(('-lcrypto', '-lpthread'))
     if 'syslogd' in names:
         libraries.extend(('-levent', '-lwrap', '-lblocklist'))
     lines.append('libs ' + ' '.join(libraries))

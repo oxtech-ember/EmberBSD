@@ -13,9 +13,9 @@ makefile_inc = helper.parent / 'Makefile.inc'
 sha2_adapter = helper.parent / 'include' / 'emberbsd-openssh-sha2.h'
 
 
-def run(*assignments):
+def run(*assignments, variable='OPENSSH_CRYPTO_MODE'):
     return subprocess.run([str(args.bmake), '-f', str(helper), '-V',
-                           'OPENSSH_CRYPTO_MODE', *assignments], cwd=root,
+                           variable, *assignments], cwd=root,
                           text=True, capture_output=True)
 
 
@@ -36,6 +36,15 @@ assert default_openssl.stdout.strip() == 'openssl'
 legacy_m68000 = run('MACHINE_ARCH=m68000', 'MKPIC=yes')
 assert legacy_m68000.returncode == 0, legacy_m68000.stderr
 assert legacy_m68000.stdout.strip() == 'builtin'
+
+for pic, provider, mode, expected in (
+        ('no', True, 'openssl', 'yes'), ('yes', True, 'openssl', ''),
+        ('no', False, 'openssl', ''), ('no', True, 'builtin', '')):
+    flags = ['MACHINE_ARCH=earmv7hf', 'MKPIC=' + pic, 'EMBER_OPENSSH_CRYPTO=' + mode]
+    if provider:
+        flags.append('EMBER_OPENSSL_SOURCE=prepared')
+    result = run(*flags, variable='OPENSSH_STATIC_CRYPTO_PTHREAD')
+    assert result.returncode == 0 and result.stdout.strip() == expected, result.stderr
 
 # Prepared OpenSSH uses OpenBSD SHA*Init names, while EmberBSD libc exports
 # the NetBSD SHA*_Init spelling. Keep this compatibility adapter builtin-only.

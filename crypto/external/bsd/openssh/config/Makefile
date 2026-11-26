@@ -36,6 +36,9 @@ GNU_CONFIGURE_ARGS+= --with-sandbox=rlimit
 GNU_CONFIGURE_ARGS+= --without-openssl
 .else
 GNU_CONFIGURE_ARGS+= --with-ssl-dir=${DESTDIR}/usr
+.if defined(OPENSSH_STATIC_CRYPTO_PTHREAD)
+GNU_CONFIGURE_ENV+= LIBS=-lpthread
+.endif
 .endif
 .if ${OPENSSH_CONFIG_ROLE} == "private-libssh"
 GNU_CONFIGURE_ARGS+= --without-pam

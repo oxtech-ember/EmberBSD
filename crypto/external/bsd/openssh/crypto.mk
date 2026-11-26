@@ -15,6 +15,12 @@ OPENSSH_CRYPTO_MODE= builtin
 OPENSSH_CRYPTO_MODE= openssl
 .endif
 
+# The static archive from the prepared OpenSSL source uses POSIX threads.
+.if ${OPENSSH_CRYPTO_MODE} == "openssl" && ${MKPIC} == "no" && \
+    defined(EMBER_OPENSSL_SOURCE)
+OPENSSH_STATIC_CRYPTO_PTHREAD= yes
+.endif
+
 .if defined(EMBER_OPENSSH_CRYPTO) && ${OPENSSH_CRYPTO_MODE} == "builtin" && \
     defined(WITH_OPENSSL)
 .error EMBER_OPENSSH_CRYPTO=builtin conflicts with WITH_OPENSSL

@@ -14,4 +14,7 @@ CPPFLAGS+=-DWITH_OPENSSL
 
 PROGDPLIBS+= \
     crypto ${CRYPTOBSD:H}/${EXTERNAL_OPENSSL_SUBDIR}/lib/libcrypto
+.if defined(OPENSSH_STATIC_CRYPTO_PTHREAD)
+PROGDPLIBS+= pthread ${NETBSDSRCDIR}/lib/libpthread
+.endif
 .endif

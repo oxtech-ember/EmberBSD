@@ -463,6 +463,8 @@ check('-ledit -lterminfo -lutil -lkvm -lprop -lcrypt -lpcap -lipsec -lm' in peri
       '-laudio' in peripheral_libs and '-lmj' in peripheral_libs and
       '-V EMBER_GREP_UNCOMPRESSED_ONLY=yes' in crunch_source,
       'network crunch includes service dependencies and compact grep option')
+openssl_config = profile.network_crunch_configuration(' '.join(selected['crunch_programs']), 'openssl')
+check('-lcrypto -lpthread' in openssl_config, 'static OpenSSL links its thread provider after libcrypto')
 check('-lwolfssl' in peripheral_libs and '-lpthread' in peripheral_libs,
       'WolfSSL static consumers link the OS semaphore provider')
 check('usr.sbin usr.bin/videoctl' in peripheral_crunch_conf[0] and
