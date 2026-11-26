@@ -57,9 +57,17 @@ static uint32_t reply;
 static const struct sun60i_a733_gpu_fwprobe_result *adopted;
 #include "bridge-driver.h"
 
+enum { PVR_JOB_IRQ_A733 };
+struct pvr_job_irq { bool active; };
+struct pvr_job_irq_fdt { struct pvr_job_irq irq; };
+static bool irq_available;
+static unsigned int irq_starts, irq_stops, irq_waits;
+
+
 static struct sun60i_gpu_softc {
 	kmutex_t sc_run_lock;
 	struct sun60i_a733_gpu_fwbridge sc_fwbridge;
+	struct pvr_job_irq_fdt sc_job_irq;
 	struct drm_device *sc_render_device;
 	bool sc_render_pending, sc_exec_ready, sc_retained;
 	bool sc_run_pass, sc_run_core_on, sc_have_id, sc_kick_done;
@@ -122,6 +130,47 @@ static int bus_space_map(bus_space_tag_t tag, bus_addr_t addr, bus_size_t size,
 	*handle = 0x1234;
 	return map_error;
 }
+static int
+pvr_job_irq_fdt_start(struct pvr_job_irq_fdt *route, int phandle,
+    bus_space_tag_t tag, bus_space_handle_t handle, int profile)
+{
+	CHECK(route == &sc.sc_job_irq && phandle == sc.sc_phandle);
+	CHECK(tag == &sc && handle == 0x1234 && profile == PVR_JOB_IRQ_A733);
+	CHECK(mutex_owned(&sc.sc_run_lock));
+	irq_starts++;
+	route->irq.active = irq_available;
+	return irq_available ? 0 : ENXIO;
+}
+
+static bool
+pvr_job_irq_active(struct pvr_job_irq *irq)
+{
+	return irq->active;
+}
+
+static unsigned int
+pvr_job_irq_mark(void *cookie)
+{
+	CHECK(cookie == &sc.sc_job_irq.irq && sc.sc_job_irq.irq.active);
+	return 17;
+}
+
+static void
+pvr_job_irq_wait(void *cookie, unsigned int mark, int ticks)
+{
+	CHECK(cookie == &sc.sc_job_irq.irq && sc.sc_job_irq.irq.active);
+	CHECK(mark == 17 && ticks == 1);
+	irq_waits++;
+}
+
+static void
+pvr_job_irq_stop(struct pvr_job_irq *irq)
+{
+	CHECK(irq == &sc.sc_job_irq.irq && !mutex_owned(&sc.sc_run_lock));
+	irq->active = false;
+	irq_stops++;
+}
+
 #include "platform-driver.h"
 
 int
@@ -233,6 +282,8 @@ reset(void)
 	flush_calls = check_calls = register_calls = map_calls = provider_calls = 0;
 	service_error = register_error = operation_error = map_error = stage_error = 0;
 	recursive_publish = false; reply = 1; adopted = NULL;
+	irq_available = false;
+	irq_starts = irq_stops = irq_waits = 0;
 }
 static const struct pvr_backend *
 start(void)
@@ -279,6 +330,29 @@ lifecycle(void)
 	CHECK(sun60i_gpu_exec_attach(&sc) == EALREADY);
 	CHECK(sc.sc_fwbridge.service.queue.failed && !sc.sc_fwbridge.registered);
 	CHECK(sun60i_gpu_exec_attach(&sc) == EIO && register_calls == 1);
+}
+static void
+irq_bridge(void)
+{
+	const struct pvr_backend *backend = &sc.sc_fwbridge.backend;
+
+	reset();
+	CHECK(sun60i_gpu_exec_attach(&sc) == 0 && irq_starts == 1);
+	CHECK(backend->irq_mark == NULL && backend->irq_wait == NULL);
+	CHECK(irq_stops == 0);
+	reset();
+	irq_available = true;
+	CHECK(sun60i_gpu_exec_attach(&sc) == 0 && irq_starts == 1);
+	CHECK(backend->irq_mark != NULL && backend->irq_wait != NULL);
+	const unsigned int mark = backend->irq_mark(backend->cookie);
+	CHECK(mark == 17);
+	backend->irq_wait(backend->cookie, mark, 1);
+	CHECK(irq_waits == 1 && irq_stops == 0);
+	reset();
+	irq_available = true;
+	register_error = EALREADY;
+	CHECK(sun60i_gpu_exec_attach(&sc) == EALREADY && irq_starts == 1);
+	CHECK(irq_stops == 1 && !sc.sc_job_irq.irq.active);
 }
 static void
 objects(void)
@@ -429,7 +503,7 @@ ge_health_test(void)
 int main(void)
 {
 	ge_health_test();
-	lifecycle(); objects(); commands();
+	lifecycle(); irq_bridge(); objects(); commands();
 	event_tests();
 	printf("a733-gpu-fwbridge contract: %u checks passed\n", checks);
 	return 0;

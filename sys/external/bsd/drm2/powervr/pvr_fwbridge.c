@@ -267,7 +267,7 @@ fwbridge_irq_mark(void *cookie)
 {
 	struct pvr_fwbridge *bridge = cookie;
 
-	return bridge->irq_mark(bridge->health_cookie);
+	return bridge->irq_mark(bridge->irq_cookie);
 }
 
 static void
@@ -275,17 +275,19 @@ fwbridge_irq_wait(void *cookie, unsigned mark, int ticks)
 {
 	struct pvr_fwbridge *bridge = cookie;
 
-	bridge->irq_wait(bridge->health_cookie, mark, ticks);
+	bridge->irq_wait(bridge->irq_cookie, mark, ticks);
 }
 
 void
-pvr_fwbridge_set_irq(struct pvr_fwbridge *bridge, unsigned (*mark)(void *),
+pvr_fwbridge_set_irq(struct pvr_fwbridge *bridge, void *cookie,
+    unsigned (*mark)(void *),
     void (*wait)(void *, unsigned, int))
 {
 
 	KASSERT(mutex_owned(bridge->lock));
 	KASSERT(!bridge->registered && !bridge->publishing);
-	KASSERT(mark != NULL && wait != NULL && bridge->health_cookie != NULL);
+	KASSERT(mark != NULL && wait != NULL && cookie != NULL);
+	bridge->irq_cookie = cookie;
 	bridge->irq_mark = mark;
 	bridge->irq_wait = wait;
 	bridge->backend.irq_mark = fwbridge_irq_mark;

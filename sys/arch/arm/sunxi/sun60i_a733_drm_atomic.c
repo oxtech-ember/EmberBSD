@@ -6,7 +6,9 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #include <sys/param.h>
 #include <sys/container_of.h>
 #include <sys/kmem.h>
+#include <sys/atomic.h>
 #include <sys/systm.h>
+#include <sys/kernel.h>
 #include <linux/completion.h>
 #include <linux/dma-fence.h>
 #include <linux/jiffies.h>
@@ -22,6 +24,7 @@ struct a733_commit {
 	struct work work;
 	struct completion done;
 	struct drm_atomic_state *state;
+	uint64_t owner_id;
 	bool nonblock;
 };
 
@@ -76,6 +79,144 @@ a733_explicit_fence(struct dma_fence *fence)
 	return status > 0 ? 0 : status < 0 ? -status : EIO;
 }
 
+static int
+a733_shadow_retain(void *cookie)
+{
+	struct a733_shadow_slot *slot = cookie;
+
+	mutex_enter(&slot->sc->lock);
+	KASSERT(slot->claimed && !slot->retained);
+	slot->retained = true;
+	mutex_exit(&slot->sc->lock);
+	return 0;
+}
+
+static void
+a733_shadow_release(void *cookie)
+{
+	struct a733_shadow_slot *slot = cookie;
+
+	mutex_enter(&slot->sc->lock);
+	KASSERT(slot->claimed && slot->retained);
+	slot->retained = slot->claimed = false;
+	mutex_exit(&slot->sc->lock);
+}
+
+static uint64_t
+a733_event_owner(struct a733_drm *sc, const struct drm_crtc_state *crtc)
+{
+	const struct a733_drm_file *owner = NULL;
+	uint64_t id = 0;
+	unsigned long flags;
+
+	spin_lock_irqsave(&sc->dev->event_lock, flags);
+	if (crtc->event != NULL && crtc->event->base.file_priv != NULL)
+		owner = crtc->event->base.file_priv->driver_priv;
+	if (owner != NULL)
+		id = owner->id;
+	spin_unlock_irqrestore(&sc->dev->event_lock, flags);
+	return id;
+}
+
+static int
+a733_presented_stamp(struct a733_drm *sc,
+    const struct sun60i_a733_de352_completion *confirmed,
+    struct a733_vblank_stamp *stamp)
+{
+	struct sun60i_a733_de352_completion later = *confirmed;
+	int error;
+
+	if (a733_drm_vblank_stamp(sc, later.observed_sequence, stamp))
+		return 0;
+	for (unsigned i = 0; i < 2; i++) {
+		uint64_t previous = later.observed_sequence;
+
+		error = sun60i_a733_de352_observe_current(sc->client, &later);
+		if (error != 0)
+			return error;
+		if (later.observed_sequence <= previous)
+			return EPROTO;
+		if (a733_drm_vblank_stamp(sc, later.observed_sequence, stamp))
+			return 0;
+	}
+	return ETIMEDOUT;
+}
+
+static int
+a733_submit_frame(struct a733_drm *sc, const struct a733_drm_fb *fb,
+    const struct sun60i_a733_drm_frame *frame, bool has_in_fence,
+    uint64_t owner, bool vblank_ref,
+    struct sun60i_a733_de352_completion *done)
+{
+	struct drm_gem_cma_object *src = fb->object;
+	struct a733_shadow_slot *slot = NULL;
+	const bool imported = src->sgt != NULL;
+	const bool cpu_dumb = !has_in_fence && !imported &&
+	    owner != 0 && fb->owner_id == owner &&
+	    src->a733_allocation_id == owner && src->base.dev == sc->dev &&
+	    src->base.import_attach == NULL && src->base.resv == &src->base._resv;
+	size_t bytes;
+	int error;
+
+	if (!sc->shadow_enabled || !vblank_ref || src->base.dev != sc->dev ||
+	    !(cpu_dumb || (has_in_fence && imported &&
+	    sun60i_a733_drm_frame_has_import_reader(src))))
+		goto guarded;
+	if (frame->height == 0 || frame->pitch >
+	    (SIZE_MAX - (PAGE_SIZE - 1)) / frame->height)
+		goto guarded;
+	bytes = roundup((size_t)frame->pitch * frame->height, PAGE_SIZE);
+	if (bytes == 0)
+		goto guarded;
+	mutex_enter(&sc->lock);
+	if (!src->shadow_copying && (cpu_dumb ?
+	    src->shadow_cpu_mapped && !src->a733_prime_exposed :
+	    !src->shadow_cpu_mapped)) {
+		for (unsigned i = 0; i < A733_DRM_SHADOW_SLOTS; i++) {
+			if (!sc->shadows[i].claimed) {
+				slot = &sc->shadows[i];
+				slot->sc = sc;
+				slot->claimed = true;
+				src->shadow_copying = true;
+				break;
+			}
+		}
+	}
+	mutex_exit(&sc->lock);
+	if (slot == NULL)
+		goto guarded;
+	if (slot->object != NULL && slot->object->base.size < bytes) {
+		drm_gem_object_put_unlocked(&slot->object->base);
+		slot->object = NULL;
+	}
+	if (slot->object == NULL)
+		slot->object = a733_drm_alloc_cma(sc, bytes);
+	error = slot->object == NULL ? ENOMEM :
+	    sun60i_a733_drm_frame_shadow_copy(&sc->native, src,
+	    slot->object, frame);
+	mutex_enter(&sc->lock);
+	src->shadow_copying = false;
+	if (error != 0)
+		slot->claimed = false;
+	mutex_exit(&sc->lock);
+	if (error != 0)
+		goto guarded;
+
+	error = sun60i_a733_drm_frame_shadow_present(sc->client, &sc->native,
+	    slot->object, frame, slot, a733_shadow_retain, a733_shadow_release,
+	    done);
+	mutex_enter(&sc->lock);
+	/* An uncertain DMA attempt retains the claim until a proven stop. */
+	if (!slot->retained)
+		slot->claimed = false;
+	mutex_exit(&sc->lock);
+	return error;
+
+guarded:
+	return sun60i_a733_drm_frame_submit(sc->client, &sc->native, src, frame,
+	    done);
+}
+
 void
 a733_drm_work(struct work *work, void *cookie)
 {
@@ -102,6 +243,7 @@ a733_drm_work(struct work *work, void *cookie)
 	if (error == 0 && sc->vblank_irq) {
 		if (!sc->vblank_on) {
 			drm_crtc_vblank_on(&sc->crtc);
+			a733_drm_vblank_history_reset(sc, true);
 			sc->vblank_on = true;
 		}
 		vblank_ref = drm_crtc_vblank_get(&sc->crtc) == 0;
@@ -123,12 +265,20 @@ a733_drm_work(struct work *work, void *cookie)
 				.offset = plane->fb->offsets[0],
 			};
 
-			error = sun60i_a733_drm_frame_submit(sc->client, &sc->native,
-			    fb->object, &frame, &done);
+			error = a733_submit_frame(sc, fb, &frame, plane->fence != NULL,
+			    job->owner_id, vblank_ref, &done);
 		}
 	}
-	if (error == 0 && vblank_ref) {
-		/* Completion follows two later vblanks; report the latest one. */
+	if (error == 0 && vblank_ref && crtc->active && plane->fb != NULL &&
+	    sc->shadow_enabled) {
+		struct a733_vblank_stamp stamp;
+
+		error = a733_presented_stamp(sc, &done, &stamp);
+		if (error == 0) {
+			sequence = stamp.sequence;
+			time_ns = stamp.time_ns;
+		}
+	} else if (error == 0 && vblank_ref) {
 		sequence = drm_crtc_vblank_count_and_time(&sc->crtc, &time);
 		time_ns = (uint64_t)ktime_to_ns(time);
 	} else if (error == 0) {
@@ -145,6 +295,7 @@ a733_drm_work(struct work *work, void *cookie)
 	if (vblank_ref)
 		drm_crtc_vblank_put(&sc->crtc);
 	if (error == 0 && !crtc->active && sc->vblank_on) {
+		a733_drm_vblank_history_reset(sc, false);
 		drm_crtc_vblank_off(&sc->crtc);
 		sc->vblank_on = false;
 	}
@@ -164,6 +315,7 @@ a733_drm_work(struct work *work, void *cookie)
 	drm_atomic_state_put(state);
 	mutex_enter(&sc->lock);
 	sc->busy = false;
+	cv_broadcast(&sc->idle);
 	mutex_exit(&sc->lock);
 	a733_commit_event(sc, event, sequence, time_ns, error);
 	if (job->nonblock) {
@@ -174,18 +326,47 @@ a733_drm_work(struct work *work, void *cookie)
 	}
 }
 
+/* The selected removal stays current under the caller's modeset locks. */
+static int
+a733_drain(struct a733_drm *sc)
+{
+	const unsigned start = getticks(), budget = 3 * hz;
+
+	while (sc->busy && sc->fault == 0) {
+		const unsigned elapsed = (unsigned)getticks() - start;
+		int error;
+
+		if (elapsed >= budget)
+			return ETIMEDOUT;
+		error = cv_timedwait(&sc->idle, &sc->lock, budget - elapsed);
+		if (error != 0 && error != EWOULDBLOCK)
+			return error;
+	}
+	return sc->fault;
+}
+
 int
 a733_drm_atomic_commit(struct drm_device *dev, struct drm_atomic_state *state,
     bool nonblock)
 {
 	struct a733_drm *sc = dev->dev_private;
 	struct a733_commit *job;
+	const struct drm_crtc_state *crtc;
+	const struct drm_plane_state *plane, *old_plane;
+	bool removal;
 	int error;
 
 	if (state->async_update)
 		return -EOPNOTSUPP;
+	crtc = drm_atomic_get_new_crtc_state(state, &sc->crtc);
+	plane = drm_atomic_get_new_plane_state(state, &sc->plane);
+	old_plane = drm_atomic_get_old_plane_state(state, &sc->plane);
+	removal = !nonblock && ((crtc != NULL && !crtc->active) ||
+	    (plane != NULL && plane->fb == NULL && old_plane != NULL &&
+	    old_plane->fb != NULL));
 	mutex_enter(&sc->lock);
-	error = sc->fault != 0 ? -sc->fault : sc->busy ? -EBUSY : 0;
+	error = removal && sc->shadow_enabled ? -a733_drain(sc) :
+	    sc->fault != 0 ? -sc->fault : sc->busy ? -EBUSY : 0;
 	if (error == 0)
 		sc->busy = true;
 	mutex_exit(&sc->lock);
@@ -195,6 +376,11 @@ a733_drm_atomic_commit(struct drm_device *dev, struct drm_atomic_state *state,
 	init_completion(&job->done);
 	job->state = state;
 	job->nonblock = nonblock;
+	if (sc->shadow_enabled && crtc != NULL && crtc->active) {
+		job->owner_id = a733_event_owner(sc, crtc);
+		/* Complete caller CPU stores before a worker reads the dumb BO. */
+		membar_sync();
+	}
 	error = drm_atomic_helper_setup_commit(state, nonblock);
 	if (error != 0)
 		goto fail;
@@ -211,7 +397,7 @@ a733_drm_atomic_commit(struct drm_device *dev, struct drm_atomic_state *state,
 		goto fail;
 	}
 	drm_atomic_state_get(state);
-	workqueue_enqueue(sc->queue, &job->work, NULL);
+	workqueue_enqueue(sc->queue, &job->work, sc->worker_cpu);
 	if (!nonblock) {
 		/* The worker does not acquire the caller's modeset locks. */
 		wait_for_completion(&job->done);
@@ -228,6 +414,7 @@ fail:
 	kmem_free(job, sizeof(*job));
 	mutex_enter(&sc->lock);
 	sc->busy = false;
+	cv_broadcast(&sc->idle);
 	mutex_exit(&sc->lock);
 	return error;
 }

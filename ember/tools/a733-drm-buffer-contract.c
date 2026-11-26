@@ -27,7 +27,7 @@ struct drm_device {
 	void *dev_private;
 };
 struct drm_file {
-	int unused;
+	void *driver_priv;
 };
 struct uvm_object {
 	int unused;
@@ -50,6 +50,7 @@ struct drm_gem_cma_object {
 	void *dmat;
 	struct map *dmamap;
 	uint64_t dmasize;
+	bool shadow_copying, shadow_cpu_mapped, a733_prime_exposed;
 };
 struct drm_framebuffer {
 	unsigned live;
@@ -61,8 +62,12 @@ struct drm_framebuffer_funcs {
 struct a733_drm_fb {
 	struct drm_framebuffer base;
 	struct drm_gem_cma_object *object;
+	uint64_t owner_id;
 };
+struct a733_drm_file { uint64_t id; };
 struct a733_drm {
+	bool lock;
+	uint64_t next_file_id;
 	struct {
 		struct {
 			uint32_t hdisplay, vdisplay;
@@ -85,6 +90,9 @@ static void *kmem_zalloc(size_t n, int flag){
 	allocations++;
 	return p;
 }
+static void *kmem_alloc(size_t n, int flag) { return kmem_zalloc(n, flag); }
+static void mutex_enter(bool *lock) { CHECK(!*lock); *lock = true; }
+static void mutex_exit(bool *lock) { CHECK(*lock); *lock = false; }
 static void kmem_free(void *p, size_t n){
 	CHECK(p && n && allocations);
 	allocations--;
@@ -132,6 +140,14 @@ static void drm_framebuffer_cleanup(struct drm_framebuffer *fb){
 	frames--;
 	fb->live = 0;
 }
+struct dma_buf { unsigned unused; };
+static struct dma_buf exported;
+static struct dma_buf *drm_gem_prime_export(struct drm_gem_object *gem, int flags)
+{
+	struct a733_drm *sc = gem->dev->dev_private;
+	CHECK(!sc->lock && flags == 0 && to_drm_gem_cma_obj(gem)->a733_prime_exposed);
+	return &exported;
+}
 #include "buffer.c"
 int
 main(void)
@@ -140,9 +156,11 @@ main(void)
 	struct drm_device dev = {&sc}, foreign = {0};
 	struct drm_file file = {0};
 	const uint64_t bytes = 2560u * 480u;
+	CHECK(a733_file_open(&dev, &file) == 0);
+	CHECK(((struct a733_drm_file *)file.driver_priv)->id == 1);
 	for (unsigned bad = 0; bad < 24; bad++) {
 		struct map map = {1, bytes, {{0x100000, bytes}}};
-		struct drm_gem_cma_object obj = {{&dev, bytes, 1, {0}}, &sc, &map, bytes};
+		struct drm_gem_cma_object obj = {{&dev, bytes, 1, {0}}, &sc, &map, bytes, false, false, false};
 		lookup = &obj;
 		struct drm_mode_fb_cmd2 cmd = {.pixel_format = DRM_FORMAT_XRGB8888,.width = 640,.height = 480,.handles = {37},.pitches = {2560}};
 		init_error = 0;
@@ -226,12 +244,13 @@ main(void)
 			break;
 		}
 		struct drm_framebuffer *fb = a733_fb_create(&dev, &file, &cmd);
+		CHECK(lookup_calls <= 1);
 		if (expected) {
 			CHECK(IS_ERR(fb) && PTR_ERR(fb) == expected);
-			CHECK(!allocations && !frames && obj.base.refs == 1);
+			CHECK(allocations == 1 && !frames && obj.base.refs == 1);
 			CHECK(put_calls == (bad >= 11 ? 1u : 0u));
 		} else {
-			CHECK(!IS_ERR(fb) && fb && allocations == 1 && frames == 1 && obj.base.refs == 2);
+			CHECK(!IS_ERR(fb) && fb && allocations == 2 && frames == 1 && obj.base.refs == 2);
 			unsigned h = 0;
 			handle_error = -ENOMEM;
 			CHECK(a733_fb_handle(fb, &file, &h) == -ENOMEM && obj.base.refs == 2);
@@ -239,11 +258,12 @@ main(void)
 			CHECK(a733_fb_handle(fb, &file, &h) == 0 && h == 38 && obj.base.refs == 3);
 			drm_gem_object_put_unlocked(&obj.base);
 			a733_fb_destroy(fb);
-			CHECK(!allocations && !frames && obj.base.refs == 1);
+			CHECK(allocations == 1 && !frames && obj.base.refs == 1);
 		}
 	}
 	for (unsigned bad = 0; bad < 15; bad++) {
-		struct drm_gem_object obj = {&dev, 16384, 1, {0}};
+		struct drm_gem_cma_object mapped = {.base = {&dev, 16384, 1, {0}}};
+		struct drm_gem_object *obj = &mapped.base;
 		off_t off = 4096;
 		size_t size = 4096;
 		int prot = PROT_READ | PROT_WRITE, flags = MAP_SHARED, advice = 7,
@@ -303,13 +323,22 @@ main(void)
 		}
 		off_t original = off;
 		int original_flags = flags;
-		CHECK(a733_prime_mmap(&obj, &off, size, prot, &flags, &advice, &uobj, &maxprot) == (valid ? 0 : -EINVAL));
+		CHECK(a733_prime_mmap(obj, &off, size, prot, &flags, &advice, &uobj, &maxprot) == (valid ? 0 : -EINVAL));
 		CHECK(off == original && flags == original_flags && advice == 7);
 		if (valid)
-			CHECK(obj.refs == 2 && uobj == &obj.gemo_uvmobj && maxprot == (PROT_READ | PROT_WRITE));
+			CHECK(obj->refs == 2 && uobj == &obj->gemo_uvmobj && maxprot == (PROT_READ | PROT_WRITE));
 		else
-			CHECK(obj.refs == 1 && uobj == (void *)(uintptr_t) 0x1234 && maxprot == 99);
+			CHECK(obj->refs == 1 && uobj == (void *)(uintptr_t) 0x1234 && maxprot == 99);
 	}
+	struct drm_gem_cma_object exported_obj = {.base.dev = &dev};
+	exported_obj.shadow_copying = true;
+	CHECK(PTR_ERR(a733_prime_export(&exported_obj.base, 0)) == -EBUSY);
+	CHECK(!exported_obj.a733_prime_exposed && !a733_expose_cpu(&exported_obj.base));
+	exported_obj.shadow_copying = false;
+	CHECK(a733_prime_export(&exported_obj.base, 0) == &exported);
+	CHECK(exported_obj.a733_prime_exposed && a733_expose_cpu(&exported_obj.base));
+	a733_file_close(&dev, &file);
+	CHECK(allocations == 0 && file.driver_priv == NULL);
 	printf("PASS %u framebuffer and byte-relative mmap checks\n", checks);
 	return 0;
 }

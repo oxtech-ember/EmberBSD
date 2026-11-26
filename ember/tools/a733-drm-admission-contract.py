@@ -23,7 +23,7 @@ def main():
     args = parser.parse_args()
     text = args.source.read_text()
     mode = section(text, "bool\na733_drm_mode_matches", "\nstatic void\na733_fb_destroy")
-    allocation = section(text, "static int\na733_dumb_create", "\nstatic bool\na733_format")
+    allocation = section(text, "struct drm_gem_cma_object *\na733_drm_alloc_cma", "\nstatic bool\na733_format")
     with tempfile.TemporaryDirectory(prefix="a733-drm-admission-") as tmp:
         work = Path(tmp)
         (work / "admission.c").write_text(mode + allocation)

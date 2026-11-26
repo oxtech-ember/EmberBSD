@@ -70,6 +70,10 @@ struct eqos_softc {
 	callout_t		sc_stat_ch;
 	kmutex_t		sc_lock;
 	kmutex_t		sc_txlock;
+	/* The media lock covers MII state and the periodic PHY tick. */
+	kmutex_t		sc_media_lock;
+	/* Serialize the entire address/data transaction on the MDIO bus. */
+	kmutex_t		sc_mdio_lock;
 	u_short			sc_if_flags;
 	bool			sc_txrunning;
 

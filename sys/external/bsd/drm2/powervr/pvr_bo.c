@@ -43,6 +43,7 @@ struct pvr_bo {
 	int nsegments, segment_capacity;
 	uint64_t flags;
 	int dma_owned;
+	volatile unsigned int cpu_read_state;
 	bool coherent;
 	struct dma_buf *import_buf;	/* pages belong to this dma-buf */
 	bool firmware_pinned;
@@ -95,7 +96,12 @@ pvr_bo_free(struct drm_gem_object *obj)
 static struct dma_buf *pvr_bo_export(struct drm_gem_object *, int);
 static struct sg_table *pvr_bo_get_sg_table(struct drm_gem_object *);
 
+static int pvr_bo_begin_cpu_read(struct drm_gem_object *, size_t, const void **);
+static void pvr_bo_end_cpu_read(struct drm_gem_object *);
+
 static const struct drm_gem_object_funcs pvr_bo_funcs = {
+	.begin_cpu_read = pvr_bo_begin_cpu_read,
+	.end_cpu_read = pvr_bo_end_cpu_read,
 	.export = pvr_bo_export,
 	.get_sg_table = pvr_bo_get_sg_table,
 	.free = pvr_bo_free,
@@ -237,6 +243,52 @@ pvr_bo_pages(struct drm_gem_object *obj, uint64_t offset, uint64_t size,
 	return 0;
 }
 
+enum {
+	PVR_CPU_ALIAS_NONE,
+	PVR_CPU_ALIAS_READ_ACTIVE,
+	PVR_CPU_ALIAS_EXPOSED,
+};
+
+static bool
+pvr_bo_expose_cpu(struct pvr_bo *bo)
+{
+	const unsigned int old = atomic_cas_uint(&bo->cpu_read_state,
+	    PVR_CPU_ALIAS_NONE, PVR_CPU_ALIAS_EXPOSED);
+
+	return old != PVR_CPU_ALIAS_READ_ACTIVE;
+}
+
+static int
+pvr_bo_begin_cpu_read(struct drm_gem_object *obj, size_t bytes, const void **out)
+{
+	struct pvr_bo *bo = pvr_to_bo(obj);
+	struct drm_gem_cma_object *cma = &bo->cma;
+
+	if (bytes == 0 || bytes > obj->size || cma->vaddr == NULL ||
+	    bo->import_buf != NULL ||
+	    (bo->flags & (DRM_PVR_BO_PM_FW_PROTECT | DRM_PVR_BO_EMBER_CPU_CACHED)))
+		return EOPNOTSUPP;
+	if (pvr_bo_validate(bo) != 0)
+		return EOPNOTSUPP;
+	if (atomic_cas_uint(&bo->cpu_read_state, PVR_CPU_ALIAS_NONE,
+	    PVR_CPU_ALIAS_READ_ACTIVE) != PVR_CPU_ALIAS_NONE)
+		return EBUSY;
+	/* Use the exporter mapping, never the display importer's CPU alias. */
+	bus_dmamap_sync(cma->dmat, cma->dmamap, 0, bytes, BUS_DMASYNC_POSTREAD);
+	*out = cma->vaddr;
+	return 0;
+}
+
+static void
+pvr_bo_end_cpu_read(struct drm_gem_object *obj)
+{
+	struct pvr_bo *bo = pvr_to_bo(obj);
+
+	KASSERT(atomic_load_relaxed(&bo->cpu_read_state) ==
+	    PVR_CPU_ALIAS_READ_ACTIVE);
+	atomic_store_release(&bo->cpu_read_state, PVR_CPU_ALIAS_NONE);
+}
+
 /* PRIME does not carry the cache attributes of this native extension. */
 static struct dma_buf *
 pvr_bo_export(struct drm_gem_object *obj, int flags)
@@ -284,6 +336,8 @@ pvr_prime_mmap(struct drm_gem_object *obj, off_t *offp, size_t size,
 	if ((pvr_to_bo(obj)->flags & DRM_PVR_BO_ALLOW_CPU_USERSPACE_ACCESS) == 0 ||
 	    (pvr_to_bo(obj)->flags & DRM_PVR_BO_PM_FW_PROTECT) != 0)
 		return -EACCES;
+	if (!pvr_bo_expose_cpu(pvr_to_bo(obj)))
+		return -EBUSY;
 	/* The native CMA pager drops this reference after the last mapping. */
 	drm_gem_object_get(obj);
 	*uobjp = &obj->gemo_uvmobj;
@@ -725,6 +779,8 @@ pvr_mmap_object(struct drm_device *dev, off_t byte_offset, size_t size,
 		error = -EACCES;
 	else if ((pvr_to_bo(obj)->flags & DRM_PVR_BO_ALLOW_CPU_USERSPACE_ACCESS) == 0)
 		error = -EINVAL;
+	else if (!pvr_bo_expose_cpu(pvr_to_bo(obj)))
+		error = -EBUSY;
 	else {
 		*uobjp = &obj->gemo_uvmobj;
 		*offsetp = 0;
@@ -749,6 +805,8 @@ pvr_bo_cpu(struct drm_gem_object *obj, uint64_t offset, size_t size,
 	if (bo->import_buf != NULL || (bo->flags & flags) != flags ||
 	    (bo->flags & DRM_PVR_BO_EMBER_CPU_CACHED) != 0)
 		return EACCES;
+	if (!pvr_bo_expose_cpu(bo))
+		return EBUSY;
 	*cpu = (uint8_t *)bo->cma.vaddr + offset;
 	return 0;
 }

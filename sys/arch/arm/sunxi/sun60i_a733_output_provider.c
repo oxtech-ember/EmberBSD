@@ -241,6 +241,50 @@ sun60i_a733_output_sample_vblank_irq(int phandle, const void *owner,
 }
 
 int
+sun60i_a733_output_sample_blank_line(int phandle, const void *owner,
+    uint64_t sequence, uint32_t *line)
+{
+	int error;
+
+	if (line == NULL)
+		return EINVAL;
+	RUN_ONCE(&output_once, output_init);
+	mutex_enter(&output_lock);
+	error = output_lookup(phandle, owner);
+	if (error == 0 && !output_started)
+		error = EINVAL;
+	if (error == 0 && output_ops->sample_blank_line == NULL)
+		error = EOPNOTSUPP;
+	if (error == 0)
+		error = output_ops->sample_blank_line(output_arg, owner, sequence,
+		    line);
+	mutex_exit(&output_lock);
+	return error;
+}
+
+int
+sun60i_a733_output_sample_tv0_phase(int phandle, const void *owner,
+    uint64_t sequence, struct sun60i_a733_tv0_phase *phase)
+{
+	int error;
+
+	if (phase == NULL)
+		return EINVAL;
+	RUN_ONCE(&output_once, output_init);
+	mutex_enter(&output_lock);
+	error = output_lookup(phandle, owner);
+	if (error == 0 && !output_started)
+		error = EINVAL;
+	if (error == 0 && output_ops->sample_tv0_phase == NULL)
+		error = EOPNOTSUPP;
+	if (error == 0)
+		error = output_ops->sample_tv0_phase(output_arg, owner, sequence,
+		    phase);
+	mutex_exit(&output_lock);
+	return error;
+}
+
+int
 sun60i_a733_output_wait_vblank_irq(int phandle, const void *owner,
     uint64_t target, uint64_t deadline_ns, uint64_t *out)
 {
@@ -405,7 +449,7 @@ sun60i_a733_output_sample(int phandle, const void *owner,
 /* The callback owner must remove the callback before its storage ends. */
 int
 sun60i_a733_output_set_vblank_handler(int phandle, const void *owner,
-    sun60i_a733_vblank_fn fn, void *arg)
+    sun60i_a733_output_irq_fn fn, void *arg)
 {
 	int error;
 

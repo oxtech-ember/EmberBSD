@@ -18,7 +18,10 @@ def main():
         default=tools.parents[1] / "sys/arch/arm/sunxi/sun60i_a733_drm_atomic.c")
     args = parser.parse_args()
     text = args.source.read_text()
-    text = text[text.index("static int\na733_explicit_fence"):]
+    fence = text.index("static int\na733_explicit_fence")
+    helpers = text.index("static int\na733_shadow_retain", fence)
+    worker = text.index("void\na733_drm_work", helpers)
+    text = text[fence:helpers] + text[worker:]
     with tempfile.TemporaryDirectory(prefix="a733-drm-worker-") as tmp:
         work = Path(tmp)
         (work / "worker.c").write_text(text)

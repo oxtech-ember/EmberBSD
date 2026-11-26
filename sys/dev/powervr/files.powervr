@@ -1,0 +1,4 @@
+# PowerVR interrupt helpers. Core does not depend on FDT.
+file	dev/powervr/pvr_mips_irq.c	sun50i_a133_gpu | sun60i_a733_gpu
+file	dev/powervr/pvr_job_irq.c	sun50i_a133_gpu | sun60i_a733_gpu
+file	dev/powervr/pvr_job_irq_fdt.c	sun50i_a133_gpu | sun60i_a733_gpu

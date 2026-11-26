@@ -17,6 +17,7 @@ static unsigned checks;
 #define IPL_SOFTCLOCK 1
 #define PRI_NONE 0
 #define WQ_MPSAFE 1
+#define WQ_PERCPU 2
 #define CALLOUT_MPSAFE 1
 static const int hz = 100;
 typedef struct { bool held; } kmutex_t;
@@ -30,6 +31,7 @@ struct a733_drm {
     struct timer startup_timer;
     struct work startup_work;
     struct queue *queue;
+    void *worker_cpu;
     int phandle, fault, stage;
     bool registering;
     bool startup_queued, startup_running, startup_registered, startup_stopped;

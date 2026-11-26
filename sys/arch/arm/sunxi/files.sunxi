@@ -174,7 +174,7 @@ file	arch/arm/sunxi/sun60i_a733_gpu_fwimage.c	sun60i_a733_gpu
 file	dev/powervr/pvr_fwimage.c			sun60i_a733_gpu | pvr_ge8300_experimental | sun50i_a133_gpu
 file	arch/arm/sunxi/sun60i_a733_gpu_mips.c	sun60i_a733_gpu
 file	dev/powervr/pvr_mips.c			sun60i_a733_gpu | pvr_ge8300_experimental | sun50i_a133_gpu
-file	dev/powervr/pvr_mips_irq.c			sun50i_a133_gpu
+include	"dev/powervr/files.powervr"
 file	dev/powervr/pvr_ge8300.c		sun60i_a733_gpu | pvr_ge8300_experimental | sun50i_a133_gpu
 file	arch/arm/sunxi/sun60i_a733_gpu_fwmem.c	sun60i_a733_gpu
 file	dev/powervr/pvr_fwmem.c			sun60i_a733_gpu | pvr_ge8300_experimental | sun50i_a133_gpu

@@ -30,6 +30,7 @@ struct sun60i_a733_de352_completion {
 	/* Software observations, not an exact hardware frame counter/time. */
 	uint64_t observed_sequence;
 	uint64_t observed_time_ns;
+	bool shadow_fast;
 };
 
 /*
@@ -74,6 +75,27 @@ int sun60i_a733_de352_set_vblank_handler(struct sun60i_a733_de352_client *,
  */
 int sun60i_a733_de352_submit(struct sun60i_a733_de352_client *,
     const struct sun60i_a733_de352_frame *,
+    struct sun60i_a733_de352_completion *);
+
+/*
+ * Submit immutable storage with caller-enforced deferred reuse. A private
+ * copy must never be exposed to userspace. An opted-in direct owner must
+ * have completed producer synchronization, excluded CPU aliasing and
+ * published a READ fence that remains pending through the release callback.
+ * Successive eligible frames can complete presentation at the live TV0
+ * witness before the displaced frame's DMA retirement. Only release permits
+ * reuse. Other transitions and missing witnesses use the ordinary barrier.
+ * Faults retain all attempted maps.
+ */
+int sun60i_a733_de352_submit_shadow(struct sun60i_a733_de352_client *,
+    const struct sun60i_a733_de352_frame *,
+    struct sun60i_a733_de352_completion *);
+
+/*
+ * Obtain a later stock-barrier observation after a successful active submit
+ * if the consumer lost its timestamp sample. Retains all current DMA maps.
+ */
+int sun60i_a733_de352_observe_current(struct sun60i_a733_de352_client *,
     struct sun60i_a733_de352_completion *);
 
 /* Sleepable HPD query. It does not retire a frame or latch a display fault. */

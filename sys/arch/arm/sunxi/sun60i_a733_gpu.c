@@ -47,6 +47,7 @@ __KERNEL_RCSID(0, "$NetBSD$");
 
 #include <dev/fdt/fdtvar.h>
 #include <dev/firmload.h>
+#include <dev/powervr/pvr_job_irq_fdt.h>
 #include <arm/sunxi/sun60i_a733_gpu_fwinfo.h>
 #include <arm/sunxi/sun60i_a733_gpu_fwmem.h>
 #include <arm/sunxi/sun60i_a733_gpu_fwboot.h>
@@ -110,6 +111,7 @@ struct sun60i_gpu_softc {
 	bool sc_diagnostic;	/* immutable before sysctl publication */
 	bool sc_start_attempted;	/* normal startup is single-use */
 	struct sun60i_a733_gpu_fwbridge sc_fwbridge;
+	struct pvr_job_irq_fdt sc_job_irq;
 	u_int sc_core_hz, sc_bus_hz, sc_uvol;
 	u_int sc_clock_source;	/* runtime: 0 PERIPH0/400, 1 PLL_GPU0/600 */
 	char sc_clock_state[160];	/* last complete stage-7 observation */
@@ -2011,9 +2013,17 @@ sun60i_gpu_exec_attach(struct sun60i_gpu_softc *sc)
 	    &sc->sc_boot_result, previous);
 	if (error != 0)
 		goto out;
+	(void)pvr_job_irq_fdt_start(&sc->sc_job_irq, sc->sc_phandle,
+	    sc->sc_bst, bsh, PVR_JOB_IRQ_A733);
+	if (pvr_job_irq_active(&sc->sc_job_irq.irq))
+		pvr_fwbridge_set_irq(&sc->sc_fwbridge, &sc->sc_job_irq.irq,
+		    pvr_job_irq_mark, pvr_job_irq_wait);
 	dev = sc->sc_render_device;
 	mutex_exit(&sc->sc_run_lock);
-	return sun60i_a733_gpu_fwbridge_publish(&sc->sc_fwbridge, dev);
+	error = sun60i_a733_gpu_fwbridge_publish(&sc->sc_fwbridge, dev);
+	if (error != 0)
+		pvr_job_irq_stop(&sc->sc_job_irq.irq);
+	return error;
 out:
 	mutex_exit(&sc->sc_run_lock);
 	return error;
@@ -2581,6 +2591,7 @@ sun60i_gpu_attach(device_t parent, device_t self, void *aux)
 	sc->sc_bst = faa->faa_bst;
 	sc->sc_dmat = faa->faa_dmat;
 	mutex_init(&sc->sc_run_lock, MUTEX_DEFAULT, IPL_NONE);
+	pvr_job_irq_init(&sc->sc_job_irq.irq, self);
 	sc->sc_run_pass = true;
 	sc->sc_diagnostic = sun60i_gpu_binding(sc, &binding) == 0 &&
 	    (binding.observe_only || binding.prepare);

@@ -25,6 +25,7 @@ typedef struct vmem { int id; } vmem_t;
 typedef struct { int held; } kmutex_t;
 #define ERR_PTR(x) ((void *)(intptr_t)(x))
 #define PTR_ERR(x) ((int)(intptr_t)(x))
+#define roundup(n, a) (((n) + (a) - 1) / (a) * (a))
 #define IS_ERR(x) ((uintptr_t)(x) >= (uintptr_t)-4095)
 struct sun60i_a733_output_mode {
 	uint32_t pixel_clock_hz, hdisplay, hsync_start, hsync_end, htotal,
@@ -41,9 +42,11 @@ struct drm_gem_object {
 };
 struct drm_gem_cma_object {
 	struct drm_gem_object base;
+	uint64_t a733_allocation_id;
 };
+struct a733_drm_file { uint64_t id; };
 struct drm_file {
-	int id;
+	void *driver_priv;
 };
 struct drm_device {
 	int id;
@@ -53,6 +56,7 @@ struct drm_device {
 struct a733_drm {
 	kmutex_t pool_lock;
 	vmem_t *pool;
+	struct drm_device *dev;
 };
 static vmem_t pool;
 static int probe_error;
@@ -166,9 +170,11 @@ main(void)
 	bad = m;
 	bad.clock = -27000;
 	CHECK(!a733_drm_mode_matches(&n, &bad));
-	struct drm_file file = {1};
+	struct a733_drm_file owner = {1};
+	struct drm_file file = {&owner};
 	struct a733_drm sc = {.pool = &pool};
 	struct drm_device dev = {1, &sc, &pool};
+	sc.dev = &dev;
 	pool_lock = &sc.pool_lock;
 	for (unsigned width = 1; width <= 1920; width++)
 		for (unsigned height = 1; height <= 1080; height += 1079) {
@@ -238,6 +244,7 @@ main(void)
 	sc.pool = &pool;
 	CHECK(a733_dumb_create(&file, &dev, &a) == 0 && creates == before + 1 && frees == probes && !sc.pool_lock.held);
 	object.base.refs = 0;
+	CHECK(locks > 0);
 	printf("PASS %u exact mode and allocation checks\n", checks);
 	return 0;
 }

@@ -187,10 +187,25 @@ The retain callback pins the loaded map, backing storage and callback code.
 The DE provider synchronizes pixels and the queue with PREWRITE before its
 first pointer attempt. It never unloads the caller's pixel map.
 
-Before each replacement, the coordinator verifies the owned old queue and
-route. It requires a new RCQ finish and all seven expected layer words plus
-the blend pipe word. It samples a TV0 baseline after successful RCQ readback.
-Only two validated events beyond that baseline permit retirement. One IRQ
+With private scanout enabled, the provider can report a replacement on the
+first TV0 field that proves the new address. The old and new private buffers
+must have distinct addresses and identical plane settings. Each RCQ request
+has a ticket. The provider checks that the RCQ finished and that the DE
+register contains the requested address. It correlates these results with
+the TV0 interrupt and scan position for that ticket. An uncertain result
+uses the guarded observation path.
+
+A successful flip lets the client submit the next frame. The provider keeps
+the replaced private buffer until it observes two distinct, validated
+successor edges or completes the guarded retirement barrier. The provider
+keeps potentially active memory pinned on a fault. Set
+`hw.sun60ide0.verify_flips=1` to request the full plane and PHY checks on
+each flip.
+
+On the guarded path the coordinator verifies the old queue and route.
+It checks a new RCQ finish, the layer words and blend pipe on a full update.
+It samples a TV0 baseline after successful RCQ readback.
+Two validated events beyond that baseline permit retirement. One IRQ
 sample can report several counted events. Polling counts only acknowledged
 flags. An unvalidated sequence advance discards earlier retirement credit.
 The 100 ms wait starts after the baseline is sampled. Each native output

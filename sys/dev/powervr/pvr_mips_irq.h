@@ -37,4 +37,6 @@
 int pvr_mips_irq_pending(bus_space_tag_t, bus_space_handle_t, bool *);
 /* Clear the event with a single 32-bit write; no read/modify/write. */
 int pvr_mips_irq_clear(bus_space_tag_t, bus_space_handle_t);
+int pvr_mips_irq_enable(bus_space_tag_t, bus_space_handle_t, bool);
+
 #endif

@@ -24,6 +24,10 @@ struct fdt_attach_args { int faa_phandle; bus_space_tag_t faa_bst; bus_dma_tag_t
 #define DEVICE_COMPAT_EOL { .compat = NULL }
 #define MUTEX_DEFAULT 0
 #define IPL_NONE 0
+#define IPL_VM 1
+#define CTLFLAG_PRIVATE 0x100
+#define mutex_spin_enter mutex_enter
+#define mutex_spin_exit mutex_exit
 #define ONCE_DECL(n) int n
 #define RUN_ONCE(p, fn) do { if (!*(p)) { CHECK((fn)() == 0); *(p) = 1; } } while (0)
 #define KASSERT(x) CHECK(x)
@@ -52,6 +56,7 @@ static int reserve_error, memory_error, begin_error, mode_error, prepare_error, 
 static bool attempt_begin, claimed, memory_claimed, retained, started, irq_masked, power_claimed;
 static bool no_busy, no_finish, no_copy, no_vblank, same_sequence, bad_w1c;
 static bool delay_rcq_finish, rcq_finish_pending, suppress_rcq_finish;
+static uint64_t lab_finish_delay;
 static unsigned rcq_requests, timeout_reads;
 static int read_fault_region, write_fault, memory_calls, memory_fault_call;
 static uint32_t read_fault_reg, run_readback_reg;
@@ -89,7 +94,7 @@ delay(unsigned us)
 	tick += (uint64_t)us * 1000 + delay_pause_ns;
 	delay_pause_ns = 0;
 	if (rcq_finish_pending) {
-		tick += UINT64_C(100000000);
+		tick += lab_finish_delay != 0 ? lab_finish_delay : UINT64_C(100000000);
 		de[0x8104 / 4] |= 4;
 		rcq_finish_pending = false;
 	}
@@ -160,6 +165,7 @@ static int bus_space_map(bus_space_tag_t t,bus_addr_t a,bus_size_t n,int flags,b
 static void bus_space_unmap(bus_space_tag_t t,bus_space_handle_t h,bus_size_t n)
 { (void)t;(void)n;CHECK(h>=1&&h<=3);space_unmaps++; }
 static int bus_space_peek_4(bus_space_tag_t,bus_space_handle_t,bus_size_t,uint32_t *);
+static uint32_t bus_space_read_4(bus_space_tag_t, bus_space_handle_t, bus_size_t);
 static int bus_space_poke_4(bus_space_tag_t,bus_space_handle_t,bus_size_t,uint32_t);
 static void bus_space_barrier(bus_space_tag_t t,bus_space_handle_t h,bus_size_t off,bus_size_t n,int flags)
 { (void)t;(void)off;CHECK(h>=1&&h<=3&&(n==4||n==12)&&flags>0); }
@@ -236,6 +242,7 @@ int sun60i_a733_output_observed_vblank(int node,const void *owner,uint64_t *out)
 static const uint64_t *irq_script;
 static size_t irq_samples, irq_index;
 static uint64_t irq_sample_pause_ns;
+static void (*test_irq)(uint64_t);
 
 int
 sun60i_a733_output_sample_vblank_irq(int node, const void *owner, uint64_t *out)
@@ -245,9 +252,38 @@ sun60i_a733_output_sample_vblank_irq(int node, const void *owner, uint64_t *out)
 		return EOPNOTSUPP;
 	CHECK(irq_index < irq_samples);
 	*out = irq_script[irq_index++];
+	if (test_irq != NULL)
+		test_irq(*out);
 	if (irq_index == 1)
 		tick += irq_sample_pause_ns;
 	return 0;
+}
+static uint64_t blank_line_sequence;
+static uint32_t blank_lines[2] = {3, 4};
+static unsigned blank_line_calls;
+static int blank_line_error;
+int
+sun60i_a733_output_sample_blank_line(int node, const void *owner,
+    uint64_t irq, uint32_t *out)
+{
+ CHECK(node == 7 && owner == lease_owner && retained && started);
+ if (blank_line_sequence != 0 && irq != blank_line_sequence)
+  return ENOENT;
+ if (blank_line_error != 0)
+  return blank_line_error;
+ *out = blank_lines[blank_line_calls++ % 2];
+ return 0;
+}
+static struct sun60i_a733_tv0_phase post_phases[2];
+static unsigned post_calls;
+int
+sun60i_a733_output_sample_tv0_phase(int node, const void *owner,
+    uint64_t irq, struct sun60i_a733_tv0_phase *phase)
+{
+ CHECK(node == 7 && owner == lease_owner && retained && started);
+ CHECK(irq > 0);
+ *phase = post_phases[post_calls++ % 2];
+ return 0;
 }
 int sun60i_a733_output_fault(int node,const void *owner,int error)
 { CHECK(node==7&&owner==lease_owner&&retained&&error);faults++;return error; }
@@ -303,14 +339,14 @@ sun60i_a733_output_wait_vblank_irq(int node, const void *owner, uint64_t target,
 }
 static unsigned vblank_binds;
 static int vblank_bind_error;
-static sun60i_a733_vblank_fn bound_fn;
+static sun60i_a733_output_irq_fn bound_fn;
 static void *bound_arg;
 int sun60i_a733_output_detect(int node, const void *owner, bool *out)
 { (void)node; (void)owner; *out = true; return 0; }
 
 int
 sun60i_a733_output_set_vblank_handler(int node, const void *owner,
-    sun60i_a733_vblank_fn fn, void *arg)
+    sun60i_a733_output_irq_fn fn, void *arg)
 {
 	CHECK(node == 7 && owner == lease_owner && retained && started);
 	vblank_binds++;
@@ -342,6 +378,27 @@ sun60i_a733_output_sample(int node, const void *owner,
 	return output_sample_error;
 }
 #include "sun60i_a733_de352_scanout.h"
+#define PRI_NONE 0
+#define KTHREAD_MPSAFE 1
+#define PRI_SOFTCLOCK 1
+#define WQ_MPSAFE 1
+struct work { int unused; };
+struct workqueue { int unused; };
+static int
+workqueue_create(struct workqueue **queue, const char *name,
+    void (*fn)(struct work *, void *), void *sc, int pri, int ipl, int flags)
+{
+	static struct workqueue singleton;
+
+	(void)name; (void)fn; (void)sc; (void)pri; (void)ipl; (void)flags;
+	*queue = &singleton;
+	return 0;
+}
+static void
+workqueue_enqueue(struct workqueue *queue, struct work *work, void *cpu)
+{
+	(void)queue; (void)work; (void)cpu;
+}
 #include "sun60i_a733_de352_fdt.c"
 
 static int bus_space_peek_4(bus_space_tag_t tag,bus_space_handle_t h,bus_size_t off,uint32_t *out)
@@ -356,7 +413,11 @@ static int bus_space_peek_4(bus_space_tag_t tag,bus_space_handle_t h,bus_size_t 
      off == 0x8050 && ++run_read_count == run_read_fault)
   return EIO;
  if((int)h==read_fault_region&&off==read_fault_reg)return EIO;
- if(h==1){CHECK(retained&&off<sizeof(de));*out=de[off/4];}
+ if(h==1){
+  CHECK(retained&&off<sizeof(de));*out=de[off/4];
+  if(test_irq!=NULL&&off==0x8104&&(blank_line_calls%2)==1)
+   *out&=~(uint32_t)0x10;
+ }
  else if(h==2){CHECK(memory_claimed&&off<sizeof(iommu));
   if(cold_test&&off>=0x400&&off<0x800)CHECK(peer_power_on);
   if(cold_test&&off==0x30&&cold_global_pending){
@@ -369,6 +430,14 @@ static int bus_space_peek_4(bus_space_tag_t tag,bus_space_handle_t h,bus_size_t 
   *out=iommu[off/4];}
  else {CHECK(h==3&&memory_claimed&&off<sizeof(nsi));*out=nsi[off/4];}
  return 0;
+}
+static uint32_t
+bus_space_read_4(bus_space_tag_t tag, bus_space_handle_t handle, bus_size_t off)
+{
+	uint32_t value;
+
+	CHECK(bus_space_peek_4(tag, handle, off, &value) == 0);
+	return value;
 }
 static int bus_space_poke_4(bus_space_tag_t tag,bus_space_handle_t h,bus_size_t off,uint32_t value)
 {
@@ -468,6 +537,12 @@ static void reboot_fixture(struct sun60i_de352_softc *sc)
  if(sc->guard){sc->guard->published=false;CHECK(sun60i_a733_de352_guard_destroy(sc->guard)==0);sc->guard=NULL;}
 
  /* The fixture models a reset after asserting retention. Production cannot do this. */
+ for (unsigned i=0;i<sc->shadow_retire_count;i++) {
+  struct de352_frame *f=&sc->shadow_retire[i].frame;
+  CHECK(f->dma->published);
+  f->dma->published=false;
+  de352_frame_drop(f,false);
+ }
  struct de352_frame *frames[]={&sc->active,&sc->pending};
  for(unsigned i=0;i<2;i++)if(frames[i]->dma){frames[i]->dma->published=false;de352_frame_drop(frames[i],false);memset(frames[i],0,sizeof(*frames[i]));}
  if(sc->dma){sc->dma->published=false;CHECK(sun60i_a733_de352_dma_destroy(sc->dma)==0);sc->dma=NULL;}
@@ -760,6 +835,395 @@ replacement_extra_checks(void)
 	reboot_fixture(&sc);
 }
 
+static void
+post_phase_checks(void)
+{
+ const struct sun60i_a733_tv0_phase line = {
+  .control = 0x800001f0, .debug = 29, .gint0 = 0x40000000, .basic4 = 40
+ };
+ struct de352_post_phase p = {
+  .before = line, .after = line, .first = 4, .last = 4, .matches = 7
+ };
+ struct sun60i_de352_softc sc;
+ struct de352_edge_record presented;
+
+ CHECK(de352_post_phase_result(&p)==POST_PHASE_SAFE);
+ p.after.debug=30;
+ CHECK(de352_post_phase_result(&p)==POST_PHASE_SAFE);
+ p.after.debug=31;
+ CHECK(de352_post_phase_result(&p)==POST_PHASE_DE_SYNC_RELEASED);
+ p.after.debug=40;
+ CHECK(de352_post_phase_result(&p)==POST_PHASE_DE_SYNC_RELEASED);
+ p.after.debug=41;
+ CHECK(de352_post_phase_result(&p)==POST_PHASE_ACTIVE);
+ p.after.debug=28;
+ CHECK(de352_post_phase_result(&p)==POST_PHASE_TV0_STATUS);
+ p.after.debug=30;
+ p.after.gint0|=0x4000;
+ CHECK(de352_post_phase_result(&p)==POST_PHASE_TV0_STATUS);
+ p.after.gint0&=~(uint32_t)0x4000;
+ p.before.debug|=0x40000000;
+ CHECK(de352_post_phase_result(&p)==POST_PHASE_TV0_STATUS);
+ p.before=line;
+ p.last |= 0x10;
+ CHECK(de352_post_phase_result(&p)==POST_PHASE_DE_STATUS);
+
+ init(&sc);CHECK(de352_run(&sc)==0);
+ sc.edge.armed=true;sc.edge.ticket=11;sc.edge.blank_ns=656000;
+ sc.edge.queue=de[0x8114/4];sc.edge.address=de[0x1c1010/4];
+ sc.edge.posted_ns=de352_now();
+ de352_edge_irq(&sc,42,NULL);
+ sc.edge.verified_ns=de352_now();
+ post_phases[0]=line;post_phases[1]=line;
+ post_phases[1].debug=30;post_calls=0;
+ de[0x8104/4]=4;
+ mutex_enter(&sc.lock);
+ de352_measure_post_phase(&sc);
+ CHECK(sc.edge.post.count==1&&sc.edge.post.row[0].reason==POST_PHASE_SAFE);
+ CHECK(sc.edge.history.row[0].verified_ns==0);
+ CHECK(de352_shadow_edge(&sc,42,&presented));
+ CHECK(presented.irq_ns<presented.verified_ns&&presented.sequence==42&&post_calls==2);
+ post_phases[1].debug=31;
+ de352_measure_post_phase(&sc);
+ CHECK(sc.edge.post.count==2&&sc.edge.post.row[1].reason==POST_PHASE_DE_SYNC_RELEASED);
+ CHECK(!de352_shadow_edge(&sc,42,&presented));
+ sc.field_probe=true;sc.edge.previous_idle_sequence=42;
+ de[0x8104/4]=0x1d;post_calls=0;
+ de352_measure_post_phase(&sc);
+ CHECK(sc.edge.post.row[2].reason==POST_PHASE_FIELD_TRANSITION);
+ CHECK(!de352_shadow_edge(&sc,42,&presented));
+ sc.bsp_vblank=true;
+ CHECK(!de352_shadow_edge(&sc,42,&presented));
+ post_phases[0].debug=post_phases[1].debug=31;post_calls=0;
+ de352_measure_post_phase(&sc);
+ CHECK(sc.edge.post.row[3].reason==POST_PHASE_FIELD_TRANSITION);
+ CHECK(de352_shadow_edge(&sc,42,&presented)&&presented.sequence==42);
+ de[0x8104/4]=0x15;post_calls=0;
+ de352_measure_post_phase(&sc);
+ CHECK(!de352_shadow_edge(&sc,42,&presented));
+ sc.edge.previous_idle_sequence=41;post_calls=0;
+ de352_measure_post_phase(&sc);
+ CHECK(sc.edge.post.row[5].reason==POST_PHASE_DE_SYNC_RELEASED);
+ mutex_exit(&sc.lock);
+ reboot_fixture(&sc);
+}
+
+static void
+shadow_test_irq(uint64_t seq)
+{
+ CHECK(bound_fn==de352_edge_irq);
+ blank_line_sequence=seq;
+ bound_fn(bound_arg,seq,NULL);
+}
+
+static void
+address_flip_checks(void)
+{
+	struct sun60i_de352_softc sc;
+	struct sun60i_a733_de352_dma old, next;
+	uint32_t words[RCQ_COPY_WORDS];
+	static const uint64_t irqs[] = {40, 41};
+
+	init(&sc);
+	CHECK(de352_run(&sc) == 0);
+	old = *sc.dma;
+	next = old;
+	next.layer.address_low ^= 0x1000;
+	sc.active = (struct de352_frame){ .dma = &old, .held = true, .shadow = true };
+	sc.pending = (struct de352_frame){ .dma = &next, .held = true, .shadow = true };
+	sc.bsp_vblank = sc.field_probe = true;
+	mutex_enter(&sc.lock);
+
+	CHECK(de352_address_flip(&sc, &next));
+	CHECK(!de352_address_flip(&sc, NULL));
+	CHECK(!de352_address_flip(&sc, &old));
+	next.layer.pitch++;
+	CHECK(!de352_address_flip(&sc, &next));
+	next.layer.pitch--;
+	next.layer.address_low = old.layer.address_low;
+	CHECK(!de352_address_flip(&sc, &next));
+	next.layer.address_low ^= 0x1000;
+	next.disabled = true;
+	CHECK(!de352_address_flip(&sc, &next));
+	next.disabled = false;
+	sc.active.held = false;
+	CHECK(!de352_address_flip(&sc, &next));
+	sc.active.held = true;
+	sc.pending.shadow = false;
+	CHECK(!de352_address_flip(&sc, &next));
+	sc.pending.shadow = true;
+	sc.shadow_retire_count = DE352_SHADOW_RETIRE_MAX;
+	CHECK(!de352_address_flip(&sc, &next));
+	sc.shadow_retire_count = 0;
+
+	de352_rcq_words(&next, words);
+	for (u_int i = 0; i < RCQ_COPY_WORDS - 1; i++)
+		de[(0x1c1000 / 4) + i] = words[i];
+	de[0x281000 / 4] = words[RCQ_COPY_WORDS - 1];
+	read_fault_region = 1;
+	read_fault_reg = 0x281000;
+	CHECK(de352_verify_dma(&sc, &next, false, NULL) == 0);
+	sc.verify_each_flip = true;
+	CHECK(!de352_address_flip(&sc, &next));
+	CHECK(de352_verify_dma(&sc, &next, false, NULL) == EIO);
+	sc.verify_each_flip = false;
+	CHECK(de352_verify_dma(&sc, &next, true, NULL) == EIO);
+	read_fault_region = 0;
+	de[0x1c1010 / 4] = old.layer.address_low;
+	CHECK(de352_verify_dma(&sc, &next, false, NULL) == EIO);
+
+	sc.mode.htotal = 1688;
+	sc.mode.vtotal = 1066;
+	sc.mode.pixel_clock_hz = 108000000;
+	irq_cv_supported = true;
+	irq_script = irqs;
+	irq_samples = __arraycount(irqs);
+	irq_index = irq_cv_calls = 0;
+	de[0x8104 / 4] = 4;
+	CHECK(de352_wait_transfer(&sc, 40) == 0 && irq_cv_calls == 0);
+	de[0x8104 / 4] = 0;
+	CHECK(de352_wait_transfer(&sc, UINT64_MAX) == 0 && irq_cv_calls == 0);
+	CHECK(de352_wait_transfer(&sc, 40) == 0 && irq_cv_calls == 1 &&
+	    irq_index == 2);
+	CHECK((de[0x8104 / 4] & 4) == 0 && sc.edge.verified_ns == 0);
+	irq_cv_supported = false;
+	CHECK(de352_wait_transfer(&sc, 40) == 0);
+	read_fault_region = 1;
+	read_fault_reg = 0x8104;
+	CHECK(de352_wait_transfer(&sc, 40) == EIO);
+	irq_script = NULL;
+	sc.pending = (struct de352_frame){0};
+	sc.active = (struct de352_frame){0};
+	mutex_exit(&sc.lock);
+	reboot_fixture(&sc);
+}
+
+struct irq_test_lines {
+	uint32_t next, after;
+	bool valid;
+};
+
+static bool
+irq_test_blank(void *arg, uint32_t *line)
+{
+	struct irq_test_lines *lines = arg;
+
+	if (!lines->valid)
+		return false;
+	*line = lines->next;
+	lines->next = lines->after;
+	return true;
+}
+
+static void
+irq_ticket_checks(void)
+{
+	struct sun60i_de352_softc sc;
+	struct de352_edge *e;
+	struct de352_edge_record *r;
+	struct irq_test_lines lines = { .next = 2, .after = 3, .valid = true };
+	const struct sun60i_a733_irq_window window = { &lines, irq_test_blank };
+
+	init(&sc);
+	CHECK(de352_run(&sc) == 0);
+	e = &sc.edge;
+	e->irq_readback = e->armed = true;
+	e->ticket = 11;
+	e->posted_ns = de352_now();
+	e->verified_ns = de352_now();
+	e->blank_ns = 650000;
+	e->queue = de[0x8114 / 4];
+	e->address = de[0x1c1010 / 4];
+	de[0x8104 / 4] = 4;
+	de352_edge_irq(&sc, 42, &window);
+	r = &e->history.row[0];
+	CHECK(r->ticket == 11 && r->sequence == 42 && r->sample_age_ns > 0);
+	CHECK(r->matches == 7 && !e->scheduled && r->verified_ns <= r->irq_ns);
+	de[0x1c1010 / 4] ^= 4;
+	de352_edge_irq(&sc, 43, &window);
+	CHECK(e->history.row[1].sample_age_ns == 0);
+	de[0x1c1010 / 4] ^= 4;
+	de[0x8104 / 4] = 0x14;
+	de352_edge_irq(&sc, 44, &window);
+	CHECK(e->history.row[2].sample_age_ns == 0);
+	de[0x8104 / 4] = 4;
+	de[0x80d0 / 4] ^= 1;
+	de352_edge_irq(&sc, 45, &window);
+	CHECK(e->history.row[3].sample_age_ns == 0);
+	de[0x80d0 / 4] ^= 1;
+	e->verified_ns = 0;
+	de352_edge_irq(&sc, 46, &window);
+	CHECK(e->history.row[4].sample_age_ns == 0);
+	e->posted_ns = 0;
+	de352_edge_irq(&sc, 47, &window);
+	CHECK(e->history.count == 5);
+	e->posted_ns = de352_now();
+	e->verified_ns = de352_now();
+	lines.valid = false;
+	de352_edge_irq(&sc, 48, &window);
+	CHECK(e->history.row[5].sample_age_ns == 0);
+	lines.valid = true;
+	lines.next = 5;
+	lines.after = 3;
+	de352_edge_irq(&sc, 49, &window);
+	CHECK(e->history.row[6].sample_age_ns == 0);
+	de352_edge_irq(&sc, 50, NULL);
+	CHECK(e->history.row[7].sample_age_ns == 0);
+	reboot_fixture(&sc);
+}
+
+static void
+steady_field_checks(void)
+{
+	static const uint64_t irqs[] = {10, 10, 11, 12};
+	static const struct vblank_sample observed[] = {{10, 0, 0}, {12, 0, 0}};
+	struct sun60i_de352_softc sc;
+	struct sun60i_a733_de352_client *client;
+	struct sun60i_a733_de352_state state;
+	struct sun60i_a733_de352_completion done;
+	struct frame_fixture storage[3];
+	struct sun60i_a733_de352_frame frames[3];
+	struct sysctlnode node = { .sysctl_data = &sc.verify_each_flip };
+	int setting;
+
+	blank_line_calls = 0;
+	init(&sc);
+	de352_provider = &sc;
+	CHECK(de352_run(&sc) == 0);
+	sc.stage = 1;
+	sc.bsp_vblank = sc.field_probe = true;
+	CHECK(sun60i_a733_de352_get_state(1, &state) == 0);
+	CHECK(sun60i_a733_de352_acquire(1, &sc, &client) == 0);
+	CHECK(sun60i_a733_de352_set_vblank_handler(client, vblank_consumer, &state) == 0);
+	for (unsigned i = 0; i < __arraycount(frames); i++)
+		frames[i] = frame_input(&storage[i], state.dmat, 0x20000000 + i * 0x1000000);
+	irq_script = irqs;
+	irq_samples = __arraycount(irqs);
+	irq_index = 0;
+	vblank_script = observed;
+	vblank_samples = __arraycount(observed);
+	vblank_index = 0;
+	test_irq = shadow_test_irq;
+
+	CHECK(sun60i_a733_de352_submit_shadow(client, &frames[0], &done) == 0);
+	CHECK(done.observed_sequence == 10 && vblank_index == 1);
+	CHECK(sun60i_a733_de352_submit_shadow(client, &frames[1], &done) == 0);
+	CHECK(done.shadow_fast && done.observed_sequence == 11 && vblank_index == 1);
+	CHECK(sc.shadow_retire_count == 1 && storage[0].drops == 0);
+	setting = 2;
+	CHECK(de352_sysctl_verify_flips(&node, &setting) == EINVAL && !sc.verify_each_flip);
+	setting = 1;
+	CHECK(de352_sysctl_verify_flips(&node, &setting) == 0 && sc.verify_each_flip);
+	CHECK(sun60i_a733_de352_submit_shadow(client, &frames[2], &done) == 0);
+	CHECK(done.observed_sequence == 12 && vblank_index == 2 && irq_index == 4);
+	CHECK(storage[0].drops == 0 && storage[1].drops == 0);
+	irq_script = NULL;
+	vblank_script = NULL;
+	test_irq = NULL;
+	blank_line_sequence = 0;
+	reboot_fixture(&sc);
+}
+
+static void
+shadow_checks(void)
+{
+ static const uint64_t irqs[]={10,11,20,21,22};
+ static const struct vblank_sample observed[]={
+  {10,0,0},{11,0,0},{20,0,0},{21,0,0},{22,0,0}
+ };
+ struct sun60i_de352_softc sc;
+ struct sun60i_a733_de352_client *client;
+ struct sun60i_a733_de352_state state;
+ struct sun60i_a733_de352_completion done, old;
+ struct frame_fixture f[6];
+ struct sun60i_a733_de352_frame frames[6];
+ struct de352_edge_record edge;
+
+ blank_line_calls=0;
+ init(&sc);de352_provider=&sc;CHECK(de352_run(&sc)==0);sc.stage=1;
+ CHECK(sun60i_a733_de352_get_state(1,&state)==0);
+ CHECK(sun60i_a733_de352_acquire(1,&sc,&client)==0);
+ CHECK(sun60i_a733_de352_set_vblank_handler(client,vblank_consumer,&state)==0);
+ for (unsigned i=0;i<__arraycount(frames);i++)
+  frames[i]=frame_input(&f[i],state.dmat,0x20000000+(uint64_t)i*0x1000000);
+ irq_script=irqs;irq_samples=__arraycount(irqs);irq_index=0;
+ vblank_script=observed;vblank_samples=__arraycount(observed);vblank_index=0;
+ test_irq=shadow_test_irq;
+
+ CHECK(sun60i_a733_de352_submit_shadow(client,&frames[0],&done)==0);
+ CHECK(done.observed_sequence==10&&done.shadow_fast&&sc.active.shadow&&
+     f[0].held==1&&blank_line_calls==2);
+ CHECK(!sc.edge.armed&&de352_shadow_edge(&sc,10,&edge));
+ CHECK(done.observed_time_ns==edge.irq_ns);
+ struct de352_edge_record *row=&sc.edge.history.row[0];
+ row->last_status|=0x10;
+ CHECK(!de352_shadow_edge(&sc,10,&edge));
+ *row=edge;
+ row->first_status&=~(uint32_t)4;
+ CHECK(!de352_shadow_edge(&sc,10,&edge));
+ *row=edge;
+ row->matches&=~(uint32_t)4;
+ CHECK(!de352_shadow_edge(&sc,10,&edge));
+ *row=edge;
+ row->ticket--;
+ CHECK(!de352_shadow_edge(&sc,10,&edge));
+ *row=edge;
+ row->verified_ns=row->irq_ns+1;
+ CHECK(!de352_shadow_edge(&sc,10,&edge));
+ *row=edge;
+ CHECK(sun60i_a733_de352_submit_shadow(client,&frames[1],&done)==0);
+ CHECK(done.observed_sequence==11&&sc.shadow_retire_count==1&&f[0].drops==0);
+ CHECK(sun60i_a733_de352_submit_shadow(client,&frames[0],&done)==EBUSY);
+ CHECK(f[0].held==1&&sc.result==0&&sc.shadow_retire_count==1);
+ CHECK(sun60i_a733_de352_submit_shadow(client,&frames[2],&done)==0);
+ CHECK(done.observed_sequence==20&&sc.shadow_retire_count==2&&f[0].held==1);
+ CHECK(sc.shadow_retire[0].edges==1&&sc.shadow_retire[1].edges==0);
+ CHECK(sun60i_a733_de352_submit_shadow(client,&frames[3],&done)==0);
+ CHECK(done.observed_sequence==21&&sc.shadow_retire_count==2&&f[0].held==0);
+ CHECK(f[1].held==1&&f[2].held==1&&f[3].held==1);
+ CHECK(sun60i_a733_de352_submit_shadow(client,&frames[0],&done)==0);
+ CHECK(done.observed_sequence==22&&sc.shadow_retire_count==2&&f[1].held==0);
+ CHECK(irq_index==irq_samples&&vblank_index==vblank_samples);
+ irq_script=NULL;vblank_script=NULL;test_irq=NULL;blank_line_sequence=0;
+
+ /* A zero-copy replacement uses the ordinary +2 barrier and drains FIFO. */
+ sequence=22;
+ CHECK(sun60i_a733_de352_submit(client,&frames[4],&done)==0);
+ CHECK(done.observed_sequence>=24&&!done.shadow_fast&&sc.shadow_retire_count==0);
+ CHECK(!sc.active.shadow&&f[4].held==1&&f[0].held==0&&f[2].held==0&&f[3].held==0);
+ CHECK(sun60i_a733_de352_submit_shadow(client,&frames[5],&done)==0);
+ CHECK(sc.active.shadow&&f[4].held==0&&f[5].held==1);
+ CHECK(sun60i_a733_de352_disable_plane(client,&done)==0);
+ CHECK(!sc.active.shadow&&f[5].held==0&&sc.shadow_retire_count==0);
+ CHECK(sun60i_a733_de352_stop(client,&done)==0&&sc.output_stopped);
+ CHECK(sun60i_a733_de352_submit_shadow(client,&frames[0],&done)==0);
+ CHECK(!sc.output_stopped&&sc.active.shadow&&f[0].held==1);
+ CHECK(sun60i_a733_de352_stop(client,&done)==0&&f[0].held==0);
+ reboot_fixture(&sc);
+
+ init(&sc);de352_provider=&sc;CHECK(de352_run(&sc)==0);sc.stage=1;
+ CHECK(sun60i_a733_de352_get_state(1,&state)==0);
+ CHECK(sun60i_a733_de352_acquire(1,&sc,&client)==0);
+ CHECK(sun60i_a733_de352_set_vblank_handler(client,vblank_consumer,&state)==0);
+ for (unsigned i=0;i<3;i++)
+  frames[i]=frame_input(&f[i],state.dmat,0x20000000+(uint64_t)i*0x1000000);
+ irq_script=irqs;irq_samples=2;irq_index=0;
+ vblank_script=observed;vblank_samples=2;vblank_index=0;
+ test_irq=shadow_test_irq;
+ CHECK(sun60i_a733_de352_submit_shadow(client,&frames[0],&done)==0);
+ CHECK(sun60i_a733_de352_submit_shadow(client,&frames[1],&done)==0);
+ CHECK(sc.shadow_retire_count==1&&f[0].held==1&&f[1].held==1);
+ old=done;write_fault=0x8114;
+ CHECK(sun60i_a733_de352_submit_shadow(client,&frames[2],&done)==EIO);
+ CHECK(sc.shadow_retire_count==1&&f[0].held==1&&f[1].held==1&&f[2].held==1);
+ CHECK(memcmp(&done,&old,sizeof(done))==0&&sc.pending.dma->published);
+ CHECK(sun60i_a733_de352_stop(client,&done)==EIO&&f[0].held==1);
+ irq_script=NULL;vblank_script=NULL;test_irq=NULL;blank_line_sequence=0;
+ reboot_fixture(&sc);
+ CHECK(f[0].held==0&&f[1].held==0&&f[2].held==0);
+ vblank_binds=0;bound_fn=NULL;bound_arg=NULL;
+}
+
 static void scanout_checks(void)
 {
  struct sun60i_de352_softc sc;struct sun60i_a733_de352_state state,canary;
@@ -781,7 +1245,43 @@ static void scanout_checks(void)
  CHECK(sun60i_a733_de352_set_vblank_handler(NULL,vblank_consumer,&state)==EINVAL);
  CHECK(sun60i_a733_de352_set_vblank_handler(client,vblank_consumer,NULL)==EINVAL&&vblank_binds==0);
  CHECK(sun60i_a733_de352_set_vblank_handler(client,vblank_consumer,&state)==0);
- CHECK(vblank_binds==1&&bound_fn==vblank_consumer&&bound_arg==&state&&!mutex_owned(&sc.lock));
+ CHECK(vblank_binds==1&&bound_fn==de352_edge_irq&&bound_arg==&sc&&sc.edge.consumer==vblank_consumer&&sc.edge.arg==&state&&!mutex_owned(&sc.lock));
+ {
+  struct de352_edge *edge = &sc.edge;
+  uint64_t before = edge->history.count;
+  bound_fn(bound_arg, 101, NULL);
+  CHECK(edge->history.count == before);
+  edge->ticket = 12;
+  edge->address = de[0x1c1010/4];
+  edge->queue = de[0x8114/4];
+  edge->armed = true;
+  edge->posted_ns = tick;
+  edge->blank_ns = 700000;
+  for (unsigned i=0; i < DE352_EDGE_ROWS + 1; i++)
+   bound_fn(bound_arg, 102+i, NULL);
+  blank_line_error = ENOENT;
+  de352_edge_work(&edge->work, &sc);
+  struct de352_edge_record *row =
+      &edge->history.row[(edge->history.count-1) % DE352_EDGE_ROWS];
+  CHECK(row->sample_age_ns == 0);
+  blank_line_error = 0;
+  blank_line_calls = 0;
+  blank_lines[0] = 4;
+  blank_lines[1] = 3;
+  de352_edge_work(&edge->work, &sc);
+  CHECK(row->sample_age_ns == 0);
+  blank_lines[0] = 3;
+  blank_lines[1] = 4;
+  de352_edge_work(&edge->work, &sc);
+  const struct de352_edge_record *r =
+      &edge->history.row[(edge->history.count-1) % DE352_EDGE_ROWS];
+  CHECK(edge->history.count == before + DE352_EDGE_ROWS + 1);
+  CHECK(r->ticket==12 && r->sequence==102+DE352_EDGE_ROWS && r->matches==7);
+  CHECK(r->first_status==de[0x8104/4] && r->last_status==de[0x8104/4]);
+  de352_edge_disarm(&sc);
+  bound_fn(bound_arg, 240, NULL);
+  CHECK(edge->history.count == before + DE352_EDGE_ROWS + 1);
+ }
  vblank_bind_error=EOPNOTSUPP;
  CHECK(sun60i_a733_de352_set_vblank_handler(client,vblank_consumer,&state)==EOPNOTSUPP);
  vblank_bind_error=0;
@@ -793,9 +1293,19 @@ static void scanout_checks(void)
  input[0].dmat=state.dmat;f[0].error=ENOMEM;
  CHECK(sun60i_a733_de352_submit(client,&input[0],&done)==ENOMEM&&f[0].held==0&&f[0].drops==0&&sc.result==0);
  CHECK(memcmp(&done,&old_done,sizeof(done))==0);f[0].error=0;
+ CHECK(sun60i_a733_de352_observe_current(client,&done)==EBUSY);
+ CHECK(memcmp(&done,&old_done,sizeof(done))==0);
  CHECK(sun60i_a733_de352_submit(client,&input[0],&done)==0);
  CHECK(f[0].held==1&&f[0].drops==0&&sc.active.dma&&sc.pending.dma==NULL);
  CHECK(done.observed_sequence>=4&&done.observed_time_ns>0&&sc.vblank==done.observed_sequence);
+ {
+  struct sun60i_a733_de352_completion later={0};
+  const int prior_posts=posts;
+  CHECK(sun60i_a733_de352_observe_current(client,&later)==0);
+  CHECK(later.observed_sequence>done.observed_sequence&&later.observed_sequence==sc.vblank);
+  CHECK(later.observed_time_ns>done.observed_time_ns&&!later.shadow_fast);
+  CHECK(posts==prior_posts&&f[0].held==1&&f[0].drops==0);
+ }
  CHECK(sun60i_a733_de352_release(client)==EBUSY);
  event_polls++;uint64_t before_sequence=sequence;
  f[1].reenter=true;CHECK(sun60i_a733_de352_submit(client,&input[1],&done)==0);
@@ -1099,6 +1609,58 @@ static void cold_init(struct sun60i_de352_softc *sc) {
  iommu[0x2c/4]=0x3007f;iommu[0x80/4]=3;
  for(unsigned i=0;i<6;i++)iommu[(0x400+i*0x200+0x30)/4]=1;
 }
+static void
+memory_mapping_checks(void)
+{
+	struct sun60i_de352_softc sc;
+	int maps, unmaps, samples;
+
+	for (unsigned int cold = 0; cold <= 1; cold++) {
+		if (cold)
+			cold_init(&sc);
+		else
+			init(&sc);
+		CHECK(de352_run(&sc) == 0 && sc.step == 10);
+		CHECK(!sc.memory_mapped && space_maps == space_unmaps + 1);
+
+		maps = space_maps;
+		unmaps = space_unmaps;
+		samples = memory_calls;
+		CHECK(de352_memory(&sc) == 0);
+		CHECK(sc.memory_mapped && space_maps == maps + 2);
+		CHECK(space_unmaps == unmaps);
+		CHECK(de352_memory(&sc) == 0 && memory_calls == samples + 2);
+		CHECK(space_maps == maps + 2 && space_unmaps == unmaps);
+
+		/* Cached VAs must never be a cached register verdict. */
+		read_fault_region = 3;
+		read_fault_reg = 0x414;
+		CHECK(de352_memory(&sc) == EIO && sc.memory.valid == 1);
+		read_fault_region = 0;
+		if (cold) {
+			read_fault_region = 2;
+			read_fault_reg = de352_cold_reg(CI_TTB);
+			CHECK(de352_memory(&sc) == EIO);
+			CHECK(sc.memory.valid == 3);
+		}
+		CHECK(sc.memory_mapped && space_maps == maps + 2);
+		CHECK(space_unmaps == unmaps);
+		reboot_fixture(&sc);
+	}
+
+	init(&sc);
+	CHECK(de352_run(&sc) == 0 && !sc.memory_mapped);
+	maps = space_maps;
+	unmaps = space_unmaps;
+	memory_map_fault = 3;
+	CHECK(de352_memory(&sc) == ENOMEM && !sc.memory_mapped);
+	CHECK(space_maps == maps + 1 && space_unmaps == unmaps + 1);
+	memory_map_fault = 0;
+	CHECK(de352_memory(&sc) == 0 && sc.memory_mapped);
+	CHECK(space_maps == maps + 3 && space_unmaps == unmaps + 1);
+	reboot_fixture(&sc);
+}
+
 static void cold_checks(void) {
  struct sun60i_de352_softc sc;unsigned count;
  cold_init(&sc);CHECK(de352_run(&sc)==0&&sc.cold_initialized&&sc.guard->published);
@@ -1344,6 +1906,11 @@ submit_trace_timeout(struct sun60i_de352_softc *sc, uint32_t phase)
 
 int main(void)
 {
+ post_phase_checks();
+ irq_ticket_checks();
+ address_flip_checks();
+ steady_field_checks();
+ shadow_checks();
  replacement_wait_checks();
  replacement_irq_checks();
 	replacement_extra_checks();
@@ -1351,6 +1918,7 @@ int main(void)
  guard_checks();
  cold_global_checks();
  cold_checks();
+ memory_mapping_checks();
  cold_reset_checks();
  cold_trace_checks();
  struct sun60i_de352_softc sc;struct fdt_attach_args faa={1,NULL,(void *)(uintptr_t)2};

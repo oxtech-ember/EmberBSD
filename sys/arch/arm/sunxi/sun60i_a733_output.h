@@ -81,12 +81,25 @@ struct sun60i_a733_output_observe_trace {
  * Other failures are retained. There is no detach or retry after a fault.
  */
 struct sun60i_a733_hdmi_phy_trace;
-/*
- * Vblank interrupt callback. It runs in interrupt context with the provider
- * spin lock held, once per counted vblank. It must not sleep or call the
- * dispatch functions. The count starts at zero when the output starts.
- */
 typedef void (*sun60i_a733_vblank_fn)(void *, uint64_t);
+
+/*
+ * The window is borrowed for the duration of the output callback. Each
+ * blank_line call samples TV0 and writes the line only in a valid blank.
+ * The callback runs under the provider interrupt lock once per counted
+ * vblank. It must not sleep, call the dispatcher, or retain the window.
+ */
+struct sun60i_a733_irq_window {
+	void *cookie;
+	bool (*blank_line)(void *, uint32_t *);
+};
+typedef void (*sun60i_a733_output_irq_fn)(void *, uint64_t,
+    const struct sun60i_a733_irq_window *);
+
+struct sun60i_a733_tv0_phase {
+	uint32_t control, debug, gint0, basic4;
+};
+
 struct sun60i_a733_output_ops {
 	int (*get_mode)(void *, const void *, struct sun60i_a733_output_mode *);
 	int (*prepare)(void *, const void *, const struct sun60i_a733_output_mode *);
@@ -104,7 +117,7 @@ struct sun60i_a733_output_ops {
 	 * means that the output has no vblank interrupt. After return, no call
 	 * to a removed callback is in progress.
 	 */
-	int (*set_vblank_handler)(void *, const void *, sun60i_a733_vblank_fn,
+	int (*set_vblank_handler)(void *, const void *, sun60i_a733_output_irq_fn,
 	    void *);
 	/* Optional read-only HPD query. A disconnect is not a provider fault. */
 	int (*detect)(const void *, const void *, bool *);
@@ -117,6 +130,9 @@ struct sun60i_a733_output_ops {
 	    struct sun60i_a733_output_tv0_trace *);
 	/* Optional raw interrupt count. No readiness or register I/O. */
 	int (*sample_vblank_irq)(void *, const void *, uint64_t *);
+	int (*sample_blank_line)(void *, const void *, uint64_t, uint32_t *);
+	int (*sample_tv0_phase)(void *, const void *, uint64_t,
+	    struct sun60i_a733_tv0_phase *);
 	/* Optional wait for a raw count. A deadline also returns the raw count. */
 	int (*wait_vblank_irq)(void *, const void *, uint64_t, uint64_t,
 	    uint64_t *);
@@ -132,6 +148,11 @@ int sun60i_a733_output_stop(int, const void *);
 /* ENOENT reports the sampled sequence but does not validate a new event. */
 int sun60i_a733_output_observed_vblank(int, const void *, uint64_t *);
 int sun60i_a733_output_sample_vblank_irq(int, const void *, uint64_t *);
+/* Read-only hardware phase for this owned, currently delivered TV0 IRQ. */
+int sun60i_a733_output_sample_blank_line(int, const void *, uint64_t,
+    uint32_t *);
+int sun60i_a733_output_sample_tv0_phase(int, const void *, uint64_t,
+    struct sun60i_a733_tv0_phase *);
 int sun60i_a733_output_wait_vblank_irq(int, const void *, uint64_t, uint64_t,
     uint64_t *);
 int sun60i_a733_output_fault(int, const void *, int);
@@ -148,7 +169,7 @@ int sun60i_a733_output_sample(int, const void *,
     struct sun60i_a733_output_sample *);
 /* After start. EOPNOTSUPP means polled vblank observation only. */
 int sun60i_a733_output_set_vblank_handler(int, const void *,
-    sun60i_a733_vblank_fn, void *);
+    sun60i_a733_output_irq_fn, void *);
 
 /* After prepare. No writes or sticky faults; failure leaves out unchanged. */
 int sun60i_a733_output_detect(int, const void *, bool *);
