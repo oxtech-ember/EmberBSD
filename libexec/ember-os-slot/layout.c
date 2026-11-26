@@ -143,9 +143,14 @@ slot_receipt(const struct slot *s, int index, const char *sha)
 static void
 wedge(const char *path, struct dkwedge_info *w)
 {
-	int fd = open(path, O_RDONLY | O_CLOEXEC);
+	char raw[MAXPATHLEN];
+	int fd;
+
+	if (getdiskrawname(raw, sizeof(raw), path) == NULL)
+		err(1, "raw wedge for %s", path);
+	fd = open(raw, O_RDONLY | O_CLOEXEC);
 	if (fd == -1 || ioctl(fd, DIOCGWEDGEINFO, w) == -1)
-		err(1, "get wedge %s", path);
+		err(1, "get wedge %s", raw);
 	close(fd);
 }
 
