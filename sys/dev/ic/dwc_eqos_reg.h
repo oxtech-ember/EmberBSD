@@ -34,6 +34,7 @@
 #define _DWC_EQOS_REG_H
 
 #define	GMAC_MAC_CONFIGURATION			0x0000
+#define	 GMAC_MAC_CONFIGURATION_IPC		__BIT(27)
 #define	 GMAC_MAC_CONFIGURATION_CST		(1U << 21)
 #define	 GMAC_MAC_CONFIGURATION_ACS		(1U << 20)
 #define	 GMAC_MAC_CONFIGURATION_BE		(1U << 18)
@@ -93,6 +94,8 @@
 #define	 GMAC_MAC_VERSION_SNPSVER_MASK		0xFFU
 #define	GMAC_MAC_DEBUG				0x0114
 #define	GMAC_MAC_HW_FEATURE(n)			(0x011C + 0x4 * (n))
+#define	 GMAC_MAC_HW_FEATURE0_TXCOE		__BIT(14)
+#define	 GMAC_MAC_HW_FEATURE0_RXCOE		__BIT(16)
 #define	 GMAC_MAC_HW_FEATURE1_TXFIFOSIZE	__BITS(10,6)
 #define	 GMAC_MAC_HW_FEATURE1_RXFIFOSIZE	__BITS(4,0)
 #define	 GMAC_MAC_HW_FEATURE1_ADDR64_SHIFT	14
@@ -297,6 +300,8 @@ struct eqos_dma_desc {
 #define	EQOS_TDES3_TX_OWN			(1U << 31)	/* TX */
 #define	EQOS_TDES3_TX_FD			(1U << 29)	/* TX */
 #define	EQOS_TDES3_TX_LD			(1U << 28)	/* TX */
+#define	EQOS_TDES3_TX_CIC_IP			__BIT(16)
+#define	EQOS_TDES3_TX_CIC_PAYLOAD		__BIT(17)
 #define	EQOS_TDES3_TX_DE			(1U << 23)	/* TX (WB) */
 #define	EQOS_TDES3_TX_ES			(1U << 15)	/* TX (WB) */
 #define	EQOS_TDES3_RX_OWN			(1U << 31)	/* RX */
@@ -305,6 +310,7 @@ struct eqos_dma_desc {
 #define	EQOS_TDES3_RX_CTXT			(1U << 30)	/* RX (WB) */
 #define	EQOS_TDES3_RX_FD			(1U << 29)	/* RX (WB) */
 #define	EQOS_TDES3_RX_LD			(1U << 28)	/* RX (WB) */
+#define	EQOS_TDES3_RX_RS1V			__BIT(26)
 #define	EQOS_TDES3_RX_CE			(1U << 24)	/* RX (WB) */
 #define	EQOS_TDES3_RX_GP			(1U << 23)	/* RX (WB) */
 #define	EQOS_TDES3_RX_RWT			(1U << 22)	/* RX (WB) */
@@ -314,5 +320,15 @@ struct eqos_dma_desc {
 #define	EQOS_TDES3_RX_ES			(1U << 15)	/* RX (WB) */
 #define	EQOS_TDES3_RX_LENGTH_MASK		0x7FFFU		/* RX */
 } __aligned (64);
+
+/* RX normal descriptor word 1, write-back format. */
+#define EQOS_RDES1_PT_MASK	__BITS(2, 0)
+#define EQOS_RDES1_PT_UDP	1
+#define EQOS_RDES1_PT_TCP	2
+#define EQOS_RDES1_IPERR	__BIT(3)
+#define EQOS_RDES1_IPV4		__BIT(4)
+#define EQOS_RDES1_IPV6		__BIT(5)
+#define EQOS_RDES1_BYPASS	__BIT(6)
+#define EQOS_RDES1_PAYERR	__BIT(7)
 
 #endif /* !_DWC_EQOS_REG_H */

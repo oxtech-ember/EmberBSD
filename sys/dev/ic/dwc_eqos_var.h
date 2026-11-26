@@ -80,7 +80,10 @@ struct eqos_softc {
 	struct eqos_ring	sc_tx;
 	struct eqos_ring	sc_rx;
 
+	bool			sc_rx_csum_active;
+	bool			sc_rx_csum_posted[EQOS_DMA_DESC_COUNT];
 	int			sc_tx_ioc_interval;
+	bool			sc_udp_tx_canary;
 	int			sc_rx_riwt;
 	int			sc_rx_riwt_programmed;
 	unsigned int		sc_rx_moderated_count;
@@ -96,6 +99,7 @@ struct eqos_softc {
 	uint32_t		sc_debug;
 
 	/* Indents indicate groups within evcnt. */
+	struct evcnt		sc_ev_udp_tx_cic;
 	struct evcnt		sc_ev_rx_riwt_frames;
 	struct evcnt		sc_ev_intr;
 	struct evcnt		 sc_ev_rxintr;
