@@ -105,11 +105,18 @@ every primary from 169 to 177; Linux treats such odd values as plain
 `ieee80211_vht_assoc_candidate(local, ies, len, chan)` accepts only a
 qualified local profile: one spatial stream with MCS0-7 or MCS0-9, or two
 streams with MCS0-9; equal RX and TX maps; and no capability bits other
-than RX LDPC and short GI for 80 MHz. It also needs a 73-byte or
+than RX LDPC, short GI for 80 MHz and the maximum A-MPDU length exponent.
+The provider selects the exponent, as it selects the HT A-MPDU factor
+and spacing of its HT20 profile. It also needs a 73-byte or
 smaller window, NSS1 in both intersections with the peer's maps (the
 negotiated maps; a peer supporting less than the local maximum still
 qualifies), HT 40 MHz support with MCS0-7, and a window that derives
 exactly `chan`.
+
+When `ieee80211_ht20_response()` commits VHT, the TX map is the
+intersection of the local TX map and the peer's RX map. If the AP's HT
+Capabilities do not disable SM power save (SMPS field not 3), the TX map
+keeps NSS1 only, as the HT TX set keeps MCS0-7.
 
 ### Deviation: HT protection mode 3
 

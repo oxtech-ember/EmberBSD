@@ -254,8 +254,8 @@ ieee80211_vht_channel_derive(const uint8_t *ies, size_t len,
 
 /*
  * Validate the qualified local profile (one stream with MCS0-7 or MCS0-9,
- * or two streams with MCS0-9; equal RX and TX maps; at most the RX LDPC
- * and SGI80 capability bits) against one
+ * or two streams with MCS0-9; equal RX and TX maps; at most the RX LDPC,
+ * SGI80 and maximum A-MPDU length exponent capability bits) against one
  * AP-derived operating channel. Each negotiated direction is the
  * intersection with the peer and must keep NSS1. Raw scan observations
  * are rechecked here; they do not constitute negotiated state.
@@ -278,7 +278,7 @@ ieee80211_vht_assoc_candidate(const struct ieee80211_vht_cap *local,
 	const uint8_t *htcap, *htop;
 
 	if (local == NULL || chan == NULL || ies == NULL || len == 0 ||
-	    len > 73 || (local->info & ~0x30U) != 0 ||
+	    len > 73 || (local->info & ~0x03800030U) != 0 ||
 	    local->rx_map != local->tx_map ||
 	    (local->rx_map != 0xfffc && local->rx_map != 0xfffe &&
 	     local->rx_map != 0xfffa) ||

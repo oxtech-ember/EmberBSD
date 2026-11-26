@@ -46,7 +46,7 @@ ht20_local(struct ieee80211com *ic, struct ieee80211_ht20_profile *p)
 	return ieee80211_rxba_ready(ic) &&
 	    ic->ic_ht20_admit != NULL && ic->ic_ht20_admit(ic, p) == 0 &&
 	    p->generation != 0 && p->ready == IEEE80211_HT20_READY_ALL &&
-	    (p->ampdu & 0xe3) == 0 &&
+	    (p->ampdu & 0xe0) == 0 &&
 	    (p->rx_mcs & 0xff) == 0xff && p->rx_mcs == p->tx_mcs;
 }
 
@@ -109,7 +109,7 @@ ieee80211_ht20_write(uint8_t *p, const struct ieee80211_ht20_profile *profile)
 	p[0] = 45;
 	p[1] = 26;
 	p[2] = 0x0c; /* SMPS disabled, not static; mixed format/20MHz/long GI. */
-	p[4] = profile->ampdu; /* Minimum RX A-MPDU8191, qualified spacing. */
+	p[4] = profile->ampdu; /* Qualified RX A-MPDU factor and spacing. */
 	p[5] = profile->rx_mcs;
 	p[6] = profile->rx_mcs >> 8;
 	p[17] = 1; /* MCS-set byte12: TX defined, equal to RX (validated). */
@@ -350,6 +350,9 @@ ieee80211_ht20_response(struct ieee80211com *ic, struct ieee80211_node *ni,
 		candidate.vht.operation = vht.operation;
 		candidate.vht.maps.tx_map = ieee80211_vht_mcs_intersect(
 		    local_vht.tx_map, vht.cap.rx_map);
+		/* As for HT-MCS: one stream unless the AP disabled SMPS. */
+		if (smps != 3)
+			candidate.vht.maps.tx_map |= 0xfffc;
 		candidate.vht.maps.rx_map = ieee80211_vht_mcs_intersect(
 		    local_vht.rx_map, vht.cap.tx_map);
 		candidate.vht.valid = 1;

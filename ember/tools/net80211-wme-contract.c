@@ -33,6 +33,7 @@
 #define IEEE80211_CHAN_MAX 255
 #define IEEE80211_FH_CHAN(set, pat) 1
 #define IEEE80211_FEXT_PROBECHAN 1
+#define IEEE80211_FEXT_STA_LEFT 0x10
 #define isclr(a, n) (((a)[(n) / 8] & (1U << ((n) % 8))) == 0)
 #define IEEE80211_DISCARD(...) ((void)0)
 /* This fixture covers providers that have not opted into native SAE. */

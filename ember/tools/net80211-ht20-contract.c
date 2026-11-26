@@ -465,7 +465,7 @@ test_local_admission(void)
 		case 10: test_ic.ic_flags|=IEEE80211_F_PRIVACY;
 			test_node.ni_rsn.rsn_ucastcipher=IEEE80211_CIPHER_WEP; break;
 		case 11: test_ic.ic_state=IEEE80211_S_AUTH; break;
-		case 12: admitted.ampdu=3; break; /* Larger RXaggregate not admitted. */
+		case 12: admitted.ampdu=0x20; break; /* Reserved bits not admitted. */
 		}
 		CHECK(request(IEEE80211_FC0_SUBTYPE_ASSOC_REQ)==0);
 		CHECK(ht_in_request()==NULL && !test_node.ni_ht20.offered);
@@ -1075,7 +1075,7 @@ test_profile_numeric_bounds(void)
 		ht_setup(); admitted.ampdu=(uint8_t)ampdu;
 		CHECK(request(IEEE80211_FC0_SUBTYPE_ASSOC_REQ)==0);
 		uint8_t *p=ht_in_request();
-		CHECK((p!=NULL)==((ampdu&0xe3)==0));
+		CHECK((p!=NULL)==((ampdu&0xe0)==0));
 		if (p) CHECK(p[4]==ampdu && test_node.ni_ht20.offered);
 		release_capture(); CHECK(node_refs==1);
 	}

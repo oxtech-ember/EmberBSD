@@ -23,7 +23,7 @@ struct ieee80211_frame;
 struct ieee80211_ht20_profile {
 	uint32_t generation;
 	uint16_t rx_mcs, tx_mcs;
-	uint8_t ready, ampdu; /* Factor0, provider-qualified spacing0..7. */
+	uint8_t ready, ampdu; /* Provider-qualified factor0..3, spacing0..7. */
 };
 struct ieee80211_ht20_vht {
 	struct ieee80211_vht_cap local, peer;

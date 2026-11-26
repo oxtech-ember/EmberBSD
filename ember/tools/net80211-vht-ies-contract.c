@@ -494,8 +494,9 @@ assoc_candidate(void)
 		}
 		CHECK(ieee80211_vht_assoc_candidate(&other, p, n, &c) == want);
 	}
-	/* The qualified receive capabilities: RX LDPC (bit4) and SGI80
-	 * (bit5). Every other capability bit stays unqualified. */
+	/* The qualified receive capabilities: RX LDPC (bit4), SGI80 (bit5)
+	 * and the maximum A-MPDU length exponent (bits 23-25). Every other
+	 * capability bit stays unqualified. */
 	for (unsigned bit = 0; bit < 32; bit++) {
 		struct ieee80211_vht_cap caps = {
 			.info = 1U << bit, .rx_map = 0xfffe, .rx_highest = 0,
@@ -505,7 +506,7 @@ assoc_candidate(void)
 		n = phy_window(p, 64, 3, 1, 58, 0);
 		CHECK(ieee80211_vht_channel_derive(p, n, 64, &c) == 0);
 		CHECK(ieee80211_vht_assoc_candidate(&caps, p, n, &c) ==
-		    (bit == 4 || bit == 5 ? 0 : -1));
+		    (bit == 4 || bit == 5 || (bit >= 23 && bit <= 25) ? 0 : -1));
 		caps.info = 0x30;
 		CHECK(ieee80211_vht_assoc_candidate(&caps, p, n, &c) == 0);
 	}
