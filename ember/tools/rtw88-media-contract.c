@@ -63,6 +63,8 @@ struct ieee80211com {
  enum ieee80211_opmode ic_opmode;
  enum ieee80211_phytype ic_phytype;
  unsigned ic_modecaps,ic_caps,ic_flags;
+ uint32_t ic_flags_ext;
+ int ic_mgt_timer;
  unsigned ic_nonerpsta, ic_longslotsta;
  void (*ic_updateslot)(struct ifnet *);
  enum ieee80211_state ic_state;
