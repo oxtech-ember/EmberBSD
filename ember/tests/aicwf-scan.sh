@@ -24,6 +24,7 @@ enum ieee80211_state {
 };
 enum ieee80211_opmode { IEEE80211_M_STA };
 #define IEEE80211_F_SCAN 1
+#define IEEE80211_FEXT_STA_LEFT 0x10
 #define AICWF_SCAN_INTERVAL_MS 3000
 #define IS_UP(ic) ((ic)->up)
 struct ieee80211_assoc_event {
@@ -37,6 +38,8 @@ struct ieee80211com {
     enum ieee80211_state ic_state;
     enum ieee80211_opmode ic_opmode;
     int ic_flags, up;
+    unsigned ic_flags_ext;
+    int ic_mgt_timer;
     u_int8_t ic_chan_active[32];
     struct ieee80211_node *ic_bss;
 };
