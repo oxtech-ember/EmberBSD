@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: BSD-2-Clause
 """Run the actual checksum classifier with synthetic packet/status vectors."""
 from pathlib import Path
+import os
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -149,5 +151,6 @@ with tempfile.TemporaryDirectory() as work:
     path = Path(work) / "test.c"
     exe = Path(work) / "test"
     path.write_text(preamble + regs + "\n" + c[start:end] + tests)
-    subprocess.run(["cc", "-Wall", "-Wextra", "-Werror", str(path), "-o", str(exe)], check=True)
+    subprocess.run([*shlex.split(os.environ.get("CC", "cc")),
+                    *shlex.split(os.environ.get("CFLAGS", "")), "-Wall", "-Wextra", "-Werror", str(path), "-o", str(exe)], check=True)
     subprocess.run([str(exe)], check=True)

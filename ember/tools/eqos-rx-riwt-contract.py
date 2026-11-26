@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: BSD-2-Clause
 """Exercise the actual RX descriptor repost and RIWT drain logic."""
 from pathlib import Path
+import os
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -62,5 +64,6 @@ with tempfile.TemporaryDirectory() as work:
     path = Path(work) / "test.c"
     exe = Path(work) / "test"
     path.write_text(mock + s[start:end] + cases)
-    subprocess.run(["cc", "-Wall", "-Wextra", "-Werror", str(path), "-o", str(exe)], check=True)
+    subprocess.run([*shlex.split(os.environ.get("CC", "cc")),
+                    *shlex.split(os.environ.get("CFLAGS", "")), "-Wall", "-Wextra", "-Werror", str(path), "-o", str(exe)], check=True)
     subprocess.run([str(exe)], check=True)

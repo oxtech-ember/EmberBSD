@@ -2,6 +2,8 @@
 """Execute the real TX batch publisher against a small mock DMA ring."""
 from pathlib import Path
 import re
+import os
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -89,6 +91,7 @@ with tempfile.TemporaryDirectory() as work:
     c = Path(work) / "test.c"
     exe = Path(work) / "test"
     c.write_text(preamble + body + main)
-    subprocess.run(["cc", "-Wall", "-Wextra", "-Wno-unused-but-set-variable",
+    subprocess.run([*shlex.split(os.environ.get("CC", "cc")),
+                    *shlex.split(os.environ.get("CFLAGS", "")), "-Wall", "-Wextra", "-Wno-unused-but-set-variable",
                     "-Wno-unused-variable", "-Werror", str(c), "-o", str(exe)], check=True)
     subprocess.run([str(exe)], check=True)
