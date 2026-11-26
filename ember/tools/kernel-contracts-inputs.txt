@@ -96,6 +96,12 @@ ember/tools/a733-accelerator-clock-contract.sh sys/external/gpl2/dts/dist/includ
 ember/tools/a733-accelerator-clock-contract.sh sys/external/gpl2/dts/dist/include/dt-bindings/reset/
 ember/tools/a733-display-observer-contract.sh ember/tools/a733-display-observer-contract.c
 ember/tools/a733-display-observer-contract.sh sys/arch/arm/sunxi/
+ember/tools/a733-eqos-affinity-contract.py sys/arch/arm/cortex/gicv3.c
+ember/tools/a733-eqos-affinity-contract.py sys/arch/arm/fdt/arm_fdt.c
+ember/tools/a733-eqos-affinity-contract.py sys/arch/arm/fdt/arm_fdtvar.h
+ember/tools/a733-eqos-affinity-contract.py sys/arch/arm/fdt/pmu_fdt.c
+ember/tools/a733-eqos-affinity-contract.py sys/arch/arm/sunxi/sun60i_a733_eqos.c
+ember/tools/a733-eqos-affinity-contract.py sys/dev/fdt/fdt_intr.c
 ember/tools/a733-gpu-fwabi-contract.sh ember/tools/a733-gpu-fwabi-contract.c
 ember/tools/a733-gpu-fwabi-contract.sh sys/dev/powervr/fwif/
 ember/tools/a733-gpu-fwboot-contract.sh ember/tools/a733-gpu-fwboot-contract.c
@@ -172,6 +178,8 @@ ember/tools/a733-power-contract.sh ember/tools/a733-display-power-fixture.h
 ember/tools/a733-power-contract.sh ember/tools/a733-power-fixture.c
 ember/tools/a733-power-contract.sh sys/arch/arm/sunxi/
 ember/tools/a733-power-contract.sh sys/dev/fdt/
+ember/tools/a733-vblank-history-contract.py sys/arch/arm/sunxi/sun60i_a733_drm.h
+ember/tools/a733-vblank-history-contract.py sys/arch/arm/sunxi/sun60i_a733_drm_atomic.c
 ember/tools/bcm2712-display-contract.sh ember/tools/bcm2712-display-contract.c
 ember/tools/bcm2712-display-contract.sh sys/arch/arm/broadcom/
 ember/tools/bcm2712-display-contract.sh sys/arch/evbarm/rpi/
@@ -411,6 +419,15 @@ ember/tools/drm-syncobj-wait-contract.sh sys/external/bsd/drm2/dist/drm/
 ember/tools/efidrm-commit-tail-contract.py ember/tools/efidrm-commit-tail-contract.c
 ember/tools/efidrm-commit-tail-contract.py sys/external/bsd/drm2/dist/drm/
 ember/tools/efidrm-commit-tail-contract.py sys/external/bsd/drm2/efidrm/
+ember/tools/eqos-ipv4-checksum-contract.py sys/dev/ic/dwc_eqos.c
+ember/tools/eqos-ipv4-checksum-contract.py sys/dev/ic/dwc_eqos_reg.h
+ember/tools/eqos-ipv4-checksum-contract.py sys/dev/ic/dwc_eqos_var.h
+ember/tools/eqos-rx-riwt-contract.py sys/dev/ic/dwc_eqos.c
+ember/tools/eqos-rx-riwt-contract.py sys/dev/ic/dwc_eqos_reg.h
+ember/tools/eqos-rx-riwt-contract.py sys/dev/ic/dwc_eqos_var.h
+ember/tools/eqos-tx-ioc-contract.py sys/dev/ic/dwc_eqos.c
+ember/tools/eqos-tx-ioc-contract.py sys/dev/ic/dwc_eqos_reg.h
+ember/tools/eqos-tx-ioc-contract.py sys/dev/ic/dwc_eqos_var.h
 ember/tools/i915-elsq-desc-contract.sh ember/tools/i915-elsq-desc-contract.c
 ember/tools/i915-elsq-desc-contract.sh sys/external/bsd/drm2/dist/drm/i915/gt/
 ember/tools/i915-engine-uabi-contract.py sys/external/bsd/drm2/dist/drm/i915/gem/
