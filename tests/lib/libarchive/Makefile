@@ -14,6 +14,8 @@ TESTS_SH+=	t_libarchive
 
 CPPFLAGS+=-I${LIBARCHIVE}/test_utils -I${LIBARCHIVE}/libarchive -I.
 CPPFLAGS+=-I${LIBARCHIVE}/libarchive/test -I${NETBSDSRCDIR}/external/bsd/libarchive/include
+# The common libarchive source selects the NetBSD configuration by name.
+CPPFLAGS+=-DPLATFORM_CONFIG_H=\"config_netbsd.h\"
 
 .PATH: ${LIBARCHIVE}/libarchive/test ${LIBARCHIVE}/test_utils
 
