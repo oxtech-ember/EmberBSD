@@ -1,7 +1,6 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
 /* Copyright (c) 2026 EmberBSD contributors. */
 /* Actual file handlers; model only DRM, allocation, locks and VM boundaries. */
-#define _POSIX_C_SOURCE 200809L
 #include <errno.h>
 #include <limits.h>
 #include <pthread.h>
