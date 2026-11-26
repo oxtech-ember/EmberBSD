@@ -35,10 +35,13 @@ struct pvr_fwboot_result { int unused; };
 struct clk { int id; };
 struct fdtbus_reset { int unused; };
 struct fdtbus_regulator { int unused; };
+struct pvr_job_irq { bool active; };
+struct pvr_job_irq_fdt { struct pvr_job_irq irq; };
+#define PVR_JOB_IRQ_GE8300 0
 struct a133_gpu_softc {
 	struct a133_gpu_diagnostics diag;
-    int phandle; void *dmat, *bst, *dev, *irq_cookie, *irq_soft;
-    int irq_lock, irq_fault;
+    int phandle; void *dmat, *bst, *dev;
+    struct pvr_job_irq_fdt job_irq;
     bus_space_handle_t bsh, dfs_bsh;
     bus_addr_t address, dfs_address;
     bus_size_t size, dfs_size;
@@ -190,22 +193,38 @@ static int pvr_fwinfo_feature(const struct pvr_fwinfo *i,int feature,uint64_t *v
 static int pvr_fwmem_interface(struct pvr_fwmem *m,uint64_t hz,uint32_t clusters,uint32_t slc) {
     CHECK(m == &memory && hz == 472500000 && clusters == 1 && slc == 64); return 0;
 }
-#define SOFTINT_CLOCK 1
-#define SOFTINT_MPSAFE 2
-#define IPL_VM 1
-#define FDT_INTR_MPSAFE 1
-static void mutex_enter(int *m) { (void)m; }
-static void mutex_exit(int *m) { (void)m; }
-static int a133_gpu_interrupt(void *v) { (void)v; return 0; }
-static void a133_gpu_irq_soft(void *v) { (void)v; }
-static void *softint_establish(int f, void (*cb)(void *), void *v) { (void)f;(void)cb;return v; }
-static void softint_disestablish(void *v) { (void)v; }
-static const char *device_xname(void *v) { (void)v;return "fake"; }
-static void *fdtbus_intr_establish_xname(int n,int i,int l,int f,int (*cb)(void *),void *v,const char *s)
-{ (void)n;(void)i;(void)l;(void)f;(void)cb;(void)s;return v; }
+static int irq_start_calls, irq_stop_calls, irq_start_error, boot_error;
+static struct pvr_job_irq *active_irq;
+
+static int
+pvr_job_irq_fdt_start(struct pvr_job_irq_fdt *job, int node, void *tag,
+    bus_space_handle_t handle, int profile)
+{
+    (void)tag;
+    CHECK(node == 3 && handle == 1 && profile == PVR_JOB_IRQ_GE8300);
+    CHECK(!job->irq.active);
+    irq_start_calls++;
+    active_irq = &job->irq;
+    active_irq->active = irq_start_error == 0;
+    return irq_start_error;
+}
+
+static void
+pvr_job_irq_stop(struct pvr_job_irq *irq)
+{
+    CHECK(irq == active_irq);
+    irq_stop_calls++;
+    irq->active = false;
+}
+
 static int pvr_fwboot(int profile,void *t,bus_space_handle_t h,struct pvr_fwmem *m,
     struct pvr_fwboot_result *r) {
-    (void)t;(void)r;(void)reserve_form;CHECK(profile == 1 && h == 1 && m == &memory);boot_calls++;return 0;
+    (void)t; (void)r; (void)reserve_form;
+    CHECK(profile == PVR_FW_PROFILE_GE8300 && h == 1 && m == &memory);
+    CHECK(active_irq != NULL && active_irq->active == (irq_start_error == 0));
+    CHECK(irq_start_calls == boot_calls + 1);
+    boot_calls++;
+    return boot_error;
 }
 static int pvr_ge8300_fwinfo_parse(const void *p,size_t n,uint64_t b,struct pvr_fwinfo *i) {
     (void)p;(void)n;(void)b;(void)i;return bad_stage == 11 ? EOPNOTSUPP : 0;
@@ -323,8 +342,20 @@ int main(void) {
     CHECK(sc.firmware == NULL && sc.firmware_size == 0);
     bad_stage=5;
     CHECK(a133_gpu_start(&sc) == EBUSY && boot_calls == 0);
+    CHECK(irq_start_calls == 0 && irq_stop_calls == 0);
     bad_stage=0;
+    irq_start_error = ENXIO;
     CHECK(a133_gpu_start(&sc) == 0 && boot_calls == 1);
+    CHECK(irq_start_calls == 1 && irq_stop_calls == 0 && !sc.job_irq.irq.active);
+    boot_error = EIO;
+    CHECK(a133_gpu_start(&sc) == EIO && boot_calls == 2);
+    CHECK(irq_start_calls == 2 && irq_stop_calls == 1 && !sc.job_irq.irq.active);
+    irq_start_error = 0;
+    CHECK(a133_gpu_start(&sc) == EIO && boot_calls == 3);
+    CHECK(irq_start_calls == 3 && irq_stop_calls == 2 && !sc.job_irq.irq.active);
+    boot_error = 0;
+    CHECK(a133_gpu_start(&sc) == 0 && boot_calls == 4);
+    CHECK(irq_start_calls == 4 && irq_stop_calls == 2 && sc.job_irq.irq.active);
     hardware=0;
     a133_gpu_preflight_release(&sc);
     CHECK(resources==0 && mapped==0 && opened==0 && hardware==0 && frees > 0);

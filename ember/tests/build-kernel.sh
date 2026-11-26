@@ -74,7 +74,7 @@ mkdir -p "$work/src/sys/external/gpl2/dts/dist/arch/arm64/boot/dts/allwinner"
 : > "$work/src/sys/external/gpl2/dts/dist/arch/arm64/boot/dts/allwinner/sun50i-a133-ys-m33.dts"
 # Model only dispatcher arguments and exit status. These fixtures do not
 # execute A733, GPU, Ruby, CEMAC, or Wi-Fi production-code contracts.
-for contract in a733-accelerator-clock a733-power a733-display-observer a733-gpu-identification \
+for contract in a133-gpu-preflight a733-accelerator-clock a733-power a733-display-observer a733-gpu-identification \
     a733-gpu-fwinfo a733-gpu-fwimage a733-gpu-mips a733-gpu-fwabi \
     a733-gpu-fwmem a733-gpu-fwinit a733-gpu-fwstart a733-gpu-fwboot \
     a733-gpu-fwprobe a733-gpu-fwcompute a733-gpu-fwfile a733-gpu-mmu \
@@ -580,7 +580,8 @@ export RUBY="$work/bin/ruby"
 export CC=/target/compiler CXX=/target/compiler-cxx CFLAGS=-Dwrong_target CXXFLAGS=-Dwrong_target LDFLAGS=-Lwrong-target
 count_contracts() {
     test "$(grep -c '^contract ' "$TEST_LOG")" -eq "$1"
-    test "$(grep -c '^a733-contract ' "$TEST_LOG")" -eq 25
+    test "$(grep -c '^a733-contract ' "$TEST_LOG")" -eq 26
+    grep -q '^a733-contract a133-gpu-preflight-contract.sh ' "$TEST_LOG"
     test "$(grep -c '^gpu-contract ' "$TEST_LOG")" -eq 42
     test "$(grep -c '^ruby-contract ' "$TEST_LOG")" -eq 15
     test "$(grep -c '^network-contract ' "$TEST_LOG")" -eq 9
@@ -622,7 +623,7 @@ grep -q 'EMBER_KERNEL_OBJDIR=.*/obj/kernels/EMBER64' "$TEST_LOG"
 grep -q 'cpp .*/tools/bin/target-cpp ' "$TEST_LOG"
 grep -q 'dtc .*/tools/bin/nbdtc ' "$TEST_LOG"
 ! grep -q native-make "$TEST_LOG"
-check_contract_counts 16
+check_contract_counts 21
 # A previous invocation's generated bindings may select older flag arguments,
 # and its routing may come from an older OS native-tool contract.
 # Only these caller-owned routing directories are refreshed; objects stay reusable.
@@ -704,7 +705,7 @@ test "$(cat "$TEST_OUT/obj/kernels/EMBER64/vers.o")" = new-source-id
 test "$(cat "$TEST_OUT/obj/kernels/EMBER64/keep.o")" = keep-object
 test "$(cat "$TEST_OUT/obj/kernels/OTHER/vers.c")" = other-source-id
 test "$(cat "$TEST_OUT/obj/kernels/OTHER/vers.o")" = other-object-id
-check_contract_counts 16
+check_contract_counts 21
 # A firmware-dependent contract is pending by default, never silently passed.
 ! grep -q '^pvr-query-contract ' "$TEST_LOG"
 grep -q 'PowerVR metadata query contract pending:' "$TEST_OUT/contracts.log"
@@ -739,7 +740,7 @@ if (unset MKREPRO_TIMESTAMP; exec sh "$work/src/ember/build-kernel.sh" "$work/no
     echo 'accepted a kernel build without a reproducible timestamp' >&2; exit 1
 fi
 grep -q 'set MKREPRO_TIMESTAMP or build from a Git checkout' "$work/run.log"
-check_contract_counts 16
+check_contract_counts 21
 # A selected zlib source reaches build.sh as make data.
 : > "$TEST_LOG"
 TEST_ZLIB=yes EMBER_ZLIB_SOURCE="$work/zlib" sh "$work/src/ember/build-kernel.sh" "$TEST_OUT" > "$work/run.log" 2>&1
@@ -812,7 +813,7 @@ for failure in tools module cpp dtb diagnostic-dtb graphics-dtb contract publish
 done
 echo 'PASS: build failures clear outputs'
 sh "$work/src/ember/build-kernel.sh" "$TEST_OUT" > "$work/run.log" 2>&1
-for failure in $root_argument_failures contract a733-contract \
+for failure in $root_argument_failures contract a733-contract a133-gpu-preflight-contract.sh \
     a733-gpu-vm-contract.sh a733-gpu-fwcompute-vm-contract.sh \
     a733-gpu-fwheap-observe-contract.sh a733-gpu-fwbridge-contract.sh \
     a733-gpu-fwservice-contract.sh pvr-exec-contract.sh \
@@ -829,6 +830,10 @@ for failure in $root_argument_failures contract a733-contract \
     test -s "$TEST_OUT/netbsd-EMBER64"
     test ! -e "$TEST_OUT/.build-lock"
     case "$failure" in
+    a133-gpu-preflight-contract.sh)
+        grep -Fq "injected contract failure: $failure" "$TEST_OUT/contracts.log"
+        ! grep -q '^gpu-contract ' "$TEST_LOG"
+        ;;
     a733-contract|a733-gpu-vm-contract.sh)
         grep -Fq 'injected contract failure: a733-' "$TEST_OUT/contracts.log"
         ! grep -q '^gpu-contract ' "$TEST_LOG"
@@ -890,14 +895,14 @@ grep -q 'EXTERNAL_TOOLCHAIN=/cross/gcc16' "$TEST_LOG"
 grep -q ' -c gcc ' "$TEST_LOG"
 grep -q 'TOOLCHAIN_MISSING=yes' "$TEST_LOG"
 ! grep -q native-make "$TEST_LOG"
-check_contract_counts 20 NetBSD
+check_contract_counts 25 NetBSD
 export TEST_OUT="$work/native"
 : > "$TEST_LOG"
 TEST_HOST=NetBSD EMBER_BUILD_MODE=native sh "$work/src/ember/build-kernel.sh" "$TEST_OUT" > "$work/run.log" 2>&1
 ! grep -q native-make "$TEST_LOG"
 grep -q build.sh "$TEST_LOG"
 test -s "$TEST_OUT/bcm2712btcom.kmod"
-check_contract_counts 20 NetBSD
+check_contract_counts 25 NetBSD
 if EMBER_BUILD_MODE=native sh "$work/src/ember/build-kernel.sh" "$work/wrong-host" > "$work/run.log" 2>&1; then
     echo 'accepted native tools on Darwin' >&2; exit 1
 fi
@@ -1050,7 +1055,7 @@ NETBSD2_PYTHON=/outside/bin/python3 PVR_QUERY_FIRMWARE="$work/pinned firmware" E
     sh "$work/src/ember/check-kernel.sh" "$TEST_OUT" > "$work/run.log" 2>&1
 grep -q '^native-check gcc sh ' "$TEST_LOG"
 grep -q '^pvr-query-contract ' "$TEST_LOG"
-count_contracts 16
+count_contracts 21
 EMBER_NATIVE_ASAN_RESOURCE_DIR="$work/compiler rt/lib/clang/23" \
     sh "$work/src/ember/check-kernel.sh" "$TEST_OUT" > "$work/run.log" 2>&1
 if EMBER_NATIVE_ASAN_RESOURCE_DIR=relative \
@@ -1096,7 +1101,7 @@ test -d "$work/busy/.build-lock"
 export TEST_OUT="$work/parallel"
 : > "$TEST_LOG"
 EMBER_CONTRACT_JOBS=4 sh "$work/src/ember/check-kernel.sh" "$TEST_OUT" > "$work/run.log" 2>&1
-count_contracts 16
+count_contracts 21
 : > "$TEST_LOG"
 if FAIL_AT=a733-power-contract.sh EMBER_CONTRACT_JOBS=4 sh "$work/src/ember/check-kernel.sh" "$TEST_OUT" > "$work/run.log" 2>&1; then
     echo 'accepted a failed parallel contract' >&2; exit 1
@@ -1158,7 +1163,7 @@ grep -q '^a733-contract a733-power-contract.sh' "$TEST_LOG"
 printf '# changed\n' >> "$work/src/ember/tools/kernel-contracts.sh"
 : > "$TEST_LOG"
 sh "$work/src/ember/check-kernel.sh" "$TEST_OUT" HEAD > "$work/run.log" 2>&1
-count_contracts 16
+count_contracts 21
 # --outputs prints the kernel files of a target and builds nothing.
 test "$(sh "$work/src/ember/build-kernel.sh" --outputs)" = 'netbsd-EMBER64
 netbsd-EMBER64.img'
