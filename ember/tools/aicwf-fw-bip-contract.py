@@ -77,7 +77,8 @@ def main():
             continue
         argv = [args.cc, '-std=c11', '-Wall', '-Wextra', '-Werror']
         argv += shlex.split(args.cflags)
-        argv += ['-I' + str(root / 'sys/dev/sdmmc'), '-I' + str(out),
+        argv += ['-I' + str(root / 'sys/dev/ic'),
+                 '-I' + str(root / 'sys/dev/sdmmc'), '-I' + str(out),
                  str(root / 'ember/tools' / (name + '.c'))]
         argv += shlex.split(flags.stdout.decode()) + ['-o', str(out / name)]
         process.run_logged(argv, out / (name + '-compile.log'), env=env)

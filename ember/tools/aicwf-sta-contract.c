@@ -45,18 +45,13 @@ enum ieee80211_state {
 #define AICWF_BLOCK_SIZE 512
 #define AICWF_CHAN_MAX 42
 #define AICWF_CHAN_LEN 6
-#define AICWF_HDR_LEN 4
 #define AICWF_TXDESC_LEN 28
 #define AICWF_TYPE_DATA 1
 #define AICWF_TYPE_CFG 0x10
-#define AICWF_TYPE_MSG 0x11
 #define AICWF_TYPE_TX_CFM 0x12
 #define AICWF_RX_MSG_OFFSET 4
-#define AICWF_TX_MSG_OFFSET 8
-#define AICWF_MSG_HDR_LEN 8
 #define AICWF_MSG_MAX_PARAM 1032
-#define AICWF_TASK(id) ((id) >> 10)
-#define AICWF_TASK_DRIVER 100
+#define AICWF_RX_MAX 2048
 #define AICWF_CMD_TIMEOUT_MS 2000
 #define AICWF_SCAN_INTERVAL_MS 3000
 #define AICWF_SCANU_START_REQ 0x1000
@@ -307,6 +302,7 @@ static void be16enc(void *v, uint16_t x)
 #include "ieee80211_sta.h"
 #include "if_aicwf_vht.h"
 #include "if_aicwf_sta.h"
+#include "aicwf_command.h"
 static int splnet(void) { return 0; }
 static void splx(int s) { (void)s; }
 static int getticks(void) { return ticks; }

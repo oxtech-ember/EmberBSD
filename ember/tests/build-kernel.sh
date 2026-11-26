@@ -131,14 +131,14 @@ if [ "${FAIL_AT:-}" = pvr-query-contract.sh ]; then
     exit 1
 fi
 SH
-for contract in cemac-stop bwfm-link-events bwfm-link-check bwfm-sta aicwf-sta aicwf-vht \
+for contract in cemac-stop bwfm-link-events bwfm-link-check bwfm-sta aicwf-command aicwf-usb-id aicwf-sta aicwf-vht \
     bwfm-scan-padding bwfm-key-epoch drm2-linux-compat; do
 cat > "$work/src/ember/tests/$contract.sh" <<'SH'
 #!/bin/sh
 set -eu
 echo "network-contract ${0##*/} $*" >> "$TEST_LOG"
 case ${0##*/} in
-    aicwf-sta.sh|aicwf-vht.sh|drm2-linux-compat.sh) test "$#" -eq 0;;
+    aicwf-command.sh|aicwf-usb-id.sh|aicwf-sta.sh|aicwf-vht.sh|drm2-linux-compat.sh) test "$#" -eq 0;;
     *) test "$#" -eq 1; test "$1" = "$TEST_ROOT/src";;
 esac
 case ${0##*/} in
@@ -586,7 +586,7 @@ count_contracts() {
     grep -q '^a733-contract a133-gpu-preflight-contract.sh ' "$TEST_LOG"
     test "$(grep -c '^gpu-contract ' "$TEST_LOG")" -eq 42
     test "$(grep -c '^ruby-contract ' "$TEST_LOG")" -eq 15
-    test "$(grep -c '^network-contract ' "$TEST_LOG")" -eq 9
+    test "$(grep -c '^network-contract ' "$TEST_LOG")" -eq 11
     test "$(grep -c '^display-contract ' "$TEST_LOG")" -eq 2
 }
 # The build runs only its DTB boot-mode contract and the shared source check.
@@ -823,7 +823,7 @@ for failure in $root_argument_failures contract a733-contract a133-gpu-preflight
     drm-scheduler-contract.sh gpu-contract drm-sync-file-contract.sh drm-syncobj-flatten-contract.sh bcm2712-display-contract.sh \
     bcm2712-display-irq-contract.sh bcm2712-display-hsm-contract.sh bcm2712-display-dvp-contract.sh dmabuf-map dmabuf-lifetime dmabuf-array dmabuf-sync ruby-contract simplefb-contract.rb drm-hotplug-contract.rb \
     bcm2712-v3d-prime-contract.rb bcm2712-v3d-bo-stats-contract.rb network-contract cemac-stop.sh bwfm-link-check.sh \
-    aicwf-sta.sh aicwf-vht.sh drm2-linux-compat.sh efidrm-kver.sh genfb-pci-pwm.sh; do
+    aicwf-command.sh aicwf-usb-id.sh aicwf-sta.sh aicwf-vht.sh drm2-linux-compat.sh efidrm-kver.sh genfb-pci-pwm.sh; do
     : > "$TEST_LOG"
     if FAIL_AT=$failure sh "$work/src/ember/check-kernel.sh" "$TEST_OUT" > "$work/run.log" 2>&1; then
         echo "accepted contract failure: $failure" >&2; exit 1
@@ -871,7 +871,7 @@ for failure in $root_argument_failures contract a733-contract a133-gpu-preflight
         grep -Fxq "display-contract $failure" "$TEST_LOG"
         grep -Fq "injected contract failure: $failure" "$TEST_OUT/contracts.log"
         ;;
-    aicwf-sta.sh|aicwf-vht.sh)
+    aicwf-command.sh|aicwf-usb-id.sh|aicwf-sta.sh|aicwf-vht.sh)
         grep -Fq "network-contract $failure " "$TEST_LOG"
         grep -Fq "injected contract failure: $failure" "$TEST_OUT/contracts.log"
         ! grep -q '^network-contract bwfm-scan-padding.sh ' "$TEST_LOG"
@@ -1123,7 +1123,7 @@ count_contracts 21
 if FAIL_AT=a733-power-contract.sh EMBER_CONTRACT_JOBS=4 sh "$work/src/ember/check-kernel.sh" "$TEST_OUT" > "$work/run.log" 2>&1; then
     echo 'accepted a failed parallel contract' >&2; exit 1
 fi
-test "$(grep -c '^network-contract ' "$TEST_LOG")" -eq 9
+test "$(grep -c '^network-contract ' "$TEST_LOG")" -eq 11
 grep -q 'contract failed with status 1: sh .*/a733-power-contract.sh' "$work/run.log"
 grep -q '^1 kernel contracts failed$' "$work/run.log"
 test ! -e "$TEST_OUT/.build-lock"

@@ -599,6 +599,7 @@ motg* 		at fdt?			# Mentor Graphics USB OTG
 ohci* 		at fdt?			# OHCI
 xhci* 		at fdt?			# XHCI
 usb* 		at usbus?
+uaicfw*		at uhub? port ?		# AIC8800DC firmware identification
 
 # Virtio devices
 virtio* 	at fdt?				# Virtio MMIO device

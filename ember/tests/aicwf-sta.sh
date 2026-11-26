@@ -83,7 +83,7 @@ mkdir -p "$work/sys" "$work/net80211"
 ln -s "$src/sys/net80211/ieee80211_vht_ies.h" "$work/net80211/ieee80211_vht_ies.h"
 printf '#include <stdbool.h>\n#include <stdint.h>\n#include <string.h>\n' > "$work/sys/systm.h"
 ${CC:-cc} -std=c11 -Wall -Wextra -Werror -Wno-unused-parameter \
-    ${AICWF_STA_CFLAGS:-} -include stdbool.h -include stdint.h -I"$work" \
+    ${AICWF_STA_CFLAGS:-} -include stdbool.h -include stdint.h -I"$work" -I"$src/sys/dev/ic" \
     "$work/check.c" "$src/sys/net80211/ieee80211_vht_ies.c" -o "$work/check"
 if [ -n "${TEST_RUNNER:-}" ]; then
     "$TEST_RUNNER" "$work/check" "${AICWF_STA_CASE:-all}"

@@ -33,6 +33,14 @@ ember/tests/a733-npu-observe.py ember/tools/a733-npu-vip-smoke.c
 ember/tests/a733-npu-observe.py sys/arch/arm/sunxi/
 ember/tests/a733-npu-observe.py sys/dev/fdt/
 ember/tests/a733-npu-observe.py sys/external/gpl2/dts/dist/arch/arm64/boot/dts/allwinner/
+ember/tests/aicwf-command.sh sys/dev/ic/aicwf_command.h
+ember/tests/aicwf-command.sh sys/dev/sdmmc/if_aicwf.c
+ember/tests/aicwf-usb-id.sh ember/tools/aicwf-usb-id.c
+ember/tests/aicwf-usb-id.sh sys/dev/ic/aicwf_command.h
+ember/tests/aicwf-usb-id.sh sys/dev/usb/uaicfw.c
+ember/tests/aicwf-usb-id.sh sys/dev/usb/usbdevs
+ember/tests/aicwf-usb-id.sh sys/dev/usb/usbdevs.h
+ember/tests/aicwf-sta.sh sys/dev/ic/aicwf_command.h
 ember/tests/aicwf-sta.sh ember/tools/aicwf-sta-contract.c
 ember/tests/aicwf-sta.sh .github/actions/prepare-wpa-source/action.yml
 ember/tests/aicwf-sta.sh ember/shared-sources.json

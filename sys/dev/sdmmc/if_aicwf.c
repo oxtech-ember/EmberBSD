@@ -71,6 +71,7 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #include <dev/firmload.h>
 #include <net80211/ieee80211_rsn.h>
 #include <net80211/ieee80211_sta.h>
+#include <dev/ic/aicwf_command.h>
 #include <dev/sdmmc/if_aicwf_sae.h>
 #include <dev/sdmmc/if_aicwf_fw_bip.h>
 #include <dev/sdmmc/if_aicwf_vht.h>
@@ -109,24 +110,15 @@ __KERNEL_RCSID(0, "$NetBSD$");
  * A frame starts with its length in 12 bits, a type and, to the chip, a
  * checksum of those three bytes. A message follows after one more word.
  */
-#define	AICWF_HDR_LEN			4
 #define	AICWF_TYPE_CFG			0x10	/* bit: not a data frame */
-#define	AICWF_TYPE_MSG			0x11
 #define	AICWF_TYPE_TX_CFM		0x12
 #define	AICWF_TYPE_DATA			0x01	/* to the chip */
-#define	AICWF_TX_MSG_OFFSET		8
 #define	AICWF_RX_MSG_OFFSET		4
 
 /* Message header: id, destination, source, parameter length. */
-#define	AICWF_MSG_HDR_LEN		8
-#define	AICWF_RX_MSG_PARAM		12	/* a pattern word comes first */
 #define	AICWF_MSG_MAX_PARAM		1032
-#define	AICWF_TASK(id)			((id) >> 10)
-#define	AICWF_TASK_DRIVER		100
 
 /* Debug task: what the boot ROM understands. */
-#define	AICWF_DBG_MEM_READ_REQ		0x0400
-#define	AICWF_DBG_MEM_READ_CFM		0x0401
 #define	AICWF_DBG_MEM_WRITE_REQ		0x0402
 #define	AICWF_DBG_MEM_WRITE_CFM		0x0403
 #define	AICWF_DBG_MEM_BLOCK_WRITE_REQ	0x040b
@@ -659,21 +651,13 @@ aicwf_cmd_reply(struct aicwf_softc *sc, uint16_t id, const void *param,
 		mutex_exit(&sc->sc_lock);
 		return ECANCELED;
 	}
-	sc->sc_cmd_busy = true;
-
-	len = AICWF_TX_MSG_OFFSET + AICWF_MSG_HDR_LEN + param_len;
-	memset(buf, 0, AICWF_TX_MSG_OFFSET + AICWF_MSG_HDR_LEN);
-	le16enc(buf, (len - AICWF_HDR_LEN) & 0x0fff);
-	buf[2] = AICWF_TYPE_MSG;
+	len = aicwf_command_encode(buf, AICWF_RX_MAX, id, param, param_len);
+	if (len == 0) {
+		mutex_exit(&sc->sc_lock);
+		return EMSGSIZE;
+	}
 	buf[3] = aicwf_crc8(buf, 3);
-	le16enc(buf + AICWF_TX_MSG_OFFSET + 0, id);
-	le16enc(buf + AICWF_TX_MSG_OFFSET + 2, AICWF_TASK(id));
-	le16enc(buf + AICWF_TX_MSG_OFFSET + 4, AICWF_TASK_DRIVER);
-	le16enc(buf + AICWF_TX_MSG_OFFSET + 6, param_len);
-	if (param_len != 0)
-		memcpy(buf + AICWF_TX_MSG_OFFSET + AICWF_MSG_HDR_LEN, param,
-		    param_len);
-
+	sc->sc_cmd_busy = true;
 	sc->sc_cfm_id = cfm_id;
 	sc->sc_cfm_done = false;
 
@@ -727,13 +711,9 @@ static void
 aicwf_rx_msg
 (struct aicwf_softc *sc, const uint8_t *msg, size_t len)
 {
-	if (len < AICWF_RX_MSG_PARAM)
-		return;
+	uint16_t id, param_len;
 
-	const uint16_t id = le16dec(msg);
-	const uint16_t param_len = le16dec(msg + 6);
-
-	if (param_len > len - AICWF_RX_MSG_PARAM)
+	if (!aicwf_reply_decode(msg, len, &id, &param_len))
 		return;
 
 	switch (id) {
@@ -908,9 +888,8 @@ aicwf_fw_mem_read(struct aicwf_softc *sc, uint32_t addr, uint32_t *data)
 	    AICWF_DBG_MEM_READ_CFM, cfm, sizeof(cfm));
 	if (error != 0)
 		return error;
-	if (le32dec(cfm) != addr)
+	if (!aicwf_read_confirm(cfm, sizeof(cfm), addr, data))
 		return EPROTO;
-	*data = le32dec(cfm + 4);
 	return 0;
 }
 

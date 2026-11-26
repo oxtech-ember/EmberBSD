@@ -82,6 +82,7 @@ SHA256_Final(uint8_t out[32], SHA256_CTX *p)
 #define le32enc check_le32enc
 #define le16enc check_le16enc
 #include "if_aicwf_fw_bip.h"
+#include "aicwf_command.h"
 #include "driver-values.h"
 struct aicwf_softc {
 	void *sc_dev;

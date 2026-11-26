@@ -7,6 +7,9 @@ trap 'rm -rf "$work"' EXIT HUP INT TERM
 awk '/^aicwf_cmd_reply\(/ {copy=1; print "static int"}
 copy {print} copy && /^}/ {exit}' \
     "$src/sys/dev/sdmmc/if_aicwf.c" > "$work/command.h"
+awk '/^aicwf_crc8\(/ {copy=1; print "static uint8_t"}
+copy {print} copy && /^}/ {exit}' \
+    "$src/sys/dev/sdmmc/if_aicwf.c" > "$work/crc.h"
 cat > "$work/check.c" <<'C'
 #include <assert.h>
 #include <stdbool.h>
@@ -16,12 +19,7 @@ cat > "$work/check.c" <<'C'
 #include <errno.h>
 #define KASSERT assert
 #define AICWF_MSG_MAX_PARAM 1032
-#define AICWF_TX_MSG_OFFSET 8
-#define AICWF_MSG_HDR_LEN 8
-#define AICWF_HDR_LEN 4
-#define AICWF_TYPE_MSG 0x11
-#define AICWF_TASK(id) ((id) >> 10)
-#define AICWF_TASK_DRIVER 100
+#define AICWF_RX_MAX 2048
 #define AICWF_CMD_TIMEOUT_MS 2000
 #define AICWF_SCANU_START_REQ 0x1000
 #define AICWF_SCANU_CANCEL_REQ 0x100a
@@ -47,10 +45,20 @@ static void cv_broadcast(int *cv) { (void)cv; }
 static int mstohz(int n) { return n; }
 static void le16enc(void *p, unsigned n)
 { uint8_t *b = p; b[0] = n; b[1] = n >> 8; }
-static uint8_t aicwf_crc8(const void *p, size_t n)
-{ (void)p; (void)n; return 0; }
+static uint16_t le16dec(const void *p)
+{ const uint8_t *b = p; return b[0] | ((uint16_t)b[1] << 8); }
+static uint32_t le32dec(const uint8_t *p)
+{ return le16dec(p) | ((uint32_t)le16dec(p + 2) << 16); }
+#include "aicwf_command.h"
+typedef unsigned int u_int;
+#include "crc.h"
 static int aicwf_write_attempted(struct aicwf_softc *sc, size_t len, unsigned reserve, bool *attempted)
 {
+    static const uint8_t header[] = {
+        0x10, 0x00, 0x11, 0xd5, 0, 0, 0, 0,
+        0x24, 0, 0, 0, 100, 0, 4, 0,
+    };
+    assert(memcmp(sc->sc_txbuf, header, sizeof(header)) == 0);
     assert(mutex_owned(&sc->sc_lock));
     if (attempted != NULL) *attempted = true;
     assert(len == 20 && reserve == 0); writes++;
@@ -105,10 +113,10 @@ int main(void)
     reply_len = 4;
     assert(aicwf_cmd_reply(&sc, 0x24, param, 4, 0x25,
         (uint8_t[4]){0}, 4, 2, 0) == 0);
-    puts("PASS: 12 command reply, lifetime, cleanup and erasure cases");
+    puts("PASS: SDIO command bytes and CRC, 12 reply, lifetime, cleanup and erasure cases");
 
     return 0;
 }
 C
-${CC:-cc} -std=c99 -Wall -Wextra -Werror ${AICWF_COMMAND_CFLAGS:-} "$work/check.c" -o "$work/check"
+${CC:-cc} -I"$src/sys/dev/ic" -std=c99 -Wall -Wextra -Werror ${AICWF_COMMAND_CFLAGS:-} "$work/check.c" -o "$work/check"
 "$work/check"
