@@ -9,6 +9,7 @@
 #define EU_MAX_CONTENT (15U * 1024 * 1024)
 
 struct eu_json *eu_cms_json(const void *, size_t, const char *);
+int file_sha(const char *, char[65]);
 int eu_digest(const void *, size_t, char[65]);
 
 #endif

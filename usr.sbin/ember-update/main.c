@@ -14,11 +14,14 @@
 #include <syslog.h>
 #include <unistd.h>
 #include "control.h"
+#include "store.h"
 
 static void
 usage(FILE *f)
 {
-	fprintf(f, "usage: ember-update status | check | apply [--reboot] | history\n"
+	fprintf(f, "usage: ember-update status | check | apply [--reboot] | history | "
+		   "catalog | kernel-mode\n"
+		   "       ember-update install PKGPATH [--pkgname FULLNAME]\n"
 		   "       ember-update apply-kernel DIRECTORY [--reboot]\n");
 }
 
@@ -60,7 +63,8 @@ take_lock(const char *name)
 }
 
 static int
-cycle(const char *op, const char *directory, bool immediate)
+cycle(const char *op, const char *directory, bool immediate,
+      const struct request *request)
 {
 	struct policy policy;
 	struct hardware hw;
@@ -77,8 +81,7 @@ cycle(const char *op, const char *directory, bool immediate)
 	else
 		memset(&s, 0, sizeof(s));
 	bool mutate = strcmp(op, "check") != 0, boot = eu_equal(op, "boot");
-	bool reboot =
-	    immediate || (!boot && mutate && window_open(policy.window, time(NULL)));
+	bool reboot = reboot_policy(op, immediate, policy.window, time(NULL));
 	if (!mutate && (!eu_equal(s.running, s.confirmed) || s.next[0])) {
 		/* A check can publish slot state without changing a boot marker. */
 		eu_put(ui, "reboot_required", eu_bool(s.next[0] != 0));
@@ -87,12 +90,21 @@ cycle(const char *op, const char *directory, bool immediate)
 		if (directory)
 			fail("local kernel installation requires boot slots");
 		if (!boot)
-			release_cycle(&s, &hw, &policy, mutate, false);
+			release_cycle(&s, &hw, &policy, mutate, false, request);
 	} else if (!mutate || !reconcile(&s, &hw, reboot)) {
 		if (directory)
-			prepare(&s, directory, NULL, true, 0, reboot);
+			prepare(&s, directory, NULL, true, 0, reboot, NULL);
 		else if (!boot)
-			release_cycle(&s, &hw, &policy, mutate, reboot);
+			release_cycle(&s, &hw, &policy, mutate, reboot, request);
+	} else if (request) {
+		struct eu_json *a = read_record(ATTEMPT, true);
+		if (!eu_equal(text_field(ui, "status"), "ready") ||
+		    !eu_equal(text_field(a, "requested_root"), request->root) ||
+		    (request->pin &&
+		     !eu_equal(request->pin, text_field(a, "requested_pkgname"))))
+			errx(1, "finish the active update before installing another "
+				"application");
+		eu_json_free(a);
 	}
 	int result = eu_equal(text_field(ui, "status"), "ready") ? 4 : 0;
 	free(policy.channel);
@@ -118,7 +130,7 @@ watch(void)
 		pid_t child = fork();
 		if (child == 0) {
 			close(fd);
-			_exit(cycle("auto", NULL, false));
+			_exit(cycle("auto", NULL, false, NULL));
 		}
 		int status = 0;
 		if (child > 0) {
@@ -176,10 +188,36 @@ main(int argc, char **argv)
 		eu_json_free(j);
 		return 0;
 	}
+	if (argc == 2 && eu_equal(op, "kernel-mode")) {
+		struct eu_json *profile = read_record(PROFILE, false);
+		const char *mode = kernel_mode(profile);
+		if (!mode)
+			errx(1, "invalid kernel installation profile");
+		if (puts(mode) == EOF || fflush(stdout) < 0)
+			err(1, "output");
+		eu_json_free(profile);
+		return 0;
+	}
+	if (argc == 2 && eu_equal(op, "catalog"))
+		return store_catalog();
 	if (geteuid() != 0)
 		errx(1, "this update operation requires root");
 	umask(022);
 	signals();
+	if (eu_equal(op, "install")) {
+		struct request request = {.root = argc >= 3 ? argv[2] : NULL,
+					  .pin = argc == 5 ? argv[4] : NULL};
+		if (!(argc == 3 || (argc == 5 && eu_equal(argv[3], "--pkgname") &&
+				    eu_pkgname(request.pin))) ||
+		    !eu_pkgroot(request.root)) {
+			usage(stderr);
+			return 2;
+		}
+		int result = cycle(op, NULL, false, &request);
+		if (puts(result == 4 ? "ready" : "idle") == EOF || fflush(stdout) < 0)
+			err(1, "output");
+		return 0;
+	}
 	if (argc == 2 && eu_equal(op, "watch"))
 		return watch();
 	bool local = eu_equal(op, "apply-kernel"), apply = eu_equal(op, "apply"),
@@ -197,7 +235,7 @@ main(int argc, char **argv)
 		usage(stderr);
 		return 2;
 	}
-	int ret = cycle(op, local ? argv[2] : NULL, now);
+	int ret = cycle(op, local ? argv[2] : NULL, now, NULL);
 	if (!eu_equal(op, "boot")) {
 		struct eu_json *j = load_ui();
 		printf("%s\n", text_field(j, "status"));

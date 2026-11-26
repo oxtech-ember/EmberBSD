@@ -1,6 +1,10 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
 /* Verify the SDK's attached DER CMS with one directly issued release signer. */
+#include <sys/stat.h>
 #include <errno.h>
+#include <fcntl.h>
+#include <stdio.h>
+#include <unistd.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -114,4 +118,39 @@ done:
 	if (json == NULL)
 		errno = EINVAL;
 	return json;
+}
+
+int
+file_sha(const char *path, char result[65])
+{
+	unsigned char chunk[65536], digest[32];
+	unsigned int len = 0;
+	struct stat st;
+	int fd = open(path, O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK);
+	if (fd < 0)
+		return -1;
+	EVP_MD_CTX *ctx = EVP_MD_CTX_new();
+	int ok = -1;
+	if (!ctx || fstat(fd, &st) < 0 || !S_ISREG(st.st_mode) ||
+	    EVP_DigestInit_ex(ctx, EVP_sha256(), NULL) != 1)
+		goto done;
+	ssize_t n;
+	while ((n = read(fd, chunk, sizeof(chunk))) != 0) {
+		if (n < 0) {
+			if (errno == EINTR)
+				continue;
+			goto done;
+		}
+		if (EVP_DigestUpdate(ctx, chunk, (size_t)n) != 1)
+			goto done;
+	}
+	if (EVP_DigestFinal_ex(ctx, digest, &len) != 1 || len != 32)
+		goto done;
+	for (unsigned i = 0; i < 32; i++)
+		snprintf(result + i * 2, 3, "%02x", digest[i]);
+	ok = 0;
+done:
+	close(fd);
+	EVP_MD_CTX_free(ctx);
+	return ok;
 }

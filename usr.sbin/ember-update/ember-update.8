@@ -7,7 +7,11 @@
 .Nd check and install signed system and package releases
 .Sh SYNOPSIS
 .Nm
-.Cm status | check | history
+.Cm status | check | history | catalog | kernel-mode
+.Nm
+.Cm install
+.Ar pkgpath
+.Op Fl Fl pkgname Ar pkgname
 .Nm
 .Cm apply
 .Op Fl Fl reboot
@@ -31,6 +35,20 @@ Download each selected artifact and verify its size and SHA-256.
 Install the selected OS sets and package upgrades in the inactive slot.
 Arm a single trial boot.
 A single-root profile updates packages on its running root.
+.It Cm catalog
+Print the verified package catalog and its installed desktop entries as JSON.
+Ordinary users can read the catalog.
+.It Cm kernel-mode
+Print single or slots for the installed storage profile.
+This local query is available to ordinary users.
+.It Cm install
+Install the specified package and its runtime dependencies.
+Use
+.Fl Fl pkgname
+to require the exact version shown by a store.
+The requested package is marked as manually installed.
+A two-slot system prints ready after staging.
+A single-root system prints idle after registration.
 .It Cm apply-kernel
 Stage the local kernel from the specified directory in the inactive slot.
 The OS installer verifies the kernel files.

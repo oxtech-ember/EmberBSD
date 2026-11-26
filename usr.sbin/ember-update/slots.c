@@ -9,6 +9,7 @@
 #include <string.h>
 #include <unistd.h>
 #include "control.h"
+#include "verify.h"
 
 static bool
 slot(const char *s)
@@ -258,7 +259,7 @@ reconcile(const struct slots *s, const struct hardware *h, bool reboot)
 
 void
 prepare(const struct slots *s, const char *dir, const char *expected, bool local,
-	int64_t generation, bool reboot)
+	int64_t generation, bool reboot, const struct request *request)
 {
 	const char *other = *s->running == 'A' ? "B" : "A";
 	struct eu_json *profile = read_record(PROFILE, false);
@@ -293,6 +294,10 @@ prepare(const struct slots *s, const char *dir, const char *expected, bool local
 	eu_json_free(profile);
 	eu_put(a, "phase", eu_text("prepared"));
 	eu_put(a, "os_generation", eu_int(generation));
+	if (request) {
+		eu_put(a, "requested_root", eu_text(request->root));
+		eu_put(a, "requested_pkgname", eu_text(request->pin));
+	}
 	if (eu_save(ATTEMPT, a, 0600) < 0)
 		fail("cannot record prepared slot");
 	boot_command("arm", other);

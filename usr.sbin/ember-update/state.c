@@ -9,9 +9,10 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
-#include <openssl/evp.h>
 
 #include "control.h"
+#include "profile.h"
+#include "verify.h"
 
 struct eu_json *ui;
 
@@ -141,41 +142,6 @@ checkpoint(void)
 		exit(0);
 }
 
-int
-file_sha(const char *path, char result[65])
-{
-	unsigned char chunk[65536], digest[32];
-	unsigned int len = 0;
-	struct stat st;
-	int fd = open(path, O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK);
-	if (fd < 0)
-		return -1;
-	EVP_MD_CTX *ctx = EVP_MD_CTX_new();
-	int ok = -1;
-	if (!ctx || fstat(fd, &st) < 0 || !S_ISREG(st.st_mode) ||
-	    EVP_DigestInit_ex(ctx, EVP_sha256(), NULL) != 1)
-		goto done;
-	ssize_t n;
-	while ((n = read(fd, chunk, sizeof(chunk))) != 0) {
-		if (n < 0) {
-			if (errno == EINTR)
-				continue;
-			goto done;
-		}
-		if (EVP_DigestUpdate(ctx, chunk, (size_t)n) != 1)
-			goto done;
-	}
-	if (EVP_DigestFinal_ex(ctx, digest, &len) != 1 || len != 32)
-		goto done;
-	for (unsigned i = 0; i < 32; i++)
-		snprintf(result + i * 2, 3, "%02x", digest[i]);
-	ok = 0;
-done:
-	close(fd);
-	EVP_MD_CTX_free(ctx);
-	return ok;
-}
-
 static bool
 yes(const char *s)
 {
@@ -217,6 +183,15 @@ window_open(const char *s, time_t now)
 	return a < b ? (a <= m && m < b) : (a <= m || m < b);
 }
 
+bool
+reboot_policy(const char *operation, bool immediate, const char *window, time_t now)
+{
+	if (eu_equal(operation, "install") || eu_equal(operation, "check") ||
+	    eu_equal(operation, "boot"))
+		return false;
+	return immediate || window_open(window, now);
+}
+
 void
 read_policy(struct policy *p)
 {
@@ -243,8 +218,34 @@ read_policy(struct policy *p)
 	if (!p->channel || !p->window)
 		err(1, "policy");
 	(void)window_open(p->window, time(NULL));
-	eu_put(ui, "channel", eu_text(channel));
+	if (ui)
+		eu_put(ui, "channel", eu_text(channel));
 	free(output);
+}
+
+const char *
+kernel_mode(const struct eu_json *profile)
+{
+	const struct eu_json *target = eu_get(profile, "target");
+	if (!eu_slug(text_field(profile, "profile")) ||
+	    !eu_target_match(target, target))
+		return NULL;
+	switch (eu_profile_adapter(profile)) {
+	case EU_ADAPTER_SINGLE:
+		return "single";
+	case EU_ADAPTER_UBOOT:
+	case EU_ADAPTER_EFI: {
+		const struct eu_json *roots = eu_get(profile, "roots");
+		const char *a = text_field(roots, "A"), *b = text_field(roots, "B"),
+			   *esp = text_field(profile, "esp");
+		if (!eu_fields(roots, "A B") || !a || !*a || !b || !*b || !esp ||
+		    !*esp || eu_equal(a, b) || eu_equal(a, esp) || eu_equal(b, esp))
+			return NULL;
+		return "slots";
+	}
+	default:
+		return NULL;
+	}
 }
 
 void
@@ -254,11 +255,10 @@ load_hardware(struct hardware *h)
 	h->profile = read_record(PROFILE, false);
 	h->name = text_field(h->profile, "profile");
 	h->target = eu_get(h->profile, "target");
-	if (!eu_slug(h->name) || !eu_target_match(h->target, h->target))
-		fail("invalid device target or profile");
-	const char *storage = text_field(h->profile, "storage");
-	const char *adapter = text_field(h->profile, "adapter");
-	if (eu_equal(storage, "single") && eu_equal(adapter, "none")) {
+	const char *mode = kernel_mode(h->profile);
+	if (!mode)
+		fail("invalid device profile, storage, or boot adapter");
+	if (eu_equal(mode, "single")) {
 		h->single = true;
 		eu_put(ui, "running_slot", eu_new(EU_NULL));
 		eu_put(ui, "confirmed_slot", eu_new(EU_NULL));
@@ -267,8 +267,7 @@ load_hardware(struct hardware *h)
 		eu_put(ui, "reboot_required", eu_bool(false));
 		return;
 	}
-	if (!eu_equal(storage, "ffs") || !adapter || eu_equal(adapter, "none"))
-		fail("unsupported device update storage or slot adapter");
+
 	h->receipt = read_record(RECEIPT, false);
 	h->commit = text_field(h->receipt, "os_commit");
 	h->generation = int_field(h->receipt, "generation");

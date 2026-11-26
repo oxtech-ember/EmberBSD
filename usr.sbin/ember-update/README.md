@@ -25,6 +25,33 @@ default policy leaves the new slot ready for the next restart.
 `ember-update status` and `ember-update history` read local state without
 network access. Both commands work for ordinary users.
 
+## Store catalog and application installation
+
+Run `ember-update catalog` as an ordinary user. It prints
+`emberbsd.catalog-index.v1` JSON. Each row contains the repository, PKGPATH,
+native package name, size, installation action, and confirmed desktop entries.
+The signed package index supplies package identities. The installed package's
+`+CONTENTS` must list each desktop file. Its executable must resolve within
+the configured package prefix. A package without such an entry remains a
+package or library in the catalog.
+
+A privileged package check saves a small root-owned projection in
+`/var/db/ember-update/catalog.json`. The catalog command reads it while its
+signed release is valid and projects current installed state from the pkgdb.
+With an empty or expired cache, it reads the signed channel, release, binary
+catalog, and pkg_summary over HTTPS as the caller. It downloads no package
+archive and makes no state changes.
+
+Run `ember-update install PKGPATH` as root. A graphical store can pin the
+selected native version with `install PKGPATH --pkgname FULLNAME`. The command
+verifies a current release and resolves the selected root and its signed
+runtime edges. It preserves a manually selected root on future updates.
+On a single-root device it prints `idle` after registration. On an A/B device
+it prints `ready` after arming the candidate. The public state then reports
+`reboot_required=true` and lists the requested full package name in
+`available.packages`. The Store command returns before the scheduled reboot.
+A different pending transaction must finish first.
+
 ## Publication and installation
 
 The client retrieves `CHANNEL.p7m` from the project package origin over
@@ -48,6 +75,9 @@ release. The installer runs `/usr/sbin/pkg_add` with local verified archives,
 the release signing anchor and the target package database.
 
 The device profile lives in `/etc/ember-update-profile.json`.
+Kernel installation tools can run `ember-update kernel-mode` as an ordinary
+user to read its installation mode, `single` or `slots`. A missing or unknown
+profile returns an error. The query reads local profile data only.
 For `storage=ffs`, the client stages OS and package changes on the inactive
 root in one transaction. For `storage=single` and `adapter=none`, the client
 updates packages on the live root. Each completed registration remains in
@@ -60,7 +90,8 @@ The controller writes a root-owned directory with these files:
 * `plan.json` has schema `emberbsd.install-plan.v1`, `profile`, and `target`
   (`arch`, `triplet`, `abi`, `runtime`). It carries `os_generation`,
   `os_commit`, `os_update_sha256`, and dependency-ordered `packages`.
-  Each package has its complete native `name`, archive `size` and `sha256`.
+  Each package has its complete native `name`, archive `size` and `sha256`. An explicitly selected application also has
+  `manual: true`. This promotes an existing automatic registration when needed.
 * An OS update adds the exact descriptor bytes as `update.json` and one
   `ROLE.tar.xz` for each selected role. A package-only plan sets
   `os_update_sha256` to null and keeps the current OS identity. A single-root
@@ -123,4 +154,5 @@ Run `tests/slots.sh` from this directory to exercise the boot state machine.
 Run `tests/signed.sh ROOT.pem current.p7m release.p7m` with real published
 envelopes and a separate local copy of the release anchor. The test checks
 both signatures, the hash binding, time limits, and altered envelopes.
-Set `CC`, `CPPFLAGS`, and `LDFLAGS` to select the host SDK for the CMS test.
+Run `tests/store.sh` for package selection, manual promotion and installed
+desktop binding. Set `CC`, `CPPFLAGS`, and `LDFLAGS` to select the host SDK.

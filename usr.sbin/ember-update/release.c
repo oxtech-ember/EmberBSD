@@ -11,6 +11,7 @@
 #include <unistd.h>
 #include "control.h"
 #include "package.h"
+#include "store.h"
 #include "verify.h"
 
 static void
@@ -152,6 +153,8 @@ make_plan(const struct hardware *h, const struct os_update *u,
 		const struct package *p = pkgs->order[i];
 		struct eu_json *item = eu_new(EU_OBJECT);
 		eu_put(item, "name", eu_text(p->name));
+		if (p->manual)
+			eu_put(item, "manual", eu_bool(true));
 		eu_put(item, "sha256", eu_text(p->artifact->sha));
 		eu_put(item, "size", eu_int(p->artifact->size));
 		eu_append(items, item);
@@ -189,7 +192,8 @@ stage(const struct delivery *d, const struct artifact *head, const unsigned char
 
 void
 release_cycle(const struct slots *s, const struct hardware *h,
-	      const struct policy *policy, bool apply, bool reboot)
+	      const struct policy *policy, bool apply, bool reboot,
+	      const struct request *request)
 {
 	struct delivery d;
 	struct os_update os = {0};
@@ -209,7 +213,7 @@ release_cycle(const struct slots *s, const struct hardware *h,
 		fail("cannot verify signed channel and release");
 	channel_floor(&d);
 	checkpoint();
-	if (!h->single && policy->os && !h->custom) {
+	if (!request && !h->single && policy->os && !h->custom) {
 		if (snprintf(id, sizeof(id), "os-update-%s", h->name) >=
 		    (int)sizeof(id))
 			fail("invalid OS profile name");
@@ -248,7 +252,7 @@ release_cycle(const struct slots *s, const struct hardware *h,
 				head = NULL;
 		}
 	}
-	if (policy->packages) {
+	if (policy->packages || request) {
 		bool has_catalog = false;
 		for (size_t i = 0; i < d.release.count; i++) {
 			const struct artifact *a = d.release.items + i;
@@ -256,10 +260,20 @@ release_cycle(const struct slots *s, const struct hardware *h,
 			    eu_equal(a->kind, "package-index"))
 				has_catalog = true;
 		}
-		if (has_catalog &&
-		    eu_packages(&d, h->target, "/usr/pkg/pkgdb", &pkgs) < 0)
-			fail("signed package catalog, dependency plan, or installed "
-			     "package database is invalid");
+		if (request && !has_catalog)
+			fail("this release has no package catalog for the target");
+		if (has_catalog) {
+			if (eu_package_index(&d, h->target, &pkgs) < 0)
+				fail("signed package catalog or summary is invalid");
+			store_cache(&d, h->target, &pkgs);
+			if (eu_plan_packages(&pkgs, "/usr/pkg/pkgdb",
+					     request ? request->root : NULL,
+					     request ? request->pin : NULL) < 0)
+				fail(request ? "requested package, version or "
+					       "dependency plan is unavailable"
+					     : "cannot select compatible installed "
+					       "package upgrades");
+		}
 	}
 	struct eu_json *available = eu_new(EU_OBJECT), *names = eu_new(EU_ARRAY);
 	eu_put(available, "os_generation",
@@ -291,6 +305,8 @@ release_cycle(const struct slots *s, const struct hardware *h,
 		fail("cannot identify verified install plan");
 	struct eu_json *bad = read_record(ATTEMPT, true);
 	if (bad && eu_equal(text_field(bad, "sha256"), digest)) {
+		if (request)
+			fail("this application plan already failed its boot trial");
 		report("idle", NULL);
 		eu_json_free(bad);
 		clean_stage();
@@ -317,8 +333,20 @@ release_cycle(const struct slots *s, const struct hardware *h,
 			     "installed package database");
 		eu_put(available, "packages", eu_new(EU_ARRAY));
 		report("idle", NULL);
-	} else
-		prepare(s, INCOMING, digest, false, head ? os.generation : 0, reboot);
+	} else {
+		struct request exact = {0};
+		if (request) {
+			exact.root = request->root;
+			for (size_t i = 0; i < pkgs.updates; i++)
+				if (pkgs.order[i]->manual)
+					exact.pin = pkgs.order[i]->name;
+			if (!exact.pin)
+				fail("cannot identify the requested package in the "
+				     "prepared plan");
+		}
+		prepare(s, INCOMING, digest, false, head ? os.generation : 0, reboot,
+			request ? &exact : NULL);
+	}
 	clean_stage();
 done:
 	free(raw);

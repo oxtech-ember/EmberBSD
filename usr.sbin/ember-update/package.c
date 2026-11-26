@@ -6,6 +6,7 @@
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <limits.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -45,8 +46,8 @@ match(const char *pattern, const char *name)
 	return WEXITSTATUS(st) == 0;
 }
 
-static bool
-pkgname(const char *s)
+bool
+eu_pkgname(const char *s)
 {
 	const char *v;
 	return s && strlen(s) <= 240 && isalnum((unsigned char)s[0]) &&
@@ -73,8 +74,8 @@ by_record(struct packages *list, const char *s)
 	return NULL;
 }
 
-static bool
-valid_root(const char *root)
+bool
+eu_pkgroot(const char *root)
 {
 	if (!root || strlen(root) > 255 || !strchr(root, '/'))
 		return false;
@@ -97,7 +98,7 @@ eu_registered(const char *db, const char *name)
 	size_t cap = 0;
 	int fd = -1;
 	bool found = false;
-	if (!pkgname(name) || asprintf(&path, "%s/%s/+CONTENTS", db, name) < 0)
+	if (!eu_pkgname(name) || asprintf(&path, "%s/%s/+CONTENTS", db, name) < 0)
 		return false;
 	fd = open(path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK);
 	free(path);
@@ -150,18 +151,19 @@ catalog_sets(const struct packages *list, const struct eu_json *sets)
 	return true;
 }
 
-static int
-inventory(const char *db, struct packages *list)
+int
+eu_inventory(const char *db, struct packages *list)
 {
 	DIR *d = opendir(db);
 	struct dirent *entry;
 	int ok = -1;
+	list->inventory = eu_new(EU_ARRAY);
 	if (!d)
 		return errno == ENOENT ? 0 : -1;
 	while ((entry = readdir(d)) != NULL) {
 		char *copy, *ver;
 		struct stat st;
-		if (!pkgname(entry->d_name))
+		if (!eu_pkgname(entry->d_name))
 			continue;
 		if (fstatat(dirfd(d), entry->d_name, &st, AT_SYMLINK_NOFOLLOW) < 0)
 			goto done;
@@ -320,6 +322,63 @@ done:
 	return ok;
 }
 
+const char *
+eu_package_action(const struct package *p)
+{
+	if (!p->installed)
+		return "available";
+	if (eu_equal(p->installed, p->name))
+		return "installed";
+	char *pattern;
+	if (asprintf(&pattern, "%s>%s", p->base, strrchr(p->installed, '-') + 1) < 0)
+		return "version-uncompared";
+	int newer = match(pattern, p->name);
+	free(pattern);
+	if (newer == 1)
+		return "upgrade";
+	if (newer < 0)
+		return "version-uncompared";
+	if (asprintf(&pattern, "%s>%s", p->base, strrchr(p->name, '-') + 1) < 0)
+		return "version-uncompared";
+	int local_newer = match(pattern, p->installed);
+	free(pattern);
+	return local_newer == 1 ? "installed-newer" : "version-uncompared";
+}
+
+static int
+automatic(const char *db, const char *name)
+{
+	char *path = NULL, *line = NULL;
+	size_t cap = 0;
+	if (asprintf(&path, "%s/%s/+INSTALLED_INFO", db, name) < 0)
+		return -1;
+	int fd = open(path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK);
+	free(path);
+	if (fd < 0)
+		return errno == ENOENT ? 0 : -1;
+	struct stat st;
+	if (fstat(fd, &st) < 0 || !S_ISREG(st.st_mode)) {
+		close(fd);
+		return -1;
+	}
+	FILE *f = fdopen(fd, "r");
+	if (!f) {
+		close(fd);
+		return -1;
+	}
+	int value = 0;
+	while (getline(&line, &cap, f) >= 0) {
+		line[strcspn(line, "\r\n")] = 0;
+		if (!strcasecmp(line, "automatic=YES"))
+			value = 1;
+	}
+	if (ferror(f))
+		value = -1;
+	free(line);
+	fclose(f);
+	return value;
+}
+
 static int
 select_pkg(struct packages *packages, struct package *p, size_t depth)
 {
@@ -327,33 +386,26 @@ select_pkg(struct packages *packages, struct package *p, size_t depth)
 		return 0;
 	if (p->selected == 1 || depth > 128)
 		return -1;
-	if (p->installed && !eu_equal(p->installed, p->name)) {
-		char *pattern;
-		if (asprintf(&pattern, "%s>%s", p->base,
-			     strrchr(p->installed, '-') + 1) < 0)
-			return -1;
-		int newer = match(pattern, p->name);
-		free(pattern);
-		if (newer < 0)
-			return -1;
-		if (!newer)
-			return depth == 0 ? 0 : -1;
-	}
+	const char *action = eu_package_action(p);
+	if (eu_equal(action, "version-uncompared"))
+		return -1;
+	if (eu_equal(action, "installed-newer"))
+		return depth == 0 && !p->manual ? 0 : -1;
 	p->selected = 1;
 	for (const struct eu_json *d = p->artifact->deps->child; d; d = d->next) {
 		struct package *q = by_record(packages, d->text);
 		if (!q || select_pkg(packages, q, depth + 1) < 0)
 			return -1;
 	}
-	if (!eu_equal(p->installed, p->name))
+	if (p->manual || !eu_equal(p->installed, p->name))
 		packages->order[packages->updates++] = p;
 	p->selected = 2;
 	return 0;
 }
 
 int
-eu_packages(const struct delivery *d, const struct eu_json *target, const char *db,
-	    struct packages *list)
+eu_package_index(const struct delivery *d, const struct eu_json *target,
+		 struct packages *list)
 {
 	const struct artifact *cat = NULL, *sum;
 	const struct eu_json *o, *items, *entry;
@@ -406,8 +458,8 @@ eu_packages(const struct delivery *d, const struct eu_json *target, const char *
 		const char *name = field(entry, "pkgname"),
 			   *root = field(entry, "root");
 		struct artifact *a = eu_artifact(&d->release, field(entry, "artifact"));
-		if (!eu_fields(entry, "root pkgname artifact") || !valid_root(root) ||
-		    !pkgname(name) || !a || !eu_target_match(target, a->target) ||
+		if (!eu_fields(entry, "root pkgname artifact") || !eu_pkgroot(root) ||
+		    !eu_pkgname(name) || !a || !eu_target_match(target, a->target) ||
 		    !eu_equal(a->kind, "target-package") || a->size <= 0)
 			goto done;
 		const char *leaf = strrchr(a->path, '/');
@@ -438,14 +490,53 @@ eu_packages(const struct delivery *d, const struct eu_json *target, const char *
 				goto done;
 	if (!catalog_sets(list, eu_get(o, "sets")))
 		goto done;
-	list->inventory = eu_new(EU_ARRAY);
 	if (eu_payload(d, sum, NULL, &data, &n) < 0 ||
-	    summary(list, data, n, &text) < 0 || check_summary(list, text) < 0 ||
-	    inventory(db, list) < 0)
+	    summary(list, data, n, &text) < 0 || check_summary(list, text) < 0)
 		goto done;
-	for (i = 0; i < list->count; i++)
-		if (list->list[i].installed && select_pkg(list, &list->list[i], 0) < 0)
-			goto done;
+	ok = 0;
+done:
+	free(want);
+	free(data);
+	free(text);
+	if (ok) {
+		eu_packages_free(list);
+		errno = EINVAL;
+	}
+	return ok;
+}
+
+int
+eu_plan_packages(struct packages *list, const char *db, const char *root,
+		 const char *pin)
+{
+	if (eu_inventory(db, list) < 0)
+		return -1;
+	if (root) {
+		struct package *p = NULL;
+		for (size_t i = 0; i < list->count; i++)
+			if (eu_equal(root, list->list[i].root)) {
+				p = list->list + i;
+				break;
+			}
+		if (!p || (pin && !eu_equal(pin, p->name))) {
+			errno = ENOENT;
+			return -1;
+		}
+		p->manual = true;
+		if (eu_equal(p->installed, p->name)) {
+			int flag = automatic(db, p->installed);
+			if (flag < 0)
+				return -1;
+			if (!flag)
+				return 0;
+		}
+		if (select_pkg(list, p, 0) < 0)
+			return -1;
+	} else
+		for (size_t i = 0; i < list->count; i++)
+			if (list->list[i].installed &&
+			    select_pkg(list, list->list + i, 0) < 0)
+				return -1;
 	for (size_t a = 0; a < list->updates; a++) {
 		struct package *p = list->order[a];
 		for (const struct eu_json *c = p->conflicts->child; c; c = c->next) {
@@ -459,24 +550,15 @@ eu_packages(const struct delivery *d, const struct eu_json *target, const char *
 					if (eu_equal(list->order[j]->installed, name))
 						name = list->order[j]->name;
 				if (match(eu_string(c), name) != 0)
-					goto done;
+					return -1;
 			}
 			for (size_t j = 0; j < list->updates; j++)
 				if (j != a &&
 				    match(eu_string(c), list->order[j]->name) != 0)
-					goto done;
+					return -1;
 		}
 	}
-	ok = 0;
-done:
-	free(want);
-	free(data);
-	free(text);
-	if (ok) {
-		eu_packages_free(list);
-		errno = EINVAL;
-	}
-	return ok;
+	return 0;
 }
 
 void

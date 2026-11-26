@@ -215,7 +215,8 @@ eu_run(const char *const argv[], char **output, size_t limit)
 			if (dup2(p[1], STDOUT_FILENO) < 0)
 				_exit(126);
 			close(p[1]);
-		}
+		} else if (dup2(STDERR_FILENO, STDOUT_FILENO) < 0)
+			_exit(126);
 		execv(argv[0], (char *const *)(uintptr_t)argv);
 		_exit(127);
 	}
