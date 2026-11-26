@@ -7,7 +7,8 @@ work=$(mktemp -d "${TMPDIR:-/tmp}/bcm2712-v3d-takeover.XXXXXXXX")
 trap 'rm -rf "$work"' EXIT HUP INT TERM
 sed '/^#include /d; /^__KERNEL_RCSID(/d' \
     "$src/sys/arch/arm/broadcom/bcm2712_v3d_takeover.c" > "$work/takeover.h"
-awk '/^#define BCM2712_PM_GRAFX[ \t]/' \
+awk '/^#define BCM2712_PM_(BASE|GRAFX)[ \t]/' \
+    "$src/sys/arch/arm/broadcom/bcm2835_pmreg.h" \
     "$src/sys/arch/arm/broadcom/bcm2835_pmwdog_acpi.c" > "$work/properties.h"
 printf 'int\n' > "$work/pm-accessor.h"
 sed -n '/^bcmpmwdog_v3d_status(/,$p' \
