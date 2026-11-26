@@ -30,6 +30,7 @@ The [amd64 VM walkthrough](usr.sbin/sysinst/docs/vm-installation.md) describes a
 [DevBoards](https://github.com/oxtech-ember/EmberBSD-DevBoards) owns the hardware catalog,
 loader requirements, media layout and installation applicability.
 Use [adding a board](ember/development/adding-a-board.md) for OS integration and executable checks.
+The [Luckfox Lyra Zero W image builder](distrib/utils/embedded/README.rk3506.md) prepares ARMv7 microSD media for bring-up.
 Run [native net80211 and CCMP contracts](ember/tools/native-net80211-checks.md) with the selected SDK host tools.
 Document software mechanisms beside their subsystem. See [ownership](CONTRIBUTING.md#documentation-ownership).
 

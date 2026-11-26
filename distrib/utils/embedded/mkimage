@@ -249,6 +249,7 @@ resize=false
 gpt=false
 gpt_hybrid=false
 gpt_peer_label=
+stage_output=false
 os_update_adapter=
 update_profile=
 fsize=8192
@@ -339,7 +340,7 @@ if [ -n "$update_profile" ]; then
 	extra=512
 fi
 
-if [ -n "$gpt_peer_label" ]; then
+if [ -n "$gpt_peer_label" ] || [ "$stage_output" = true ]; then
 	# Build a complete new image before replacing the caller's last image.
 	output_image=$image
 	$compress && output_image="$image.gz"
@@ -473,7 +474,9 @@ if $gpt; then
 	${GPT} ${gpt_flags} "${image}" set -a required -i 1
 	set --
 	[ -z "$gpt_peer_label" ] || set -- -s "$rootsecs"
-	${GPT} ${gpt_flags} "${image}" add -a 4m -b ${ffsstart} "$@" -l ${gpt_label_ffs:-netbsd-root} -t ffs
+	if [ -z "${bootonly}" ]; then
+		${GPT} ${gpt_flags} "${image}" add -a 4m -b ${ffsstart} "$@" -l ${gpt_label_ffs:-netbsd-root} -t ffs
+	fi
 	if [ -n "$gpt_peer_label" ]; then
 		${GPT} ${gpt_flags} "${image}" add -b $((ffsstart + rootsecs)) -s "$rootsecs" -l "$gpt_peer_label" -t ffs
 	fi
