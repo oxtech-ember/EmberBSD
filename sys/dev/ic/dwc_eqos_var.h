@@ -83,6 +83,9 @@ struct eqos_softc {
 
 	bool			sc_rx_csum_active;
 	bool			sc_rx_csum_posted[EQOS_DMA_DESC_COUNT];
+	uint8_t			sc_boot_rx_riwt;
+	uint8_t			sc_boot_tx_ioc_interval;
+	bool			sc_boot_ipv4_checksums;
 	int			sc_tx_ioc_interval;
 	bool			sc_udp_tx_canary;
 	int			sc_rx_riwt;

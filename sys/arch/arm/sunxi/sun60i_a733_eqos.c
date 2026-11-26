@@ -212,6 +212,21 @@ sun60i_a733_eqos_set_address(struct eqos_softc *sc, int phandle)
 	prop_dictionary_set_data(dict, "mac-address", enaddr, sizeof(enaddr));
 }
 
+static int
+sun60i_a733_eqos_policy_u8(int node, const char *name, uint8_t *out)
+{
+	uint32_t val;
+	int len = OF_getproplen(node, name);
+
+	if (len < 0)
+		return 0;
+	if (len != sizeof(val) || of_getprop_uint32(node, name, &val) != 0 ||
+	    val > UINT8_MAX)
+		return EINVAL;
+	*out = val;
+	return 0;
+}
+
 static void
 sun60i_a733_eqos_attach(device_t parent, device_t self, void *aux)
 {
@@ -229,6 +244,16 @@ sun60i_a733_eqos_attach(device_t parent, device_t self, void *aux)
 	bus_size_t size;
 	uint32_t val;
 	int n;
+
+	if (sun60i_a733_eqos_policy_u8(phandle, "emberbsd,eqos-rx-riwt",
+	    &sc->sc_boot_rx_riwt) != 0 ||
+	    sun60i_a733_eqos_policy_u8(phandle, "emberbsd,eqos-tx-ioc-interval",
+	    &sc->sc_boot_tx_ioc_interval) != 0) {
+		aprint_error(": invalid EQOS interrupt policy\n");
+		return;
+	}
+	sc->sc_boot_ipv4_checksums =
+	    OF_getproplen(phandle, "emberbsd,eqos-ipv4-checksums") == 0;
 
 	if (fdtbus_get_reg(phandle, 0, &addr, &size) != 0) {
 		aprint_error(": couldn't get registers\n");

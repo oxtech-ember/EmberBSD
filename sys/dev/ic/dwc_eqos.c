@@ -1785,6 +1785,37 @@ eqos_setup_dma(struct eqos_softc *sc, int qid)
 	return 0;
 }
 
+static int
+eqos_set_rx_riwt_locked(struct eqos_softc *sc, int value)
+{
+	int error = 0;
+
+	EQOS_ASSERT_LOCKED(sc);
+	if (value == 0) {
+		sc->sc_rx_riwt = 0;
+		if (sc->sc_rx_moderated_count == 0) {
+			WR4(sc, GMAC_DMA_CHAN0_RX_WATCHDOG, 0);
+			sc->sc_rx_riwt_programmed = 0;
+		}
+	} else if (value == sc->sc_rx_riwt_programmed) {
+		sc->sc_rx_riwt = value;
+	} else if (sc->sc_rx_moderated_count != 0) {
+		/* Do not replace the timer needed by descriptors in flight. */
+		error = EBUSY;
+	} else {
+		WR4(sc, GMAC_DMA_CHAN0_RX_WATCHDOG, value);
+		if ((RD4(sc, GMAC_DMA_CHAN0_RX_WATCHDOG) &
+		    (EQOS_RX_RIWT_MASK | EQOS_RX_RIWT_UNIT)) != value) {
+			WR4(sc, GMAC_DMA_CHAN0_RX_WATCHDOG, 0);
+			sc->sc_rx_riwt_programmed = sc->sc_rx_riwt = 0;
+			error = EOPNOTSUPP;
+		} else {
+			sc->sc_rx_riwt_programmed = sc->sc_rx_riwt = value;
+		}
+	}
+	return error;
+}
+
 int
 eqos_attach(struct eqos_softc *sc)
 {
@@ -1839,7 +1870,8 @@ eqos_attach(struct eqos_softc *sc)
 		sc->sc_hw_feature[n] = RD4(sc, GMAC_MAC_HW_FEATURE(n));
 	}
 
-	sc->sc_tx_ioc_interval = 1;
+	sc->sc_tx_ioc_interval = sc->sc_boot_tx_ioc_interval != 0 ?
+	    sc->sc_boot_tx_ioc_interval : 1;
 
 	aprint_naive("\n");
 	aprint_normal(": DesignWare EQOS ver 0x%02x (0x%02x)\n",
@@ -1876,6 +1908,15 @@ eqos_attach(struct eqos_softc *sc)
 	error = eqos_reset(sc);
 	if (error != 0) {
 		return error;
+	}
+
+	if (sc->sc_boot_rx_riwt != 0) {
+		EQOS_LOCK(sc);
+		error = eqos_set_rx_riwt_locked(sc, sc->sc_boot_rx_riwt);
+		EQOS_UNLOCK(sc);
+		if (error != 0)
+			aprint_error_dev(sc->sc_dev,
+			    "RX interrupt watchdog profile unavailable: %d\n", error);
 	}
 
 	/* Get DMA burst length */
@@ -1991,6 +2032,20 @@ eqos_attach(struct eqos_softc *sc)
 
 	/* Attach ethernet interface */
 	ether_ifattach(ifp, eaddr);
+#ifdef INET
+	if (sc->sc_boot_ipv4_checksums) {
+		struct ifcapreq ifcr = {
+			.ifcr_capenable = ifp->if_capabilities &
+			    (IFCAP_CSUM_IPv4_Tx | IFCAP_CSUM_TCPv4_Tx |
+			    IFCAP_CSUM_IPv4_Rx | IFCAP_CSUM_TCPv4_Rx |
+			    IFCAP_CSUM_UDPv4_Rx),
+		};
+
+		IFNET_LOCK(ifp);
+		(void)ifioctl_common(ifp, SIOCSIFCAP, &ifcr);
+		IFNET_UNLOCK(ifp);
+	}
+#endif
 	ether_set_ifflags_cb(&sc->sc_ec, eqos_ifflags_cb);
 
 	eqos_init_sysctls(sc);
@@ -2199,28 +2254,7 @@ eqos_sysctl_rx_riwt(SYSCTLFN_ARGS)
 		return EINVAL;
 
 	EQOS_LOCK(sc);
-	if (value == 0) {
-		sc->sc_rx_riwt = 0;
-		if (sc->sc_rx_moderated_count == 0) {
-			WR4(sc, GMAC_DMA_CHAN0_RX_WATCHDOG, 0);
-			sc->sc_rx_riwt_programmed = 0;
-		}
-	} else if (value == sc->sc_rx_riwt_programmed) {
-		sc->sc_rx_riwt = value;
-	} else if (sc->sc_rx_moderated_count != 0) {
-		/* Do not replace the timer needed by descriptors in flight. */
-		error = EBUSY;
-	} else {
-		WR4(sc, GMAC_DMA_CHAN0_RX_WATCHDOG, value);
-		if ((RD4(sc, GMAC_DMA_CHAN0_RX_WATCHDOG) &
-		    (EQOS_RX_RIWT_MASK | EQOS_RX_RIWT_UNIT)) != value) {
-			WR4(sc, GMAC_DMA_CHAN0_RX_WATCHDOG, 0);
-			sc->sc_rx_riwt_programmed = sc->sc_rx_riwt = 0;
-			error = EOPNOTSUPP;
-		} else {
-			sc->sc_rx_riwt_programmed = sc->sc_rx_riwt = value;
-		}
-	}
+	error = eqos_set_rx_riwt_locked(sc, value);
 	EQOS_UNLOCK(sc);
 	return error;
 }
