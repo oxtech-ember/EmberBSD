@@ -48,8 +48,7 @@ __weak_alias(strsignal,_strsignal)
  */
 
 __aconst char *
-strsignal(num)
-	int num;
+strsignal(int num)
 {
 	unsigned int signum;
 

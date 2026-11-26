@@ -18,9 +18,7 @@
 static char current_locale[32] = { "C" };
 
 char *
-setlocale(category, locale)
-	int category;
-	const char *locale;
+setlocale(int category, const char *locale)
 {
 	if (category < 0 || category >= _LC_LAST)
 		return (NULL);

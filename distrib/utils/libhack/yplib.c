@@ -97,35 +97,29 @@ void __yp_unbind __P((struct dom_binding *));
 int _yp_invalid_domain __P((const char *));
 
 int
-_yp_dobind(dom, ypdb)
-	const char *dom;
-	struct dom_binding **ypdb;
+_yp_dobind(const char *dom, struct dom_binding **ypdb)
 {
 	return YPERR_YPBIND;
 }
 
 void
-__yp_unbind(ypb)
-	struct dom_binding *ypb;
+__yp_unbind(struct dom_binding *ypb)
 {
 }
 
 int
-yp_bind(dom)
-	const char     *dom;
+yp_bind(const char *dom)
 {
 	return _yp_dobind(dom, NULL);
 }
 
 void
-yp_unbind(dom)
-	const char     *dom;
+yp_unbind(const char *dom)
 {
 }
 
 int
-yp_get_default_domain(domp)
-	char **domp;
+yp_get_default_domain(char **domp)
 {
 	*domp = NULL;
 	if (_yp_domain[0] == '\0')
@@ -136,8 +130,7 @@ yp_get_default_domain(domp)
 }
 
 int
-_yp_check(dom)
-	char          **dom;
+_yp_check(char **dom)
 {
 	char           *unused;
 
@@ -154,8 +147,7 @@ _yp_check(dom)
 }
 
 int
-_yp_invalid_domain(dom)
-	const char *dom;
+_yp_invalid_domain(const char *dom)
 {
 	if (dom == NULL || *dom == '\0')
 		return 1;
@@ -170,13 +162,8 @@ _yp_invalid_domain(dom)
 }
 
 int
-yp_match(indomain, inmap, inkey, inkeylen, outval, outvallen)
-	const char     *indomain;
-	const char     *inmap;
-	const char     *inkey;
-	int             inkeylen;
-	char          **outval;
-	int            *outvallen;
+yp_match(const char *indomain, const char *inmap, const char *inkey,
+    int inkeylen, char **outval, int *outvallen)
 {
 	*outval = NULL;
 	*outvallen = 0;
@@ -185,13 +172,8 @@ yp_match(indomain, inmap, inkey, inkeylen, outval, outvallen)
 }
 
 int
-yp_first(indomain, inmap, outkey, outkeylen, outval, outvallen)
-	const char     *indomain;
-	const char     *inmap;
-	char          **outkey;
-	int            *outkeylen;
-	char          **outval;
-	int            *outvallen;
+yp_first(const char *indomain, const char *inmap, char **outkey, int *outkeylen,
+    char **outval, int *outvallen)
 {
 
 	*outkey = *outval = NULL;
@@ -201,15 +183,8 @@ yp_first(indomain, inmap, outkey, outkeylen, outval, outvallen)
 }
 
 int
-yp_next(indomain, inmap, inkey, inkeylen, outkey, outkeylen, outval, outvallen)
-	const char     *indomain;
-	const char     *inmap;
-	const char     *inkey;
-	int             inkeylen;
-	char          **outkey;
-	int            *outkeylen;
-	char          **outval;
-	int            *outvallen;
+yp_next(const char *indomain, const char *inmap, const char *inkey,
+    int inkeylen, char **outkey, int *outkeylen, char **outval, int *outvallen)
 {
 	*outkey = *outval = NULL;
 	*outkeylen = *outvallen = 0;
@@ -218,43 +193,32 @@ yp_next(indomain, inmap, inkey, inkeylen, outkey, outkeylen, outval, outvallen)
 }
 
 int
-yp_all(indomain, inmap, incallback)
-	const char     *indomain;
-	const char     *inmap;
-	struct ypall_callback *incallback;
+yp_all(const char *indomain, const char *inmap,
+    struct ypall_callback *incallback)
 {
 	return YPERR_DOMAIN;
 }
 
 int
-yp_order(indomain, inmap, outorder)
-	const char     *indomain;
-	const char     *inmap;
-	int            *outorder;
+yp_order(const char *indomain, const char *inmap, int *outorder)
 {
 	return YPERR_DOMAIN;
 }
 
 int
-yp_master(indomain, inmap, outname)
-	const char     *indomain;
-	const char     *inmap;
-	char          **outname;
+yp_master(const char *indomain, const char *inmap, char **outname)
 {
 	return YPERR_DOMAIN;
 }
 
 int
-yp_maplist(indomain, outmaplist)
-	const char     *indomain;
-	struct ypmaplist **outmaplist;
+yp_maplist(const char *indomain, struct ypmaplist **outmaplist)
 {
 	return YPERR_DOMAIN;
 }
 
 char *
-yperr_string(incode)
-	int             incode;
+yperr_string(int incode)
 {
 	static char     err[80];
 
@@ -266,8 +230,7 @@ yperr_string(incode)
 }
 
 int
-ypprot_err(incode)
-	unsigned int    incode;
+ypprot_err(unsigned int incode)
 {
 	switch (incode) {
 	case YP_TRUE:	/* success */

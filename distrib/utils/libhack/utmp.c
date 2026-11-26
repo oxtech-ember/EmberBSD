@@ -11,41 +11,34 @@
 #include <util.h>
 
 void
-login(ut)
-	const struct utmp *ut;
+login(const struct utmp *ut)
 {
 }
 
 void
-loginx(ut)
-	const struct utmpx *ut;
+loginx(const struct utmpx *ut)
 {
 }
 
 int
-logout(line)
-	const char *line;
+logout(const char *line)
 {
 	return(0);
 }
 
 int
-logoutx(line, status, type)
-	const char *line;
-	int status, type;
+logoutx(const char *line, int status, int type)
 {
 	return(0);
 }
 
 void
-logwtmp(line, name, host)
-	const char *line, *name, *host;
+logwtmp(const char *line, const char *name, const char *host)
 {
 }
 
 void
-logwtmpx(line, name, host, status, type)
-	const char *line, *name, *host;
-	int status, type;
+logwtmpx(const char *line, const char *name, const char *host, int status,
+    int type)
 {
 }

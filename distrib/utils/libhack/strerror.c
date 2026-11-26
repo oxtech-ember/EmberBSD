@@ -38,8 +38,7 @@
  */
 
 __aconst char *
-strerror(num)
-	int num;
+strerror(int num)
 {
 	unsigned int errnum;
 
