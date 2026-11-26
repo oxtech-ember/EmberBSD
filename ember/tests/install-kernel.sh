@@ -182,3 +182,45 @@ board other; version 11.0 OTHER > "$EMBER_ROOT/running"; fails 'is not the runni
 board recovery; printf 'menu=Boot:boot ./netbsd.recovery\n' > "$EMBER_ROOT/boot/boot.cfg"
 kernel 11.0 OLD > "$EMBER_ROOT/netbsd.recovery"; fails 'other than netbsd.recovery'
 echo 'PASS: install-kernel.sh replaces the file that efiboot boots and keeps recovery'
+
+# An enrolled system needs no legacy menu. Its controller owns the trial.
+mkdir -p "$EMBER_ROOT/etc" "$EMBER_ROOT/usr/sbin" "$EMBER_ROOT/var/tmp"
+echo '{}' > "$EMBER_ROOT/etc/ember-update-profile.json"
+rm "$EMBER_ROOT/boot/boot.cfg"
+cp "$work/valid.elf" "$work/build/netbsd-EMBER64"
+echo module > "$work/build/required.kmod"
+echo raw > "$work/build/netbsd-EMBER64.img"
+echo tree > "$work/build/test.dtb"
+cat > "$EMBER_ROOT/usr/sbin/ember-update" <<'SH'
+#!/bin/sh
+set -eu
+if [ "$#" = 1 ] && [ "$1" = kernel-mode ]; then
+	echo slots
+	exit
+fi
+[ "$#" = 2 ] && [ "$1" = apply-kernel ] && [ -s "$2/netbsd" ]
+[ -f "$2/modules/required.kmod" ] || { echo 'missing selected module' >&2; exit 1; }
+[ "$(cat "$2/netbsd.img")" = raw ] && [ "$(cat "$2/test.dtb")" = tree ]
+echo 'controller received local kernel and modules'
+SH
+chmod 755 "$EMBER_ROOT/usr/sbin/ember-update"
+run
+grep -q 'controller received local kernel and modules' "$work/log"
+rm "$work/build/required.kmod"
+fails 'missing selected module'
+[ -z "$(ls -A "$EMBER_ROOT/var/tmp")" ]
+echo 'PASS: the enrolled controller receives a kernel build or holds the update'
+
+board profiled_single
+mkdir -p "$EMBER_ROOT/etc" "$EMBER_ROOT/usr/sbin"
+printf '%s\n' '{"storage":"single","adapter":"none"}' > "$EMBER_ROOT/etc/ember-update-profile.json"
+cat > "$EMBER_ROOT/usr/sbin/ember-update" <<'SH'
+#!/bin/sh
+[ "$#" = 1 ] && [ "$1" = kernel-mode ] || exit 1
+echo single
+SH
+chmod 0755 "$EMBER_ROOT/usr/sbin/ember-update"
+cp "$work/valid.elf" "$work/build/netbsd-EMBER64"
+run
+cmp "$work/build/netbsd-EMBER64" "$EMBER_ROOT/netbsd"
+echo 'PASS: a configured single-root system uses its normal recovery kernel'

@@ -1,8 +1,8 @@
 #!/bin/sh
 # SPDX-License-Identifier: BSD-2-Clause
 # Install a kernel and its board modules from one ember/build-kernel.sh
-# output on a running efiboot AArch64 board with one GPT disk. Run it as root
-# on the board; reboot into the new kernel before the next installation.
+# output. A provisioned two-slot system uses its update controller.
+# On a single-root efiboot AArch64 board, install to the selected GPT disk.
 #
 # The default boot.cfg entry selects the file, as in efiboot (efiblock.c):
 # `boot FILE` reads the first NetBSD FFS partition of the disk, `boot hd0x:FILE`
@@ -21,6 +21,40 @@ root=${EMBER_ROOT:-}
 kernel=$build/netbsd-$config
 cfg=$root/boot/boot.cfg
 [ -f "$kernel" ] || fail "no $kernel"
+# An enrolled system owns trial selection, OS receipts and confirmation.
+# A missing controller or an incomplete build must keep the current boot path.
+profile=$root/etc/ember-update-profile.json
+mode=single
+if [ -e "$profile" ] || [ -L "$profile" ]; then
+	controller=$root/usr/sbin/ember-update
+	[ -x "$controller" ] || fail "missing installed controller: $controller"
+	mode=$("$controller" kernel-mode) || fail 'invalid installed update profile'
+	case "$mode" in
+	single|slots) ;;
+	*) fail 'invalid installed kernel mode' ;;
+	esac
+fi
+if [ "$mode" = slots ]; then
+	stage=$(mktemp -d "$root/var/tmp/ember-kernel.XXXXXXXX") || fail 'cannot stage kernel'
+	trap 'rm -rf "$stage"' 0
+	trap 'exit 1' HUP INT TERM
+	cp "$kernel" "$stage/netbsd"
+	mkdir "$stage/modules"
+	set +f
+	for module in "$build"/*.kmod; do
+		[ -f "$module" ] || continue
+		cp "$module" "$stage/modules/"
+	done
+	if [ -f "$build/netbsd-$config.img" ]; then
+		cp "$build/netbsd-$config.img" "$stage/netbsd.img"
+	fi
+	for tree in "$build"/*.dtb; do
+		[ -f "$tree" ] || continue
+		cp "$tree" "$stage/"
+	done
+	"$controller" apply-kernel "$stage"
+	exit
+fi
 [ -f "$cfg" ] || fail "no $cfg"
 # The board base has od and awk. Read the ELF header and the program table
 # in file byte order. Stop before scanning the kernel payload.
