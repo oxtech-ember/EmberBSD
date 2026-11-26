@@ -49,7 +49,18 @@ if ARGV.first == '--tool'
     else
       image, boot = ARGV[-2..-1]
       names = %w[netbsd.img boot.scr dtb/allwinner/sun60i-a733-orangepi-zero3w.dtb dtb/allwinner/sun60i-a733-orangepi-zero4.dtb]
-      if ENV['A733_TEST_UPDATE']
+      if (description = ENV['SLOT_TEST_PROFILE'])
+        profile = JSON.parse(File.read(description))
+        slots = profile.fetch('slots')
+        names = ['netbsd.img', 'boot.scr'] + slots.fetch('trees').map { |dtb| File.join(slots.fetch('tree_directory'), dtb) }
+        root = File.dirname(boot)
+        abort 'wrong installed adapter profile' unless JSON.parse(File.read(File.join(root, 'etc/ember-update-profile.json'))) == slots
+        fstab = File.read(File.join(root, 'etc/fstab'))
+        abort 'wrong root label' unless fstab.match?(/^NAME=#{Regexp.escape(slots.fetch('roots').fetch('A'))}\s+\/\s/)
+        abort 'wrong boot label' unless fstab.match?(/^NAME=#{Regexp.escape(slots.fetch('esp'))}\s+\/boot\s/)
+        selector = File.read(File.join(boot, 'boot.scr.uimg'))
+        slots.fetch('roots').each_value { |label| abort 'wrong selector labels' unless selector.include?(label) }
+        %w[marker_address script_address].each { |key| abort 'wrong RAM address' unless selector.include?(profile.fetch(key)) }
         names += %w[slotboot.scr boot.scr.uimg]
         {'osgood.dat' => 'A', 'osback.dat' => 'A', 'osnext.dat' => '-'}.each do |file, value|
           abort "wrong initial #{file}" unless File.binread(File.join(boot, file)) == value
@@ -195,6 +206,12 @@ Dir.mktmpdir('a733-image-test-') do |work|
 
   if options[:update_python]
     revision = '1' * 40
+    File.open(File.join(kernel, 'netbsd'), 'r+b') do |f|
+      f.seek(4)
+      f.write("\x02\x01".b)
+      f.seek(18)
+      f.write("\xb7\0".b)
+    end
     tag = "EmberBSD:#{revision}\n\0NetBSD 11.1 (EMBER64)".b
     File.open(File.join(kernel, 'netbsd'), 'ab') { |file| file.write(tag) }
     File.open(File.join(kernel, 'netbsd.img'), 'ab') { |file| file.write(tag) }
@@ -210,12 +227,17 @@ Dir.mktmpdir('a733-image-test-') do |work|
                JSON.generate({repositories: {native: {install_mode: 'native', target: target}}}))
     archive = File.join(work, 'etc.tar.xz')
     File.write(archive, 'verified etc fixture')
-    update_env = env.merge('A733_UPDATE_PYTHON' => options[:update_python], 'A733_UPDATE_OS_COMMIT' => revision,
-                           'A733_UPDATE_ETC' => archive, 'A733_UPDATE_ETC_SHA256' => Digest::SHA256.file(archive).hexdigest,
-                           'A733_TEST_UPDATE' => '1')
-    update_command = command.map { |arg| arg == 'a733' ? 'a733-update' : arg }
+    profile = File.join(source, 'ember/image/os-profiles/orangepi-zero3w.json')
+    update_env = env.merge('OS_UPDATE_PYTHON' => options[:update_python], 'OS_UPDATE_OS_COMMIT' => revision,
+                           'OS_UPDATE_ETC' => archive, 'OS_UPDATE_ETC_SHA256' => Digest::SHA256.file(archive).hexdigest,
+                           'SLOT_TEST_PROFILE' => profile)
+    update_command = command.map { |arg| arg == 'a733' ? 'orangepi-zero3w' : arg }.insert(-2, '-U', profile)
     result, state = Open3.capture2e(update_env, *update_command)
     check(state.success?, "two-slot mkimage failed:\n#{result}")
+    File.open(image, 'rb') do |f|
+      f.seek(131072)
+      check(f.read(File.size(boot0)) == File.binread(boot0), 'wrong Zero 3W boot0 location')
+    end
     additions = File.readlines(log).map { |line| JSON.parse(line) }.select { |tool, args| tool == 'gpt' && args.include?('add') }
     a, b = additions.last(2).map(&:last)
     root_sector = ->(args, flag) { Integer(args.fetch(args.index(flag) + 1)) }
@@ -223,12 +245,66 @@ Dir.mktmpdir('a733-image-test-') do |work|
     check(root_sector.call(a, '-s') == root_sector.call(b, '-s') &&
           root_sector.call(a, '-b') + root_sector.call(a, '-s') == root_sector.call(b, '-b'), 'slots overlap or differ in size')
     meta = File.read(spec)
-    %w[usr/libexec/ember-os-update usr/libexec/ember-os-slot etc/ember-os-health etc/rc.d/ember_os_update
+    %w[usr/libexec/ember-os-update usr/libexec/ember-os-slot usr/libexec/ember_ffs_slot.py etc/ember-os-health etc/rc.d/ember_os_update
        etc/rc.conf.d/ember_os_update etc/rc.conf.d/resize_root etc/rc.conf.d/resize_gpt
        var/db/ember-os-update/release.json var/db/ember-os-update/etc.tar.xz].each do |path|
       check(meta.include?("./#{path} "), "two-slot root omits #{path}")
     end
-    result, state = Open3.capture2e(update_env.merge('A733_UPDATE_ETC_SHA256' => '0' * 64), *update_command)
+    # An independent board supplies its own boot script, RAM and hardware data.
+    fixture = File.join(work, 'second board')
+    FileUtils.mkdir_p(File.join(fixture, 'conf'))
+    FileUtils.cp(File.join(here, 'mkimage'), fixture)
+    FileUtils.ln_s(File.join(here, 'files'), File.join(fixture, 'files'))
+    FileUtils.cp(File.join(here, 'conf/evbarm.conf'), File.join(fixture, 'conf'))
+    File.write(File.join(fixture, 'conf/fixture.conf'), <<~'CONF')
+      board=fixture
+      gpt=true
+      root_overlay=true
+      os_update_adapter=uboot-ffs
+      sets="base comp etc"
+      MKDTB=no
+      . "${DIR}/conf/evbarm.conf"
+      make_fstab() { make_fstab_evbarm; }
+      customize() { customize_evbarm; }
+      populate() {
+          cp "$kernel/netbsd" "$mnt/netbsd"
+          cp "$kernel/netbsd.img" "$mnt/boot/netbsd.img"
+          mkdir -p "$mnt/boot/dtb/fixture"
+          for tree in $boot_trees; do cp "$kernel/$tree" "$mnt/boot/dtb/fixture/"; done
+          cp "$FIXTURE_BOOT" "$mnt/boot/boot.scr"
+          echo './netbsd type=file uname=root gname=wheel mode=0755' >> "$tmp/selected_sets"
+      }
+    CONF
+    alternate = JSON.parse(File.read(profile))
+    boot_script = File.join(fixture, 'launch.cmd')
+    File.write(boot_script, "echo fixture board boot\n")
+    alternate.merge!('image' => 'fixture', 'boot_script' => boot_script,
+                     'marker_address' => '0x100000', 'script_address' => '0x110000')
+    alternate.fetch('slots').merge!('profile' => 'fixture-stock', 'model' => 'fixture,board',
+                                    'roots' => {'A' => 'fixture-a', 'B' => 'fixture-b'}, 'esp' => 'fixture-esp',
+                                    'watchdog' => 'fixturewdt0', 'tree_directory' => 'dtb/fixture',
+                                    'trees' => ['fixture.dtb'], 'modules' => [])
+    FileUtils.cp(File.join(kernel, dtbs.first), File.join(kernel, 'fixture.dtb'))
+    second = File.join(fixture, 'fixture.json')
+    File.write(second, JSON.generate(alternate))
+    alt_command = ['/bin/sh', File.join(fixture, 'mkimage'), '-h', 'fixture', '-S', source,
+                   '-D', dest, '-K', kernel, '-c', overlay, '-U', second, File.join(fixture, 'test.img')]
+    result, state = Open3.capture2e(update_env.merge('SLOT_TEST_PROFILE' => second, 'FIXTURE_BOOT' => boot_script), *alt_command)
+    check(state.success?, "independent board failed: #{result}")
+    File.write(image, 'previous image')
+    wrong = update_command.map { |arg| arg == profile ? second : arg }
+    result, state = Open3.capture2e(update_env, *wrong)
+    check(!state.success? && result.include?('does not match the image board') &&
+          File.binread(image) == 'previous image', 'foreign profile replaced the image')
+    module_dir = File.join(overlay, 'stand/evbarm/11.1/modules/rpi5button')
+    FileUtils.mkdir_p(module_dir)
+    conflicting_module = File.join(module_dir, 'rpi5button.kmod')
+    File.write(conflicting_module, 'different module')
+    result, state = Open3.capture2e(update_env, *update_command)
+    check(!state.success? && result.include?('overlay overrides profile-owned path') &&
+          File.binread(image) == 'previous image', 'untrusted overlay module replaced the selected module')
+    File.unlink(conflicting_module)
+    result, state = Open3.capture2e(update_env.merge('OS_UPDATE_ETC_SHA256' => '0' * 64), *update_command)
     check(!state.success? && result.include?('SHA-256 mismatch'), 'wrong baseline etc accepted')
     File.write(image, 'keep the previous image')
     File.chmod(0640, image)

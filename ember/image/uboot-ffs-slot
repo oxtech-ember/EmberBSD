@@ -2,7 +2,6 @@
 # SPDX-License-Identifier: BSD-2-Clause
 """Install a verified OS cohort on the inactive FFS wedge of a U-Boot image."""
 
-from contextlib import ExitStack
 import hashlib
 import json
 import mmap
@@ -13,28 +12,16 @@ import shutil
 import subprocess
 import sys
 import tarfile
-import tempfile
 
 
-TAR = '/bin/tar'
+# -I excludes the script directory. Load only the module supplied beside this backend.
+sys.dont_write_bytecode = True
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from ember_ffs_slot import STATE, check, output, prepare_root, run
+
 BOOT = Path('/boot')
-STATE = Path('var/db/ember-os-update')
-ROOTS = {'A': 'netbsd-root', 'B': 'ember-root-b'}
-PROFILE = Path('/etc/ember-uboot-slots.json')
+PROFILE = Path('/etc/ember-update-profile.json')
 GOOD, BACK, NEXT = ('osgood.dat', 'osback.dat', 'osnext.dat')
-
-
-def check(ok, message):
-    if not ok:
-        raise ValueError(message)
-
-
-def output(*args):
-    return subprocess.check_output(args, text=True).strip()
-
-
-def run(*args, **kwargs):
-    subprocess.run(args, check=True, **kwargs)
 
 
 def marker(name):
@@ -92,156 +79,18 @@ def layout(profile, *, provisioning=False):
             check(item[2] not in devices, 'duplicate wedge label')
             devices[item[2]] = (item[1], item[3])
     mounts = output('/sbin/mount').splitlines()
-    for label, fs, target in ((match[3], 'ffs', '/'), ('EFI', 'msdos', '/boot')):
+    for label, fs, target in ((match[3], 'ffs', '/'), (profile['esp'], 'msdos', '/boot')):
         device = devices[label][0]
         check(any(line.startswith(f'/dev/{device} on {target} type {fs} (') for line in mounts),
               f'unexpected mount for {label}')
-    slots = {s: devices[n][0] for s, n in ROOTS.items() if n in devices and devices[n][1] == 'ffs'}
-    check(set(slots) == set(ROOTS) and running in slots.values(), 'two provisioned FFS slots required')
+    slots = {s: devices[n][0] for s, n in profile['roots'].items() if n in devices and devices[n][1] == 'ffs'}
+    check(set(slots) == set(profile['roots']) and running in slots.values(), 'two provisioned FFS slots required')
     active = next(s for s in slots if slots[s] == running)
     stable = marker(GOOD) or marker(BACK)
-    check(stable in ROOTS or (provisioning and stable is None), 'confirmed boot marker is unavailable')
+    check(stable in profile['roots'] or (provisioning and stable is None), 'confirmed boot marker is unavailable')
     chosen = output('/usr/sbin/ofctl', '-p', '/chosen')
     trial = re.search(r'^emberbsd,trial-watchdog(?:\s|$)', chosen, re.M) is not None
     return dict(running=active, confirmed=stable, next=marker(NEXT), trial=trial, prepared=prepared()), slots
-
-
-def digest(stream):
-    return hashlib.file_digest(stream, 'sha256').digest()
-
-
-def member_id(item, archive):
-    if item.isfile() or item.islnk():
-        with archive.extractfile(item) as stream:
-            return ('file', digest(stream), item.mode & 0o7777, item.uid, item.gid)
-    if item.isdir():
-        return ('dir', item.mode & 0o7777, item.uid, item.gid)
-    if item.issym():
-        return ('link', item.linkname, item.uid, item.gid)
-    return None
-
-
-def defaults(archive, linked=None):
-    with tarfile.open(archive, 'r:xz') as tar:
-        result = {}
-        for item in tar:
-            path = Path(item.name)
-            check(not path.is_absolute() and '..' not in path.parts, 'invalid defaults path')
-            if path == Path('.'):
-                continue
-            if linked is not None and item.islnk():
-                target = Path(item.linkname)
-                linked[path] = linked.get(target, target)
-            identity = member_id(item, tar)
-            if identity:
-                result[path] = identity
-        return result
-
-
-def installed_id(root, relative):
-    path = root / relative
-    check(path.parent.resolve().is_relative_to(root), f'configuration parent escapes slot: {relative}')
-    if path.is_symlink():
-        return ('link', os.readlink(path), path.lstat().st_uid, path.lstat().st_gid)
-    if path.is_file():
-        with path.open('rb') as stream:
-            info = os.fstat(stream.fileno())
-            return ('file', digest(stream), info.st_mode & 0o7777, info.st_uid, info.st_gid)
-    if path.is_dir():
-        info = path.stat()
-        return ('dir', info.st_mode & 0o7777, info.st_uid, info.st_gid)
-    return None if not path.exists() else ('other',)
-
-
-def keeps_private_mode(old, new, local):
-    """A site can restrict group or public reads independently of a content update."""
-    if not (old and new and local and old[0] == new[0] == local[0] == 'file'):
-        return False
-    if old[2:] != new[2:] or local[3:] != old[3:]:
-        return False
-    mode, site = old[2], local[2]
-    return site != mode and (site | mode) == mode and not ((mode ^ site) & ~0o044)
-
-
-def merge_defaults(root, old_archive, new_archive):
-    linked = {}
-    before, after = defaults(old_archive), defaults(new_archive, linked)
-    changed_groups = {target for alias, target in linked.items()
-                      if before.get(alias) != after[alias] or before.get(target) != after[target]}
-    guarded = changed_groups | {alias for alias, target in linked.items() if target in changed_groups}
-    install, removed_dirs, private_modes = [], [], {}
-    for path in sorted(before.keys() | after.keys()):
-        old, new = before.get(path), after.get(path)
-        if old == new and path not in guarded:
-            continue
-        actual = installed_id(root, path)
-        if actual == new:
-            continue
-        dest = root / path
-        if path in guarded:
-            check(actual == old, f'local change conflicts with a release hard link: {path}')
-        elif keeps_private_mode(old, new, actual):
-            if actual[1] == new[1]:
-                continue
-            check(actual[1] == old[1], f'local and release changes overlap: {path}')
-            private_modes[dest] = actual[2]
-        else:
-            check(actual == old, f'local and release changes overlap: {path}')
-        if new is None and old[0] == 'dir':
-            removed_dirs.append(dest)
-        elif new is None:
-            dest.unlink()
-        elif new[0] == 'dir':
-            check(old is None or old[0] == 'dir', f'default changes filesystem type: {path}')
-            dest.mkdir(parents=True, exist_ok=True)
-            os.chown(dest, new[2], new[3])
-            dest.chmod(new[1])
-        else:
-            check(old is None or old[0] != 'dir', f'default replaces a directory: {path}')
-            install.append('./' + str(path))
-    if install:
-        names = b'\0'.join(os.fsencode(name) for name in install) + b'\0'
-        run(TAR, '-xpf', new_archive, '-C', root, '--safe-writes', '--null', '-T', '/dev/stdin', input=names)
-        for dest, mode in private_modes.items():
-            dest.chmod(mode)
-    for dest in reversed(removed_dirs):
-        if not any(dest.iterdir()):
-            dest.rmdir()
-
-
-def snapshot_copy(root, work, stack):
-    source = work / 'snapshot'
-    source.mkdir(mode=0o700)
-    stack.callback(source.rmdir)
-    free = re.search(r'^(fss\d+): not in use$', output('/usr/sbin/fssconfig', '-l'), re.M)
-    check(free, 'no free FFS snapshot device')
-    device = free[1]
-    run('/usr/sbin/fssconfig', '-x', device, '/', str(work / 'backing'))
-    stack.callback(run, '/usr/sbin/fssconfig', '-u', device)
-    run('/sbin/mount', '-r', '-t', 'ffs', '/dev/' + device, source)
-    stack.callback(run, '/sbin/umount', source)
-    copy_snapshot_tree(source, root)
-
-
-def copy_snapshot_tree(source, root):
-    # Copy a consistent system, including pkgdb, accounts, DNS, SSH and firmware.
-    # Mounted volumes retain their own storage and fstab entries.
-    skip = ['boot', 'proc', 'dev/pts', 'tmp', 'var/tmp', 'var/run', 'var/shm',
-            'var/cache']
-    args = [TAR, '--one-file-system', '-cpf', '-']
-    for path in skip:
-        # bsdtar also matches the directory itself with a trailing /*.
-        args.extend(('--exclude', './' + path + '/?*'))
-    # The package lock and OS journal contain process state from the running slot.
-    args.extend(('--exclude', './' + str(STATE / 'incoming'),
-                 '--exclude', './' + str(STATE / 'attempt.json'),
-                 '--exclude', './var/db/emberbsd-sdk/client.lock'))
-    with subprocess.Popen([*args, '.'], cwd=source, stdout=subprocess.PIPE) as writer:
-        try:
-            run(TAR, '-xpf', '-', '-C', root, stdin=writer.stdout)
-        finally:
-            writer.stdout.close()
-        check(writer.wait() == 0, 'cannot copy the source snapshot')
 
 
 def contains_build(path, commit, kernel_tag):
@@ -268,82 +117,53 @@ def prepare(profile, slot, device, directory):
     check(receipt['profile'] == profile['profile'], 'wrong OS profile')
     check(profile['kernel'] in output('/sbin/sysctl', '-n', 'kern.version').splitlines()[0], 'custom kernel holds OS updates')
     check(set(receipt['sets']) == set(profile['sets']), 'distribution set selection changed')
-    check(not re.search(r'^/dev/' + device + r' on ', output('/sbin/mount'), re.M), 'target is mounted')
-    # These wedges are dedicated to this profile. Rebuild an interrupted staging slot from scratch.
-    write_plan(b'-\n')
-    run('/sbin/newfs', '-O', '1', '/dev/r' + device)
-    work = Path(tempfile.mkdtemp(prefix='ember-slot-', dir='/var/run'))
-    with ExitStack() as stack:
-        stack.callback(work.rmdir)
-        root = work / 'target'
-        root.mkdir(mode=0o700)
-        stack.callback(root.rmdir)
-        # A partial target has no boot permission and is reformatted on retry.
-        # Flush and unmount it before recording the prepared identity.
-        run('/sbin/mount', '-t', 'ffs', '-o', 'async', '/dev/' + device, root)
-        stack.callback(run, '/sbin/umount', root)
-        snapshot_copy(root, work, stack)
-        # The native base supplies programs and libraries. Preserve site files and device firmware.
-        run(TAR, '-xpf', directory / 'base.tar.xz', '-C', root, '--safe-writes',
-            '--exclude', './etc/*', '--exclude', './var/*', '--exclude', './usr/pkg',
-            '--exclude', './usr/local', '--exclude', './libdata/firmware', '--exclude', './usr/libdata/firmware')
-        run(TAR, '-xpf', directory / 'base.tar.xz', '-C', root, '--safe-writes',
-            './etc/release', './etc/mtree/set.base')
-        if 'comp' in receipt['sets']:
-            run(TAR, '-xpf', directory / 'comp.tar.xz', '-C', root, '--safe-writes')
-        state = root / STATE
-        # Some profiles install the updater in an image layer over common sets.
-        # This copy retains that layer until a release replaces its programs.
-        merge_defaults(root, state / 'etc.tar.xz', directory / 'etc.tar.xz')
-        shutil.copyfile(directory / 'etc.tar.xz', state / 'etc.tar.xz')
-        fstab = root / 'etc/fstab'
-        table = fstab.read_text()
-        table, count = re.subn(r'(?m)^NAME=(?:netbsd-root|ember-root-b)(\s+/\s+ffs\s+)',
-                               'NAME=' + ROOTS[slot] + r'\1', table)
-        check(count == 1, 'expected one named FFS root in fstab')
-        fstab.write_text(table)
-        boot = BOOT if slot == 'A' else BOOT / 'os-b'
-        modules = root / profile['module_directory']
-        if modules.exists():
-            check(modules.resolve().is_relative_to(root) and not modules.is_symlink(), 'invalid module directory')
-            shutil.rmtree(modules)
-        chosen_modules = {line.split('#', 1)[0].split()[0] for line in
-                          (root / 'etc/modules.conf').read_text().splitlines() if line.split('#', 1)[0].strip()}
-        check(chosen_modules <= set(profile['modules']), 'release cannot supply configured modules')
-        with tarfile.open(directory / 'boot.tar.xz', 'r:xz') as archive:
-            boot_file(archive, 'netbsd', root / 'netbsd')
-            boot_file(archive, 'netbsd.img', boot / 'netbsd.img')
-            for path in (root / 'netbsd', boot / 'netbsd.img'):
-                check(contains_build(path, receipt['os_commit'], profile['kernel']),
-                      f'{path.name} differs from the selected kernel release')
-            for tree in profile['trees']:
-                boot_file(archive, tree, boot / profile['tree_directory'] / tree)
-            for module in profile['modules']:
-                boot_file(archive, f'modules/{module}.kmod',
-                          root / profile['module_directory'] / module / (module + '.kmod'))
-        (state / 'attempt.json').unlink(missing_ok=True)
-        shutil.copyfile(directory / 'update.json', state / 'release.json')
-        run('/usr/sbin/chroot', root, '/bin/sh', '-ec',
-            'for dir in /boot /var/run /var/tmp /tmp; do test -d "$dir" || exit 1; done; '
-            'while read -r dev dir fs opts rest; do '
-            'case ",$opts," in *,noauto,*) continue ;; esac; '
-            'case "$dir" in /dev/pts|/proc|/var/shm) test -d "$dir" || exit 1 ;; esac; '
-            'done </etc/fstab; '
-            'test -x /etc/rc.d/ember_os_update && test -x /usr/libexec/ember-os-update && '
-            '/usr/pkg/bin/python3.15 -I -c "import ssl" && '
-            '. /etc/rc.subr && load_rc_config resize_root && ! checkyesno resize_root && '
-            'load_rc_config resize_gpt && ! checkyesno resize_gpt')
-        os.sync()
+    prepare_root(device, directory, receipt, profile['roots'], slot, lambda: write_plan(b'-\n'),
+                 lambda root: install_boot(root, profile, slot, directory, receipt))
     record_prepared(slot, (directory / "update.json").read_bytes())
+
+
+def install_boot(root, profile, slot, directory, receipt):
+    boot = BOOT if slot == 'A' else BOOT / 'os-b'
+    modules = root / profile['module_directory']
+    if modules.exists():
+        check(modules.resolve().is_relative_to(root) and not modules.is_symlink(), 'invalid module directory')
+        shutil.rmtree(modules)
+    chosen_modules = {line.split('#', 1)[0].split()[0] for line in
+                      (root / 'etc/modules.conf').read_text().splitlines() if line.split('#', 1)[0].strip()}
+    check(chosen_modules <= set(profile['modules']), 'release cannot supply configured modules')
+    with tarfile.open(directory / 'boot.tar.xz', 'r:xz') as archive:
+        boot_file(archive, 'netbsd', root / 'netbsd')
+        boot_file(archive, 'netbsd.img', boot / 'netbsd.img')
+        for path in (root / 'netbsd', boot / 'netbsd.img'):
+            check(contains_build(path, receipt['os_commit'], profile['kernel']),
+                  f'{path.name} differs from the selected kernel release')
+        for tree in profile['trees']:
+            boot_file(archive, tree, boot / profile['tree_directory'] / tree)
+        for module in profile['modules']:
+            boot_file(archive, f'modules/{module}.kmod',
+                      root / profile['module_directory'] / module / (module + '.kmod'))
 
 
 def read_profile():
     info = PROFILE.lstat()
     check(info.st_uid == 0 and not info.st_mode & 0o022 and PROFILE.is_file() and not PROFILE.is_symlink(),
           'unsafe boot profile owner, mode or type')
-    profile = json.loads(PROFILE.read_bytes())
-    check(set(profile) == {'profile', 'model', 'kernel', 'watchdog', 'trees', 'tree_directory', 'modules', 'module_directory', 'sets'},
+    return validate_profile(json.loads(PROFILE.read_bytes()))
+
+
+def validate_profile(profile):
+    check(set(profile) == {'adapter', 'storage', 'target', 'roots', 'esp', 'profile', 'model', 'kernel', 'watchdog', 'trees', 'tree_directory', 'modules', 'module_directory', 'sets'},
           'unexpected U-Boot profile fields')
+    check(profile['adapter'] == 'uboot-ffs' and profile['storage'] == 'ffs', 'invalid boot adapter or filesystem')
+    roots = profile['roots']
+    check(isinstance(roots, dict) and set(roots) == {'A', 'B'}, 'two root labels required')
+    labels = [roots['A'], roots['B'], profile['esp']]
+    check(all(isinstance(x, str) and re.fullmatch(r'[a-zA-Z0-9][a-zA-Z0-9._-]{0,35}', x) for x in labels)
+          and len(set(labels)) == 3, 'invalid or duplicate GPT labels')
+    target = profile['target']
+    check(isinstance(target, dict) and set(target) == {'arch', 'triplet', 'abi', 'runtime'}
+          and all(isinstance(v, str) and v for v in target.values()), 'invalid SDK target')
+    check(isinstance(profile['model'], str) and profile['model'].strip(), 'invalid hardware model')
     for key, pattern in (('profile', r'[a-z0-9][a-z0-9._-]*'), ('watchdog', r'[a-z][a-z0-9]*'),
                          ('kernel', r'\([A-Za-z0-9_]+\)'), ('tree_directory', r'dtb(?:/[a-zA-Z0-9_-]+)*'),
                          ('module_directory', r'stand/[\w-]+/[0-9.]+/modules')):
@@ -365,15 +185,16 @@ def main():
         print(json.dumps(state))
         return
     slot = args[1] if len(args) > 1 else None
-    check(slot in ROOTS, 'expected slot A or B')
+    check(slot in profile['roots'], 'expected slot A or B')
     if args == ['confirm', slot]:
         check(state['trial'] and state['running'] == slot and state['next'] is None,
               'expected a consumed trial of the running slot')
         identity = hashlib.sha256((Path('/') / STATE / 'release.json').read_bytes()).hexdigest()
         check(prepared() == dict(slot=slot, sha256=identity), 'current root differs from the prepared cohort')
         watchdog = re.escape(profile['watchdog'])
-        check(re.search(r'^\s*' + watchdog + r', \d+ second period \[armed, external tickle\]$',
-                        output('/sbin/wdogctl'), re.M), 'trial watchdog is unavailable')
+        timer = re.search(r'^\s*' + watchdog + r', ([1-9][0-9]*) second period \[armed, external tickle\]$',
+                          output('/sbin/wdogctl'), re.M)
+        check(timer, 'trial watchdog is unavailable')
         run('/sbin/wdogctl', '-d')
         try:
             write_marker(GOOD, slot)
@@ -381,7 +202,7 @@ def main():
             # The old default still provides recovery when the first commit write fails.
             # Reboot after a readback error too: the installed default resolves the outcome.
             try:
-                run('/sbin/wdogctl', '-e', '-p', '16', profile['watchdog'])
+                run('/sbin/wdogctl', '-e', '-p', timer[1], profile['watchdog'])
             finally:
                 run('/sbin/shutdown', '-r', 'now')
             raise

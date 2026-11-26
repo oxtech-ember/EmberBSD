@@ -211,8 +211,9 @@ make_fstab_default() {
 
 usage() {
 	cat << EOF 1>&2
-Usage: $PROG -h <host-arch> [-bdmx] [-B <byte-order>] [-K <kerneldir>] [-S <srcdir>] [-D <destdir>] [-c <custom-files-dir>] [-s <Mb size>] [<image>]
+Usage: $PROG -h <host-arch> [-bdmx] [-U <update-profile.json>] [-B <byte-order>] [-K <kerneldir>] [-S <srcdir>] [-D <destdir>] [-c <custom-files-dir>] [-s <Mb size>] [<image>]
 
+-U	Enable automatic OS updates with the selected image profile
 -b	Boot only, no sets loaded
 -r	root device kind (sd, wd, ld)
 -d	Add the debug sets
@@ -223,7 +224,7 @@ EOF
 }
 
 # First pass for options to get the host and src directories
-OPTS="B:D:K:S:bc:dh:mr:s:x"
+OPTS="B:D:K:S:U:bc:dh:mr:s:x"
 while getopts "$OPTS" f
 do
 	case $f in
@@ -248,6 +249,8 @@ resize=false
 gpt=false
 gpt_hybrid=false
 gpt_peer_label=
+os_update_adapter=
+update_profile=
 fsize=8192
 bsize=65536
 ffsversion=1
@@ -272,6 +275,8 @@ do
 	D)	release="$OPTARG";;
 	K)	kernel="$OPTARG";;
 	S)	;;
+	U)	[ -n "$OPTARG" ] || fail "Provide a nonempty update profile"
+		update_profile="$OPTARG";;
 	b)	bootonly=true;;
 	d)	dsets_p=true
 		selected_sets="$selected_sets debug"
@@ -299,6 +304,9 @@ if [ -n "${MKREPRO_TIMESTAMP}" ]; then
 fi
 
 shift $(( $OPTIND - 1 ))
+if [ -n "$update_profile" ] && [ -z "$1" ]; then
+	image=${image%.img}-slots.img
+fi
 if [ -n "$1" ]; then
 	# take the next argument as being the image name
 	image="$1"
@@ -310,7 +318,26 @@ case "$image" in
 *)	compress=false;;
 esac
 
-validate_inputs
+if [ -n "$update_profile" ]; then
+	[ -n "$os_update_adapter" ] && $gpt && $root_overlay && [ -z "$bootonly" ] ||
+	    fail "The selected image lacks a two-slot GPT boot adapter"
+	[ -d "$custom" ] && [ -d "$kernel" ] && [ -x "$OS_UPDATE_PYTHON" ] &&
+	    [ -r "$OS_UPDATE_ETC" ] && [ -n "$OS_UPDATE_ETC_SHA256" ] && [ -n "$OS_UPDATE_OS_COMMIT" ] ||
+	    fail "Provide the native layer, kernel, host Python and verified OS baseline"
+	case "$size" in
+	''|*[!0-9]*|0[0-9]*) fail "Use a decimal image size in MiB";;
+	esac
+	provisioner="$src/ember/image/provision-${os_update_adapter}.py"
+	cp "$update_profile" "$tmp/update-profile.json"
+	"$OS_UPDATE_PYTHON" -IB "$provisioner" --profile "$tmp/update-profile.json" \
+	    --check-image "$h" --sets $selected_sets > "$tmp/update-layout"
+	{
+		read -r gpt_label_ffs gpt_peer_label gpt_label_boot
+		read -r boot_trees
+	} < "$tmp/update-layout"
+	resize=false
+	extra=512
+fi
 
 if [ -n "$gpt_peer_label" ]; then
 	# Build a complete new image before replacing the caller's last image.
@@ -321,6 +348,8 @@ if [ -n "$gpt_peer_label" ]; then
 	staged_image=$(mktemp "${output_image}.XXXXXX") || fail "Cannot stage output image"
 	image=$staged_image
 fi
+
+validate_inputs
 
 if [ -z "${bootonly}" ]; then
 	echo ${bar} configuring sets ${bar}
@@ -336,6 +365,15 @@ fi
 make_fstab
 customize
 populate
+if [ -n "$update_profile" ]; then
+	set --
+	[ -z "$OS_UPDATE_HEALTH" ] || set -- --health "$OS_UPDATE_HEALTH"
+	"$OS_UPDATE_PYTHON" -IB "$provisioner" --profile "$tmp/update-profile.json" \
+	    --image-root "$mnt" --kernel "$kernel" --package-layer "$custom" \
+	    --mtree "$tmp/selected_sets" --os-commit "$OS_UPDATE_OS_COMMIT" \
+	    --etc-archive "$OS_UPDATE_ETC" --etc-sha256 "$OS_UPDATE_ETC_SHA256" \
+	    --timestamp "${MKREPRO_TIMESTAMP:-0}" "$@"
+fi
 prepare_root_overlay
 
 if [ ! "${MKDTB}" = "no" ]; then

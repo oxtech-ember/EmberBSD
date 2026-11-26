@@ -112,88 +112,14 @@ It is not a filesystem integrity check or physical startup acceptance.
 
 ## Zero 3W two-slot image
 
-Select `-h a733-update` for the stock EMBER64 minimal no-LDAP profile with development tools.
-Use the matching native boot bundle. Supply `modules/NAME.kmod` for its four modules under `-K`.
-The update profile uses the normal Zero 3W and Zero 4 DTBs. Its automatic boot selection is qualified per board.
+Select `-h orangepi-zero3w` for the Zero 3W microSD layout. Its boot0 starts at 128 KiB.
+The family image `-h a733` retains its 8 KiB boot0 offset.
+Use the normal board boot bundle, with the two normal DTBs and the four modules under `modules/` in the selected kernel directory.
 
-Prepare the [native package update layer](../../../ember/image/README.md#package-updates-on-a-running-system) for aarch64.
-Use an SDK client with `fetch-os-update` in that layer. Merge the site's network configuration and required device firmware into the layer.
-Pass it as `-c`. A new installation needs its normal network and SSH settings before it can reach the release channel.
-
-Supply the selected source commit and the original etc archive for that installation.
-Take its SHA-256 from the authenticated SDK release record. This archive supplies the defaults for later three-way configuration merges.
-Use the host Python from the SDK:
-
-```sh
-export A733_UPDATE_PYTHON="$HOST_PREFIX/bin/python3.15"
-export A733_UPDATE_OS_COMMIT="$OS_COMMIT"
-export A733_UPDATE_ETC="$SIGNED_ETC_ARCHIVE"
-export A733_UPDATE_ETC_SHA256="$SIGNED_ETC_SHA256"
-sh distrib/utils/embedded/mkimage -h a733-update -S "$OS_SOURCE" \
-    -D "$DESTDIR" -K "$KERNEL_DIRECTORY" -c "$NATIVE_LAYER" "$IMAGE"
-```
-
-The builder creates equal FFS wedges named `netbsd-root` and `ember-root-b` after the EFI partition.
-A holds the initial system with space for a download. B stays empty until preparation of the first trial.
-The profile disables automatic resizing of the GPT and root. Supply `-s MIB` to reserve a larger whole image.
-The builder rejects a size below the two-slot minimum.
-It replaces an existing output only after the complete image is ready.
-
-The installer writes the inactive FFS asynchronously. It flushes and unmounts it before marking the slot ready.
-After an interrupted copy, the next attempt creates a new filesystem there. The running root retains its normal mount options.
-
-When a release changes a default file's contents, the slot installer keeps stricter local group and public read permissions.
-The installed contents must match the old or new default. The release must keep the file's mode, owner and group. A release hard link with a local mode change holds the update.
-
-The stock health check validates the installed SSH configuration and host keys, the running SSH service and a local default route.
-Set `A733_UPDATE_HEALTH` to an executable for the image's own application to replace this check.
-It must return zero only when the application can use its saved configuration and data.
-The check runs locally and does not contact S3.
-Read the [installed OS service contract](../../../ember/tools/docs/automatic-system-update.md) for confirmation and rollback.
+To enable OS updates, pass `-U ember/image/os-profiles/orangepi-zero3w.json` to mkimage.
+Use the [common image procedure](../../../ember/tools/docs/automatic-system-update.md#build-an-image-with-automatic-updates) for the native package layer, baseline and optional health check.
 
 ### Enable an already provisioned card
 
-Use this operation only on an installed slot A with the same dedicated A, B and EFI wedges.
-Keep its normal `boot.scr`. The live operation checks the active model, layout, kernel and SDK.
-It checks the baseline archive against the digest from the verified release before writing new files.
-It preserves existing site files outside the listed profile configuration.
-Supply the OS source tree containing the two-slot support on the device, then run as root:
-
-```sh
-/usr/pkg/bin/python3.15 -I "$OS_SOURCE/ember/image/provision-a733-update.py" \
-    --live --os-commit "$OS_COMMIT" --etc-archive "$SIGNED_ETC_ARCHIVE" \
-    --etc-sha256 "$SIGNED_ETC_SHA256" --mkubootimage /usr/bin/mkubootimage
-```
-
-The bootstrap writes the current generation as zero, installs the one-shot loader, then enables `ember_os_update` for subsequent boots.
-Use `--health /path/to/check` to install a site-specific probe. Run `/etc/rc.d/ember_os_update start` to start the first pass now.
-An in-progress installation or another boot entry must be resolved before provisioning this profile.
-
-### Repair the selector on an installed card
-
-Use this operation to repair the stock slot backend and `boot.scr.uimg` on an enrolled system.
-Use the confirmed slot A, including after a rejected trial. Obtain both original files from the trusted installation image or its saved build output.
-Obtain a separate copy of the normal slot A `boot.scr` from the original installation image or its authenticated boot set.
-The installed `slotboot.scr` must match the board script in the selected OS source.
-
-On confirmed slot A, stop OS updates. Run the repair as root:
-
-```sh
-/etc/rc.d/ember_os_update stop
-/usr/pkg/bin/python3.15 -I "$OS_SOURCE/ember/image/provision-a733-update.py" \
-    --repair-loader --previous-loader "$ORIGINAL_SELECTOR" --previous-backend "$ORIGINAL_BACKEND" \
-    --recovery-loader "$ORIGINAL_BOOT_SCR" --mkubootimage /usr/bin/mkubootimage
-/etc/rc.d/ember_os_update start
-```
-
-The repair takes the service lock and checks the running slot, the recovery entry, and the empty next-boot marker.
-It verifies both installed files before writing. It installs the compatible backend on the running root first, then the selector on FAT.
-It flushes each file and its directory, then reads back the installed bytes.
-During a FAT rename, a power loss can leave `boot.scr.uimg` absent. U-Boot then loads the verified `boot.scr` and boots slot A.
-Run the same repair again with the same inputs to restore the preferred entry.
-The installed generation and its recorded attempt survive the repair.
-If a site diagnostic occupies the selector path, the check stops before writing it.
-
-The selector uses bare filenames for FAT markers in the partition root.
-The vendor FAT command can report success for a prefixed write while the file still contains the old slot.
-The loader starts a trial only after one write and a separate one-byte readback of `-`.
+For a card with the two dedicated GPT roots, use the [U-Boot and FFS enrollment procedure](../../../ember/tools/docs/uboot-ffs-slots.md).
+The same adapter can repair its selector on the confirmed initial root.

@@ -5,6 +5,34 @@ It supplies two independently bootable roots, a one-shot loader and an independe
 Each slot has its own kernel, modules, base, application prefix and package database.
 Keep shared writable data in a format that both releases can read.
 
+## Build an image with automatic updates
+
+Choose the hardware image and its compatible update profile separately.
+In the embedded GPT/FFS builder, `-h` selects the board and `-U` enables updates with a trusted image description.
+Build the [native package layer](../../image/README.md#package-updates-on-a-running-system) for the target. Supply its network configuration and required device firmware.
+Use the SHA-256 of the original etc archive from its authenticated release. The installer uses those defaults to merge later configuration changes.
+
+```sh
+export OS_UPDATE_PYTHON="$HOST_PREFIX/bin/python3.15"
+export OS_UPDATE_OS_COMMIT="$OS_COMMIT"
+export OS_UPDATE_ETC="$SIGNED_ETC_ARCHIVE"
+export OS_UPDATE_ETC_SHA256="$SIGNED_ETC_SHA256"
+sh "$OS_SOURCE/distrib/utils/embedded/mkimage" -h "$BOARD" -U "$UPDATE_PROFILE" \
+    -S "$OS_SOURCE" -D "$DESTDIR" -K "$KERNEL_DIRECTORY" -c "$NATIVE_LAYER" "$IMAGE"
+```
+
+Set `OS_UPDATE_HEALTH` to supply an application-specific health program. The default comes from the image description.
+The builder checks the profile, selected sets and native package target before replacing the output.
+It reserves two equal FFS wedges and disables automatic root resizing. Use `-s MIB` to increase the complete image size.
+With no `-U`, mkimage keeps the board's ordinary layout.
+
+The SDK owns signed release selection. The OS service owns the attempt record, the local health check and confirmation policy.
+The [shared FFS installer](../../image/ember_ffs_slot.py) snapshots the running root, preserves packages, merges settings and prepares the inactive filesystem.
+The boot adapter identifies the device, supplies its boot files and controls the one-shot entry and watchdog.
+The [U-Boot/FFS adapter](uboot-ffs-slots.md) is available for profiles with its boot contract.
+Another loader implements the same service operations and can reuse the FFS installer.
+Boards with the same loader contract supply hardware data and the board boot script.
+
 ## Image configuration
 
 Install the native SDK client with `fetch-os-update`, its Python interpreter and its HTTPS and release trust roots.

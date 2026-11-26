@@ -1,0 +1,45 @@
+{
+  "image": "orangepi-zero3w",
+  "health": "ember/image/ssh-route-health",
+  "slots": {
+    "profile": "a733-zero3w-ember64-minimal-noldap-comp",
+    "model": "xunlong,orangepi-zero3w",
+    "kernel": "(EMBER64)",
+    "watchdog": "sunxiwdt0",
+    "module_directory": "stand/evbarm/11.1/modules",
+    "modules": [
+      "bcm2712btcom",
+      "bcmexpgpio",
+      "rp1wmcodec",
+      "rpi5button"
+    ],
+    "tree_directory": "dtb/allwinner",
+    "trees": [
+      "sun60i-a733-orangepi-zero3w.dtb",
+      "sun60i-a733-orangepi-zero4.dtb"
+    ],
+    "sets": [
+      "boot",
+      "base",
+      "etc",
+      "comp"
+    ],
+    "adapter": "uboot-ffs",
+    "storage": "ffs",
+    "target": {
+      "arch": "aarch64",
+      "triplet": "aarch64--netbsd",
+      "abi": "netbsd-11",
+      "runtime": "libc++"
+    },
+    "roots": {
+      "A": "netbsd-root",
+      "B": "ember-root-b"
+    },
+    "esp": "EFI"
+  },
+  "uboot_arch": "arm64",
+  "boot_script": "ember/boot/orangepi-zero4-boot.cmd",
+  "marker_address": "0x43300000",
+  "script_address": "0x43200000"
+}

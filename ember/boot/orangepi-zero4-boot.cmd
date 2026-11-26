@@ -57,8 +57,9 @@ fi
 if test -n "${ember_slot}"; then
     if test "${ember_boot_mode}" != normal; then exit 1; fi
     if test "${fdtname}" != sun60i-a733-orangepi-zero3w.dtb; then exit 1; fi
+    if test -z "${ember_root}"; then exit 1; fi
+    setenv bootargs "root=NAME=${ember_root}"
     if test "${ember_slot}" = B; then
-        setenv bootargs "root=NAME=ember-root-b"
         setenv prefix "${prefix}os-b/"
     elif test "${ember_slot}" != A; then
         exit 1

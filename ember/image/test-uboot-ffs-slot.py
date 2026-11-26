@@ -7,6 +7,7 @@ import hashlib
 import importlib.machinery
 import importlib.util
 import io
+import json
 import os
 from pathlib import Path
 from types import SimpleNamespace
@@ -24,6 +25,7 @@ IMAGE = Path(__file__).resolve().parent
 loader = importlib.machinery.SourceFileLoader('uboot_slot', str(IMAGE / 'uboot-ffs-slot'))
 slot = importlib.util.module_from_spec(importlib.util.spec_from_loader(loader.name, loader))
 loader.exec_module(slot)
+import ember_ffs_slot as ffs
 
 
 class SlotTests(unittest.TestCase):
@@ -36,7 +38,8 @@ class SlotTests(unittest.TestCase):
         self.enterContext(patch.object(slot, 'BOOT', self.boot))
         self.enterContext(patch.object(slot, 'STATE', self.state))
         self.enterContext(patch.object(slot, 'read_profile', return_value={
-            'model': 'Test board', 'watchdog': 'testwdt0'}))
+            'model': 'Test board', 'watchdog': 'testwdt0', 'esp': 'EFI',
+            'roots': {'A': 'netbsd-root', 'B': 'ember-root-b'}}))
         self.commands = self.enterContext(patch.object(slot, 'run'))
         self.prepare = self.enterContext(patch.object(slot, 'prepare'))
         self.enterContext(patch.object(slot, 'output', side_effect=self.output))
@@ -74,7 +77,7 @@ class SlotTests(unittest.TestCase):
             slot.main()
 
     def test_exact_wedges_and_mounted_boot(self):
-        status, devices = slot.layout({'model': 'Test board'})
+        status, devices = slot.layout(slot.read_profile())
         self.assertEqual(devices, {'A': 'dk1', 'B': 'dk2'})
         self.assertEqual(status['running'], 'A')
         original = dict(self.labels)
@@ -140,6 +143,7 @@ class SlotTests(unittest.TestCase):
         self.commands.assert_not_called()
 
     def test_primary_commit_failure_rearms_watchdog_and_requests_reset(self):
+        self.watchdog = 'testwdt0, 45 second period [armed, external tickle]'
         self.root = 'dk2'
         self.chosen = 'emberbsd,trial-watchdog'
         slot.record_prepared('B', self.receipt)
@@ -152,7 +156,7 @@ class SlotTests(unittest.TestCase):
                         self.invoke('confirm', 'B')
                 write.assert_called_once_with(slot.GOOD, 'B')
                 self.assertEqual(self.commands.call_args_list, [
-                    call('/sbin/wdogctl', '-d'), call('/sbin/wdogctl', '-e', '-p', '16', 'testwdt0'),
+                    call('/sbin/wdogctl', '-d'), call('/sbin/wdogctl', '-e', '-p', '45', 'testwdt0'),
                     call('/sbin/shutdown', '-r', 'now')])
                 self.assertEqual(slot.marker(slot.GOOD), 'A')
 
@@ -183,8 +187,8 @@ class SnapshotTests(unittest.TestCase):
                 (source / name).chmod(mode)
             (source / 'var/db/ember-os-update/attempt.json').touch()
             (source / 'var/db/emberbsd-sdk/client.lock').touch()
-            with patch.object(slot, 'TAR', tar):
-                slot.copy_snapshot_tree(source, target)
+            with patch.object(ffs, 'TAR', tar):
+                ffs.copy_snapshot_tree(source, target)
             for name, mode in modes.items():
                 path = target / name
                 self.assertEqual(list(path.iterdir()), [])
@@ -245,16 +249,16 @@ class DefaultsTests(unittest.TestCase):
             self.assertEqual(args[args.index('-C') + 1], self.root)
             subprocess.run([tar, *args], check=True, **kwargs)
 
-        with patch.object(slot, 'run', side_effect=extract):
-            slot.merge_defaults(self.root, self.archive('old', before), self.archive('new', new))
+        with patch.object(ffs, 'run', side_effect=extract):
+            ffs.merge_defaults(self.root, self.archive('old', before), self.archive('new', new))
         self.assertEqual(stat.S_IMODE((self.root / 'etc/change').stat().st_mode), 0o600)
         self.assertEqual({p.name: p.read_bytes() for p in (self.root / 'etc').iterdir()},
                          dict(local=b'site setting', change=b'new', add=b'addition'))
 
     def test_overlapping_local_change_stops_before_installing_that_file(self):
         self.install({'site': b'local'})
-        with self.assertRaises(ValueError), patch.object(slot, 'run') as run:
-            slot.merge_defaults(self.root, self.archive('old', {'site': b'initial'}),
+        with self.assertRaises(ValueError), patch.object(ffs, 'run') as run:
+            ffs.merge_defaults(self.root, self.archive('old', {'site': b'initial'}),
                                 self.archive('new', {'site': b'upstream'}))
         self.assertEqual((self.root / 'etc/site').read_bytes(), b'local')
         run.assert_not_called()
@@ -263,11 +267,11 @@ class DefaultsTests(unittest.TestCase):
         before = ('file', b'old digest', 0o444, 0, 0)
         after = ('file', b'new digest', 0o444, 0, 0)
         local = ('file', b'old digest', 0o400, 0, 0)
-        self.assertTrue(slot.keeps_private_mode(before, after, local))
+        self.assertTrue(ffs.keeps_private_mode(before, after, local))
         for mode in (0o444, 0o644, 0o544, 0o004):
-            self.assertFalse(slot.keeps_private_mode(before, after, (*local[:2], mode, 0, 0)))
-        self.assertFalse(slot.keeps_private_mode(before, (*after[:2], 0o440, 0, 0), local))
-        self.assertFalse(slot.keeps_private_mode(before, after, (*local[:4], 1)))
+            self.assertFalse(ffs.keeps_private_mode(before, after, (*local[:2], mode, 0, 0)))
+        self.assertFalse(ffs.keeps_private_mode(before, (*after[:2], 0o440, 0, 0), local))
+        self.assertFalse(ffs.keeps_private_mode(before, after, (*local[:4], 1)))
 
     def test_private_mode_on_either_archive_hard_link_holds_the_update(self):
         for private in ('file', 'alias'):
@@ -277,8 +281,8 @@ class DefaultsTests(unittest.TestCase):
                 link = [('alias', 'file')]
                 old = self.archive('old', {'file': b'old'}, links=link)
                 new = self.archive('new', {'file': b'new'}, links=link)
-                with patch.object(slot, 'run') as extract, self.assertRaisesRegex(ValueError, 'hard link'):
-                    slot.merge_defaults(self.root, old, new)
+                with patch.object(ffs, 'run') as extract, self.assertRaisesRegex(ValueError, 'hard link'):
+                    ffs.merge_defaults(self.root, old, new)
                 extract.assert_not_called()
                 self.assertEqual((self.root / 'etc' / private).read_bytes(), b'old')
 
@@ -288,8 +292,8 @@ class DefaultsTests(unittest.TestCase):
         target.chmod(0o600)
         old = self.archive('old', {'file': b'old'})
         new = self.archive('new', {'file': b'old'}, links=[('alias', 'file')])
-        with patch.object(slot, 'run') as extract, self.assertRaisesRegex(ValueError, 'hard link'):
-            slot.merge_defaults(self.root, old, new)
+        with patch.object(ffs, 'run') as extract, self.assertRaisesRegex(ValueError, 'hard link'):
+            ffs.merge_defaults(self.root, old, new)
         extract.assert_not_called()
         self.assertFalse((self.root / 'etc/alias').exists())
         self.assertEqual(stat.S_IMODE(target.stat().st_mode), 0o600)
@@ -303,8 +307,8 @@ class DefaultsTests(unittest.TestCase):
             path.chmod(mode)
         local = self.root / 'etc/site/local'
         local.write_bytes(b'site')
-        with patch.object(slot, 'run') as extract:
-            slot.merge_defaults(self.root, self.archive('old', {}, dirs=before),
+        with patch.object(ffs, 'run') as extract:
+            ffs.merge_defaults(self.root, self.archive('old', {}, dirs=before),
                                 self.archive('new', {}, dirs=after))
             extract.assert_not_called()
         self.assertEqual(local.read_bytes(), b'site')
@@ -323,19 +327,19 @@ class DefaultsTests(unittest.TestCase):
         item.gid = os.getgid()
         tar = Mock()
         tar.extractfile.return_value = io.BytesIO(b'default')
-        self.assertEqual(slot.member_id(item, tar), slot.installed_id(self.root, Path('etc/site')))
+        self.assertEqual(ffs.member_id(item, tar), ffs.installed_id(self.root, Path('etc/site')))
 
     def test_changed_upstream_or_local_group_participates_in_merge(self):
         files = {'site': b'default'}
         self.install(files)
         old = self.archive('old', files)
         changed_group = self.archive('group', files, gid=os.getgid() + 1)
-        with patch.object(slot, 'run') as extract:
-            slot.merge_defaults(self.root, old, changed_group)
+        with patch.object(ffs, 'run') as extract:
+            ffs.merge_defaults(self.root, old, changed_group)
             extract.assert_called_once()
         changed_content = self.archive('content', {'site': b'next'}, gid=os.getgid() + 1)
-        with patch.object(slot, 'run') as extract, self.assertRaises(ValueError):
-            slot.merge_defaults(self.root, changed_group, changed_content)
+        with patch.object(ffs, 'run') as extract, self.assertRaises(ValueError):
+            ffs.merge_defaults(self.root, changed_group, changed_content)
         extract.assert_not_called()
         self.assertEqual((self.root / 'etc/site').read_bytes(), b'default')
 
@@ -345,11 +349,13 @@ class RepairTests(unittest.TestCase):
         self.work = Path(self.enterContext(tempfile.TemporaryDirectory()))
         self.boot = self.work / 'boot'
         self.boot.mkdir()
-        spec = importlib.util.spec_from_file_location('provision_a733', IMAGE / 'provision-a733-update.py')
+        spec = importlib.util.spec_from_file_location('provision_uboot_ffs', IMAGE / 'provision-uboot-ffs.py')
         self.provision = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(self.provision)
-        self.backend = Mock(BOOT=self.boot, NEXT='osnext.dat')
-        self.backend.read_profile.return_value = self.provision.PROFILE
+        self.backend = Mock(BOOT=self.boot, NEXT='osnext.dat', PROFILE=self.work / 'ember-update-profile.json')
+        self.backend.PROFILE.write_text('{}')
+        image = self.provision.read_image_profile(IMAGE / 'os-profiles/orangepi-zero3w.json')
+        self.backend.read_profile.return_value = image['slots']
         self.status = dict(running='A', confirmed='A', next=None, trial=False, prepared={'slot': 'B'})
         self.backend.layout.return_value = (self.status, {})
         self.enterContext(patch.object(self.provision, 'load_backend', return_value=self.backend))
@@ -357,8 +363,8 @@ class RepairTests(unittest.TestCase):
         self.enterContext(patch.object(self.provision.sys, 'platform', 'netbsd11'))
         self.enterContext(patch.object(self.provision, 'SERVICE_PID', self.work / 'service.pid'))
         self.board = b'x' * 64
-        self.enterContext(patch.object(self.provision, 'boot_script', side_effect=lambda tool, source, timestamp:
-                                       self.board if source == 'orangepi-zero4-boot.cmd' else b'updated loader'))
+        self.enterContext(patch.object(self.provision, 'boot_script', side_effect=lambda tool, source, timestamp, image:
+                                       self.board if source == image['boot_script'] else b'updated loader'))
         self.old = self.work / 'original.scr'
         self.old.write_bytes(b'old loader')
         self.old_backend = self.work / 'old-backend'
@@ -366,14 +372,14 @@ class RepairTests(unittest.TestCase):
         self.installed = self.work / 'installed'
         self.installed.write_bytes(self.old_backend.read_bytes())
         self.installed.chmod(0o555)
-        self.enterContext(patch.dict(self.provision.CONTROL, backend=str(self.installed)))
+        self.enterContext(patch.object(self.provision, 'BACKEND', self.installed))
         # The host tests run without root. Keep the real file and atomic rename.
         self.enterContext(patch.object(self.provision, 'check_installed_backend'))
         self.enterContext(patch.object(os, 'fchown'))
         self.updated_backend = (IMAGE / 'uboot-ffs-slot').read_bytes()
         self.recovery = self.work / 'baseline-boot.scr'
         self.recovery.write_bytes(b'recovery')
-        self.args = SimpleNamespace(previous_loader=self.old, previous_backend=self.old_backend,
+        self.args = SimpleNamespace(image=image, previous_board=None, previous_loader=self.old, previous_backend=self.old_backend,
                                     recovery_loader=self.recovery, mkubootimage='/usr/bin/mkubootimage')
         for name, contents in {'boot.scr.uimg': self.old.read_bytes(), 'boot.scr': b'recovery',
                                'slotboot.scr': self.board, 'osgood.dat': b'A', 'osback.dat': b'A',
@@ -462,6 +468,39 @@ class RepairTests(unittest.TestCase):
         self.assertEqual(self.files(), self.previous)
 
 
+    def test_retry_board_rename_after_power_loss(self):
+        path = self.boot / 'slotboot.scr'
+        self.args.previous_board = self.work / 'original-board'
+        self.args.previous_board.write_bytes(path.read_bytes())
+        path.unlink()
+        self.provision.repair_loader(self.args)
+        self.assertEqual(path.read_bytes(), self.board)
+
+    def test_repair_migrates_enrolled_labels_without_resetting_markers(self):
+        self.backend.PROFILE.unlink()
+        new = self.args.image['slots']
+        previous = {k: v for k, v in new.items() if k not in ('adapter', 'storage', 'roots', 'esp', 'target')}
+        legacy = self.work / 'ember-uboot-slots.json'
+        legacy.write_text(json.dumps(previous))
+        old_board = self.work / 'old-board.scr'
+        old_board.write_bytes(b'old-board'.ljust(64, b'0'))
+        (self.boot / 'slotboot.scr').write_bytes(old_board.read_bytes())
+        self.args.previous_board = old_board
+        self.provision.repair_loader(self.args)
+        self.assertFalse(legacy.exists())
+        self.assertEqual(json.loads(self.backend.PROFILE.read_text()), new)
+        for name in ('osnext.dat', 'osgood.dat', 'osback.dat', 'osplan.dat'):
+            self.assertEqual((self.boot / name).read_bytes(), self.previous[name])
+
+    def test_busy_service_excludes_live_enrollment_before_reading_state(self):
+        with self.provision.SERVICE_PID.open('a+') as locked:
+            fcntl.flock(locked, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            with patch.object(self.provision, 'provision_root') as prepare, self.assertRaises(BlockingIOError):
+                self.provision.provision(SimpleNamespace(live=True))
+            prepare.assert_not_called()
+        self.assertEqual(self.files(), self.previous)
+
+
 class LoaderTests(unittest.TestCase):
     # Run the loader conditionals unmodified. Model the byte in RAM, the FAT
     # records, and the transfer to the board script with shell functions.
@@ -510,7 +549,9 @@ distro_bootpart=1
     def execute(self, *, good='41', back='41', next='42', fault='', handoff='boot', board=False):
         script = (IMAGE.parent / 'boot/uboot-ffs-slots.cmd').read_text()
         script = script.replace('setexpr.b ', 'setexpr_b ').replace('mw.b ', 'mw_b ')
-        script = script.replace('source 0x43200000', 'launch 0x43200000')
+        script = script.replace('@MARKER_ADDRESS@', '0x1000').replace('@SCRIPT_ADDRESS@', '0x2000')
+        script = script.replace('source 0x2000', 'launch 0x2000')
+        script = script.replace('@ROOT_A@', 'netbsd-root').replace('@ROOT_B@', 'ember-root-b')
         commands = self.model
         recovery = 'echo recovery'
         if board:
