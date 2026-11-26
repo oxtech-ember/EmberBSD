@@ -391,7 +391,13 @@ static void dwc2_port_intr(struct dwc2_hsotg *hsotg)
 			hsotg->new_connection = true;
 			dwc2_hprt0_enable(hsotg, hprt0, &hprt0_modify);
 		} else {
-			hsotg->flags.b.port_enable_change = 1;
+			/*
+			 * Resetting an enabled port also raises ENACHG when reset
+			 * is asserted. C_PORT_ENABLE reports a port error.
+			 * Reset completion is reported by dwc2_hprt0_enable().
+			 */
+			if (!(hprt0 & HPRT0_RST))
+				hsotg->flags.b.port_enable_change = 1;
 			if (hsotg->core_params->dma_desc_fs_enable) {
 				u32 hcfg;
 
