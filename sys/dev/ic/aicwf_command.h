@@ -8,6 +8,9 @@
 #ifndef _DEV_IC_AICWF_COMMAND_H_
 #define _DEV_IC_AICWF_COMMAND_H_
 
+#define	AICWF_TYPE_CFG			0x10	/* configuration frame bit */
+#define	AICWF_TYPE_TX_CFM		0x12
+#define	AICWF_RXHDR_LEN			60	/* radio descriptor and pad */
 #define	AICWF_TYPE_MSG			0x11
 #define	AICWF_HDR_LEN			4
 #define	AICWF_TX_MSG_OFFSET		8
@@ -19,6 +22,34 @@
 #define	AICWF_VERSION_LEN		28
 #define	AICWF_DBG_MEM_READ_REQ		0x0400
 #define	AICWF_DBG_MEM_READ_CFM		0x0401
+
+struct aicwf_rx_frame {
+	size_t len;	/* payload length after the configuration or data header */
+	uint8_t type;
+};
+
+/*
+ * Return the size to consume, zero at transfer padding, or -1 for a
+ * truncated frame. The last frame can end before the alignment padding.
+ */
+static inline int
+aicwf_frame_decode(const uint8_t *buf, size_t len, struct aicwf_rx_frame *frame)
+{
+	size_t payload, hdr, step;
+
+	if (len < AICWF_HDR_LEN)
+		return 0;
+	payload = le16dec(buf);
+	if (payload == 0)
+		return 0;
+	frame->type = buf[2] & 0x7f;
+	hdr = (frame->type & AICWF_TYPE_CFG) ? AICWF_HDR_LEN : AICWF_RXHDR_LEN;
+	if (hdr > len || payload > len - hdr)
+		return -1;
+	frame->len = payload;
+	step = (hdr + payload + 3) & ~(size_t)3;
+	return step < len ? (int)step : (int)len;
+}
 
 struct aicwf_version {
 	uint32_t lmac;

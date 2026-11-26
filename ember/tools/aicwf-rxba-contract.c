@@ -9,6 +9,13 @@
 #define ETHER_HDR_LEN 14
 #define ETHER_ADDR_LEN 6
 #define le16dec(p) ((uint16_t)((p)[0] | (p)[1] << 8))
+static void
+le16enc(uint8_t *p, uint16_t v)
+{
+	p[0] = v;
+	p[1] = v >> 8;
+}
+#include "aicwf_command.h"
 #define roundup(n,m) (((n)+(m)-1)/(m)*(m))
 #define MAX(a,b) ((a)>(b)?(a):(b))
 #define __UNCONST(p) ((void *)(uintptr_t)(const void *)(p))
@@ -236,8 +243,8 @@ test_aic_key_stop_and_batch_fences(void)
  CHECK(!aic.sc_rx_active && aic.sc_rxba.bytes==0);free(aic_queued);aic_queued=NULL;
  aic_begin();
  uint8_t batch[200]={0},p[160];size_t n=aic_frame(p,40,8,true,false);
- batch[0]=1;batch[2]=AICWF_TYPE_MSG;batch[AICWF_RX_MSG_OFFSET]=1;
- size_t step=AICWF_RX_MSG_OFFSET+4;memcpy(batch+step,p,60+n);
+ batch[0]=1;batch[2]=AICWF_TYPE_MSG;batch[AICWF_HDR_LEN]=1;
+ size_t step=AICWF_HDR_LEN+4;memcpy(batch+step,p,60+n);
  batch[step]=n;batch[step+1]=0;batch[step+2]=0;
  unsigned before=aic_delivered;aicwf_rx(&aic,batch,step+60+n,aic.sc_rx_serial);
  CHECK(aic_delivered==before && !aic.sc_rx_active);

@@ -134,7 +134,10 @@ enum fault {
 	BAD_PARAM_LEN,
 	OTHER,
 	VERSION_TIMEOUT,
-	VERSION_SHORT
+	VERSION_SHORT,
+	SHORT_DATA,
+	SHORT_TAIL,
+	DUPLICATE
 };
 static enum fault fault;
 static unsigned opens, allocs, writes, reads, errors;
@@ -239,6 +242,12 @@ usbd_sync_transfer(struct usbd_xfer *x)
 		if (fault == TIMEOUT || (writes == 3 && fault == VERSION_TIMEOUT))
 			return USBD_TIMEOUT;
 		memset(b, 0, x->len);
+		/* Data can arrive on the command endpoint. The last bytes
+		 * of its descriptor and frame must not be read as messages. */
+		le16enc(b, fault == SHORT_DATA ? 2048 : 3);
+		b[2] = 0;
+		memset(b + 4, 0xbd, 59);
+		b += 64;
 		/* Put an unrelated indication before the confirmation. */
 		le16enc(b, 12);
 		b[2] = 0x11;
@@ -251,7 +260,7 @@ usbd_sync_transfer(struct usbd_xfer *x)
 			le16enc(b + 10, fault == VERSION_SHORT ? 27 : 28);
 			le32enc(b + 16, 0x06010203);
 			le32enc(b + 36, 0x12345678);
-			x->actual = 60;
+			x->actual = 64 + 60;
 			return USBD_NORMAL_COMPLETION;
 		}
 		le16enc(b, fault == SHORT_BODY ? 200 : 20);
@@ -260,7 +269,11 @@ usbd_sync_transfer(struct usbd_xfer *x)
 		le16enc(b + 10, fault == BAD_PARAM_LEN ? 7 : 8);
 		le32enc(b + 16, fault == BAD_ECHO ? 0xdead : requested);
 		le32enc(b + 20, requested == 0x20 ? 2 : 0x00c30000);
-		x->actual = fault == EMPTY_RX ? 0 : 40;
+		x->actual = fault == EMPTY_RX ? 0 : 64 + 40;
+		if (fault == SHORT_TAIL || fault == DUPLICATE) {
+			memcpy(b + 24, b, 24);
+			x->actual += fault == DUPLICATE ? 24 : 23;
+		}
 	}
 	return USBD_NORMAL_COMPLETION;
 }
@@ -293,7 +306,7 @@ main(void)
 	a.uiaa_product++;
 	assert(uaicfw_match(0, 0, &a) == UMATCH_NONE);
 	a.uiaa_product--;
-	for (fault = NONE; fault <= VERSION_SHORT; fault++) {
+	for (fault = NONE; fault <= DUPLICATE; fault++) {
 		opens = allocs = writes = reads = errors = identified = 0;
 		versions = unavailable = 0;
 		uaicfw_attach(0, 0, &a);
@@ -312,7 +325,7 @@ main(void)
 	assert(uaicfw_match(0, 0, &a) == UMATCH_NONE);
 	uaicfw_attach(0, 0, &a);
 	assert(!writes && errors == 1);
-	puts("PASS: silicon and FullMAC queries, interface selection, bounded "
-	     "replies, timeouts and resource release");
+	puts("PASS: silicon and FullMAC queries, interface selection, grouped "
+	     "data and confirmations, malformed transfers, timeouts and cleanup");
 	return 0;
 }

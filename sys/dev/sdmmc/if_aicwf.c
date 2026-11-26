@@ -110,10 +110,7 @@ __KERNEL_RCSID(0, "$NetBSD$");
  * A frame starts with its length in 12 bits, a type and, to the chip, a
  * checksum of those three bytes. A message follows after one more word.
  */
-#define	AICWF_TYPE_CFG			0x10	/* bit: not a data frame */
-#define	AICWF_TYPE_TX_CFM		0x12
 #define	AICWF_TYPE_DATA			0x01	/* to the chip */
-#define	AICWF_RX_MSG_OFFSET		4
 
 /* Message header: id, destination, source, parameter length. */
 #define	AICWF_MSG_MAX_PARAM		1032
@@ -216,7 +213,6 @@ __KERNEL_RCSID(0, "$NetBSD$");
  * the 802.11 frame first, a status word and a flags word further on.
  * The 802.11 frame follows after one more word.
  */
-#define	AICWF_RXHDR_LEN			60	/* with that word */
 #define	AICWF_RXHDR_STATUS		36
 #define	 AICWF_RX_DECR			__BITS(4,2)
 #define	  AICWF_RX_DECR_WEP		1
@@ -763,36 +759,16 @@ aicwf_rx_msg
 static void
 aicwf_rx(struct aicwf_softc *sc, const uint8_t *buf, size_t len, uint64_t serial)
 {
-	while (len >= AICWF_HDR_LEN) {
-		const size_t frame_len = le16dec(buf);
-		const uint8_t type = buf[2];
+	struct aicwf_rx_frame frame;
+	int step;
 
-		if (frame_len == 0)
-			break;
-		if ((type & AICWF_TYPE_CFG) == 0) {
-			const size_t total = frame_len + AICWF_RXHDR_LEN;
-
-			if (total > len)
-				break;
-			aicwf_rx_data(sc, buf, frame_len, serial);
-			if (roundup(total, 4) >= len)
-				break;
-			buf += roundup(total, 4);
-			len -= roundup(total, 4);
-			continue;
-		}
-		if (frame_len > len - AICWF_RX_MSG_OFFSET)
-			break;
-		if ((type & 0x7f) == AICWF_TYPE_TX_CFM)
-			aicwf_sta_tx_cfm(sc, buf + AICWF_RX_MSG_OFFSET, frame_len);
-		if ((type & 0x7f) == AICWF_TYPE_MSG)
-			aicwf_rx_msg(sc, buf + AICWF_RX_MSG_OFFSET,
-			    frame_len);
-
-		const size_t step = AICWF_RX_MSG_OFFSET +
-		    roundup(frame_len, 4);
-		if (step >= len)
-			break;
+	while ((step = aicwf_frame_decode(buf, len, &frame)) > 0) {
+		if ((frame.type & AICWF_TYPE_CFG) == 0)
+			aicwf_rx_data(sc, buf, frame.len, serial);
+		else if (frame.type == AICWF_TYPE_TX_CFM)
+			aicwf_sta_tx_cfm(sc, buf + AICWF_HDR_LEN, frame.len);
+		else if (frame.type == AICWF_TYPE_MSG)
+			aicwf_rx_msg(sc, buf + AICWF_HDR_LEN, frame.len);
 		buf += step;
 		len -= step;
 	}

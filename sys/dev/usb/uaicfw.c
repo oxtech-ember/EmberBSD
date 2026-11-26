@@ -141,32 +141,34 @@ uaicfw_command(struct uaicfw_pipe *tx, struct uaicfw_pipe *rx, uint16_t cmd,
 		usbd_get_xfer_status(rx->xfer, NULL, NULL, &actual, NULL);
 		if (actual > UAICFW_RX_SIZE)
 			return USBD_INVAL;
-		size_t off = 0;
-		while (actual - off >= AICWF_HDR_LEN) {
-			const uint8_t *frame = buf + off;
-			size_t body = le16dec(frame);
-			const uint8_t *msg = frame + AICWF_HDR_LEN;
+		struct aicwf_rx_frame frame;
+		const uint8_t *p = buf;
+		size_t remaining = actual;
+		int step;
+		const uint8_t *answer = NULL;
+
+		while ((step = aicwf_frame_decode(p, remaining, &frame)) > 0) {
+			const uint8_t *msg = p + AICWF_HDR_LEN;
 			uint16_t id, param_len;
 
-			if (body == 0)
-				break;	/* Transfer padding. */
-			if (body > actual - off - AICWF_HDR_LEN)
+			p += step;
+			remaining -= step;
+			if (frame.type != AICWF_TYPE_MSG)
+				continue;
+			if (!aicwf_reply_decode(msg, frame.len, &id, &param_len))
 				return USBD_INVAL;
-			if ((frame[2] & 0x7f) == AICWF_TYPE_MSG) {
-				if (!aicwf_reply_decode(msg, body, &id, &param_len))
-					return USBD_INVAL;
-				if (id == cfm) {
-					if (param_len != reply_len)
-						return USBD_INVAL;
-					memcpy(reply, msg + AICWF_RX_MSG_PARAM,
-					    reply_len);
-					return USBD_NORMAL_COMPLETION;
-				}
-			}
-			size_t step = AICWF_HDR_LEN + roundup(body, 4);
-			if (step >= actual - off)
-				break;
-			off += step;
+			if (id != cfm)
+				continue;
+			if (answer != NULL || param_len != reply_len)
+				return USBD_INVAL;
+			answer = msg + AICWF_RX_MSG_PARAM;
+		}
+		if (step < 0)
+			return USBD_INVAL;
+		if (answer != NULL) {
+			if (reply_len != 0)
+				memcpy(reply, answer, reply_len);
+			return USBD_NORMAL_COMPLETION;
 		}
 	}
 	return USBD_TIMEOUT;

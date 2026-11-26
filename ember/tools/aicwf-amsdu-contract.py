@@ -33,12 +33,16 @@ def main():
         return (root / path).read_text()
 
     text = source('sys/dev/sdmmc/if_aicwf.c')
+    definitions = text
+    if not re.search(r'^#define\s+AICWF_RXHDR_LEN\s+', text, re.M):
+        definitions += source('sys/dev/ic/aicwf_command.h')
     parts = [text[:text.index('#include')]]
     for name in ('AICWF_RXHDR_LEN', 'AICWF_RXHDR_STATUS', 'AICWF_RX_DECR',
                  'AICWF_RX_DECR_WEP', 'AICWF_RX_DECR_WAPI',
                  'AICWF_RXHDR_FLAGS', 'AICWF_RX_FLAG_UPLOAD',
                  'AICWF_RX_FLAG_REORDER', 'AICWF_RX_FLAG_AMSDU'):
-        match = re.search(r'^#define\s+' + name + r'\s+[^\n]+', text, re.M)
+        match = re.search(r'^#define\s+' + name + r'\s+[^\n]+',
+                          definitions, re.M)
         if not match:
             raise SystemExit('Missing descriptor definition: ' + name)
         parts.append(match[0])
