@@ -42,6 +42,7 @@
 #define IEEE80211_S_ASSOC 3
 #define IEEE80211_S_RUN 4
 #define IEEE80211_CHAN_BYTES 32
+#define IEEE80211_FEXT_STA_LEFT 0x10
 #define IEEE80211_NWID_LEN 32
 #define IFF_UP 1
 #define IFF_RUNNING 64
@@ -68,7 +69,8 @@ struct ieee80211com {
 	struct ifnet *ic_ifp;
 	void *ic_bss;
 	int ic_state, ic_roaming, ic_opmode;
-	unsigned ic_flags;
+	unsigned ic_flags, ic_flags_ext;
+	int ic_mgt_timer;
 	unsigned char ic_chan_avail[IEEE80211_CHAN_BYTES];
 	unsigned char ic_chan_active[IEEE80211_CHAN_BYTES];
 	unsigned char ic_des_essid[IEEE80211_NWID_LEN];
