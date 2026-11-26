@@ -3,7 +3,8 @@
 /*
  * Origin: EmberBSD, AI-assisted. Original register-data serialization.
  * Hardware facts: pinned BSP 2ac08e8c7cdc28abbdc5c9a9dd812f887ae9c79f.
- * No GPL implementation is copied. See ember/boot/a733-de352-format.md.
+ * No GPL implementation is copied.
+ * See sys/arch/arm/sunxi/docs/a733-de352-format.md.
  */
 #include <sys/cdefs.h>
 __KERNEL_RCSID(0, "$NetBSD$");
