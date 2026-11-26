@@ -1321,7 +1321,7 @@ aicwf_fw_bip_runtime_verify(struct aicwf_softc *sc)
 static int
 aicwf_fw_init(struct aicwf_softc *sc)
 {
-	struct aicwf_version version;
+	struct aicwf_version fw_version;
 	uint8_t req[256], cfm[64];
 	u_int n2g, n5g;
 	bool bip_mfp;
@@ -1377,16 +1377,16 @@ aicwf_fw_init(struct aicwf_softc *sc)
 	    AICWF_MM_VERSION_CFM, cfm, AICWF_VERSION_LEN);
 	if (error != 0)
 		return error;
-	aicwf_version_decode(cfm, &version);
+	aicwf_version_decode(cfm, &fw_version);
 	aprint_verbose_dev(sc->sc_dev, "MAC 0x%08x, hardware 0x%08x 0x%08x, "
 	    "PHY 0x%08x 0x%08x, features 0x%08x, %u stations, %u interfaces\n",
-	    version.lmac, version.machw[0], version.machw[1],
-	    version.phy[0], version.phy[1], version.features,
-	    version.max_sta, version.max_vif);
+	    fw_version.lmac, fw_version.machw[0], fw_version.machw[1],
+	    fw_version.phy[0], fw_version.phy[1], fw_version.features,
+	    fw_version.max_sta, fw_version.max_vif);
 
-	sc->sc_fw_version = version.lmac;
-	bip_mfp = version.lmac == 0x06090101 &&
-	    (version.features & AICWF_FEATURE_MFP) != 0;
+	sc->sc_fw_version = fw_version.lmac;
+	bip_mfp = fw_version.lmac == 0x06090101 &&
+	    (fw_version.features & AICWF_FEATURE_MFP) != 0;
 	if (sc->sc_fw_bip_pending && !bip_mfp)
 		return EPROTO;
 	if (bip_mfp) {
@@ -1396,8 +1396,8 @@ aicwf_fw_init(struct aicwf_softc *sc)
 	}
 
 	/* Firmware builds association capabilities from this bounded request. */
-	if (aicwf_me_config_build(req, version.lmac, version.phy[0],
-	    version.features, sc->sc_5ghz))
+	if (aicwf_me_config_build(req, fw_version.lmac, fw_version.phy[0],
+	    fw_version.features, sc->sc_5ghz))
 		aprint_normal_dev(sc->sc_dev,
 		    "VHT enabled: 1 stream, MCS 0-9, maximum width 80 MHz\n");
 	error = aicwf_cmd(sc, AICWF_ME_CONFIG_REQ, req, AICWF_ME_CONFIG_LEN,

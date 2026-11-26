@@ -31,16 +31,16 @@ struct aicwf_version {
 
 static inline void
 aicwf_version_decode(const uint8_t cfm[AICWF_VERSION_LEN],
-    struct aicwf_version *version)
+    struct aicwf_version *fw_version)
 {
-	version->lmac = le32dec(cfm);
-	version->machw[0] = le32dec(cfm + 4);
-	version->machw[1] = le32dec(cfm + 8);
-	version->phy[0] = le32dec(cfm + 12);
-	version->phy[1] = le32dec(cfm + 16);
-	version->features = le32dec(cfm + 20);
-	version->max_sta = le16dec(cfm + 24);
-	version->max_vif = cfm[26];
+	fw_version->lmac = le32dec(cfm);
+	fw_version->machw[0] = le32dec(cfm + 4);
+	fw_version->machw[1] = le32dec(cfm + 8);
+	fw_version->phy[0] = le32dec(cfm + 12);
+	fw_version->phy[1] = le32dec(cfm + 16);
+	fw_version->features = le32dec(cfm + 20);
+	fw_version->max_sta = le16dec(cfm + 24);
+	fw_version->max_vif = cfm[26];
 }
 
 static inline size_t

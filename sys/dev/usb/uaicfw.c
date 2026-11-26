@@ -196,7 +196,7 @@ uaicfw_attach(device_t parent, device_t self, void *aux)
 	struct uaicfw_pipe rx = { 0 }, tx = { 0 };
 	uint8_t in, out;
 	uint32_t chip, sub;
-	struct aicwf_version version;
+	struct aicwf_version fw_version;
 	uint8_t cfm[AICWF_VERSION_LEN];
 	usbd_status status;
 
@@ -225,9 +225,9 @@ uaicfw_attach(device_t parent, device_t self, void *aux)
 	status = uaicfw_command(&tx, &rx, AICWF_MM_VERSION_REQ, NULL, 0,
 	    AICWF_MM_VERSION_CFM, cfm, sizeof(cfm));
 	if (status == USBD_NORMAL_COMPLETION) {
-		aicwf_version_decode(cfm, &version);
+		aicwf_version_decode(cfm, &fw_version);
 		aprint_normal_dev(self, "FullMAC version 0x%08x, features 0x%08x\n",
-		    version.lmac, version.features);
+		    fw_version.lmac, fw_version.features);
 	} else {
 		aprint_verbose_dev(self, "FullMAC version unavailable: %s\n",
 		    usbd_errstr(status));
