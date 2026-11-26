@@ -9,6 +9,7 @@ require 'open3'
 require 'optparse'
 require 'rbconfig'
 require 'tmpdir'
+require 'zlib'
 
 if ARGV.first == '--tool'
   ARGV.shift
@@ -56,7 +57,19 @@ if ARGV.first == '--tool'
     else
       image, boot = ARGV[-2..-1]
       names = %w[netbsd.img boot.scr dtb/allwinner/sun60i-a733-orangepi-zero3w.dtb dtb/allwinner/sun60i-a733-orangepi-zero4.dtb]
-      if (description = ENV['SLOT_TEST_PROFILE'])
+      if (config = ENV['ZERO4_TEST_KERNEL'])
+        root = File.dirname(boot)
+        abort 'wrong installed Zero 4 ELF' unless File.binread(File.join(root, 'netbsd')) ==
+          File.binread(config)
+        abort 'wrong installed Zero 4 Image' unless File.binread(File.join(boot, 'netbsd.img')) ==
+          File.binread(config + '.img')
+        trees = Dir.children(File.join(boot, 'dtb/allwinner'))
+        abort 'unexpected Zero 4 DTBs' unless trees == ['sun60i-a733-orangepi-zero4-graphics.dtb']
+        abort 'unexpected Zero 4 slots' if %w[slotboot.scr boot.scr.uimg osgood.dat].any? do |file|
+          File.exist?(File.join(boot, file))
+        end
+        names = %w[netbsd.img boot.scr dtb/allwinner/sun60i-a733-orangepi-zero4-graphics.dtb]
+      elsif (description = ENV['SLOT_TEST_PROFILE'])
         profile = JSON.parse(File.read(description))
         slots = profile.fetch('slots')
         names = ['netbsd.img', 'boot.scr'] + slots.fetch('trees').map { |dtb| File.join(slots.fetch('tree_directory'), dtb) }
@@ -80,6 +93,13 @@ if ARGV.first == '--tool'
         end
         abort 'unexpected prepared slot' if File.exist?(File.join(boot, 'osplan.dat'))
       else
+        if (kernel = ENV['A733_TEST_EXPECT_GENERIC'])
+          abort 'generic A733 selected a board-specific kernel' unless
+            File.binread(File.join(File.dirname(boot), 'netbsd')) ==
+              File.binread(File.join(kernel, 'netbsd')) &&
+            File.binread(File.join(boot, 'netbsd.img')) ==
+              File.binread(File.join(kernel, 'netbsd.img'))
+        end
         names << 'dtb/allwinner/sun60i-a733-orangepi-zero3w-diagnostic.dtb'
       end
       names.each do |name|
@@ -89,7 +109,25 @@ if ARGV.first == '--tool'
     end
   when 'mkubootimage'
     abort 'wrong script type' unless ARGV[ARGV.index('-T') + 1] == 'script'
-    FileUtils.cp(ARGV[-2], ARGV[-1])
+    if (shared = ENV['A733_TEST_BOOT_SCRIPT'])
+      prefix = ENV['ZERO4_TEST_KERNEL'] ? "setenv ember_boot_mode graphics\n" : ''
+      abort 'wrong U-Boot input script' unless File.binread(ARGV[-2]) == prefix + File.binread(shared)
+    end
+    if (real = ENV['A733_REAL_MKUBOOTIMAGE'])
+      abort 'real mkubootimage failed' unless system(real, *ARGV, out: File::NULL)
+      compiled = File.binread(ARGV[-1])
+      header = compiled.byteslice(0, 64)
+      magic, _, _, size, _, _, crc = header.unpack('N7')
+      length, end_marker = compiled.byteslice(64, 8).unpack('N2')
+      payload = compiled.byteslice(64, size)
+      script = File.binread(ARGV[-2])
+      abort 'invalid compiled boot script' unless magic == 0x27051956 &&
+        header.getbyte(30) == 6 && length == script.bytesize && end_marker.zero? &&
+        size == length + 8 && payload.byteslice(8, length) == script &&
+        Zlib.crc32(payload) == crc
+    else
+      FileUtils.cp(ARGV[-2], ARGV[-1])
+    end
   when 'gpt'
     if ARGV.include?('show')
       image = ARGV[ARGV.index('show') - 1]
@@ -107,6 +145,7 @@ end
 options = {}
 OptionParser.new do |p|
   p.banner = 'Usage: ruby a733-test.rb (--mtree /absolute/nbmtree | --mock-mtree) [--boot0 FILE --boot-package FILE]'
+  p.on('--mkubootimage PATH') { |v| options[:mkubootimage] = File.expand_path(v) }
   p.on('--mtree PATH') { |v| options[:mtree] = File.expand_path(v) }
   p.on('--update-python PATH') { |v| options[:update_python] = File.expand_path(v) }
   p.on('--mock-mtree') { options[:mock_mtree] = true }
@@ -191,6 +230,7 @@ Dir.mktmpdir('a733-image-test-') do |work|
     'A733_TEST_LOG' => log, 'A733_TEST_SPEC' => spec,
     'A733_TEST_OVERLAY' => overlay, 'A733_TEST_MTREE' => options[:mtree]
   }
+  env['A733_REAL_MKUBOOTIMAGE'] = options[:mkubootimage] if options[:mkubootimage]
   image = File.join(work, 'a733.img')
   command = ['/bin/sh', File.join(here, 'mkimage'), '-h', 'a733', '-S', source,
              '-D', dest, '-K', kernel, '-c', overlay, image]
@@ -216,6 +256,43 @@ Dir.mktmpdir('a733-image-test-') do |work|
   check(calls.any? { |tool, args| tool == 'gpt' && args.include?('create') && args[-2..-1] == ['-p', '16'] }, 'wrong GPT table size')
   check(calls.any? { |tool, args| tool == 'fdisk' && args.include?('12/65536/524288') && args.include?('-0') }, 'wrong hybrid FAT partition')
   check(calls.any? { |tool, args| tool == 'gpt' && args.include?('netbsd-root') && args.include?('589824') }, 'wrong root partition')
+
+  zero4_image = File.join(work, 'orangepi-zero4.img')
+  zero4_command = command.map { |arg| arg == 'a733' ? 'orangepi-zero4' : arg }
+  zero4_command[-1] = zero4_image
+  zero4_elf = File.join(kernel, 'netbsd-EMBER64_ORANGEPI_ZERO4')
+  script = File.join(source, 'ember/boot/orangepi-zero4-boot.cmd')
+  zero4_env = env.merge('ZERO4_TEST_KERNEL' => zero4_elf, 'A733_TEST_BOOT_SCRIPT' => script)
+  File.write(zero4_image, 'keep previous Zero 4 image')
+  File.chmod(0644, zero4_image)
+  previous = File.binread(log)
+  result, state = Open3.capture2e(zero4_env, *zero4_command)
+  check(!state.success? && result.include?('netbsd-EMBER64_ORANGEPI_ZERO4'),
+        'Zero 4 unexpectedly selected the generic kernel')
+  check(File.binread(zero4_image) == 'keep previous Zero 4 image' &&
+        File.stat(zero4_image).mode & 0777 == 0644 && File.binread(log) == previous,
+        'rejected Zero 4 image changed output or called tools')
+  File.binwrite(zero4_elf, "\x7fELF" + "Zero 4 board config")
+  File.binwrite(zero4_elf + '.img', native + "Zero 4 board image")
+  result, state = Open3.capture2e(zero4_env, *zero4_command)
+  check(!state.success? && result.include?('sun60i-a733-orangepi-zero4-graphics.dtb'),
+        'Zero 4 accepted a non-graphics DTB')
+  check(File.binread(zero4_image) == 'keep previous Zero 4 image' &&
+        File.stat(zero4_image).mode & 0777 == 0644 && File.binread(log) == previous,
+        'missing graphics DTB modified the output')
+  File.binwrite(File.join(kernel, 'sun60i-a733-orangepi-zero4-graphics.dtb'), [0xd00dfeed].pack('N'))
+  result, state = Open3.capture2e(zero4_env, *zero4_command)
+  check(state.success?, "Zero 4 image failed:\n#{result}")
+  check(File.stat(zero4_image).mode & 0777 == 0600, 'Zero 4 image is not private')
+  [[boot0, 8192], [package, 16793600]].each do |file, offset|
+    File.open(zero4_image, 'rb') do |f|
+      f.seek(offset)
+      check(f.read(File.size(file)) == File.binread(file), 'Zero 4 vendor bytes differ')
+    end
+  end
+  generic_env = env.merge('A733_TEST_EXPECT_GENERIC' => kernel, 'A733_TEST_BOOT_SCRIPT' => script)
+  result, state = Open3.capture2e(generic_env, *command)
+  check(state.success?, "A733 family image ignored generic kernel inputs:\n#{result}")
 
   if options[:update_python]
     revision = '1' * 40
@@ -412,4 +489,4 @@ Dir.mktmpdir('a733-image-test-') do |work|
 end
 puts 'PASS: A733 source contract, vendor bytes and pre-write rejection'
 puts(options[:mock_mtree] ? 'mtree was a test double; real metadata precedence remains untested.' : 'Real mtree metadata precedence passed.')
-puts 'Image tools were test doubles; filesystem generation and physical boot remain untested.'
+puts 'Filesystem and partition tools were test doubles. Physical boot remains untested.'

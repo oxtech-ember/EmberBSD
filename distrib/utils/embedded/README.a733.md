@@ -85,12 +85,14 @@ the existing `mkimage` cleanup trap.
 ```sh
 ruby distrib/utils/embedded/a733-test.rb --mock-mtree
 ruby distrib/utils/embedded/a733-test.rb --mtree "$tools/nbmtree" \
+    --mkubootimage "$tools/nbmkubootimage" \
     --update-python "$HOST_PREFIX/bin/python3.15" \
     --boot0 "$assets/boot0.bin" --boot-package "$assets/boot-package.bin"
 ```
 
 The check runs the real profile and `mkimage`, real blob writes, and image-tool
-test doubles. It checks layout arguments, header lengths, failure before writes,
+test doubles for filesystem and partition tools. With `--mkubootimage` it
+verifies the real boot script payload and its CRC. It checks layout arguments, header lengths, failure before writes,
 kernel/DTB placement, and the finalizer's ordering. It uses temporary fixtures,
 not a physical card. `--mtree` also checks real mtree duplicate-entry precedence
 for `rc.conf`, `sshd_config`, and private SSH modes. `--mock-mtree` checks only
@@ -109,6 +111,22 @@ files and private-key permissions with explicit local expectations. It reads
 the completed image without mounting it and does not print file contents.
 Its real `nbmakefs` fixtures cover metadata, bytes, and malformed-input refusal.
 It is not a filesystem integrity check or physical startup acceptance.
+
+## Orange Pi Zero 4 image
+
+Use `-h orangepi-zero4` for a new Zero 4 card. Pass the output directory
+from `sh ember/build-orangepi-zero4-kernel.sh /absolute/output` via `-K`.
+The profile takes `netbsd-EMBER64_ORANGEPI_ZERO4`,
+`netbsd-EMBER64_ORANGEPI_ZERO4.img` and
+`sun60i-a733-orangepi-zero4-graphics.dtb` from that directory. It installs the ELF
+as `/netbsd` and the raw image as `/boot/netbsd.img`. The vendor inputs and
+layout are those of the family profile, including boot0 at byte 8192.
+The generated `boot.scr` sets `ember_boot_mode=graphics` before the
+shared selector. The selector verifies Zero 4 identity before it loads
+the graphics DTB. This profile enables native HDMI and on-demand NPU
+preparation with matching kernel and firmware. It includes one boot
+script and one tree. Keep a separate verified recovery card. The family
+A733 and Zero 3W profiles retain their kernel names, mode and layout.
 
 ## Zero 3W two-slot image
 
