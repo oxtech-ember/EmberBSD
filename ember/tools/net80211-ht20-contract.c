@@ -1068,6 +1068,64 @@ test_privacy_rsn_gate(void)
 	}
 }
 
+/*
+ * A provider whose MAC sends RTS/CTS or CTS-to-self (HW_PROT) keeps HT when
+ * the beacon uses protection modes 0-3 with the non-GF and OBSS non-HT bits,
+ * also on 2.4 GHz. Reserved and segment bits still withdraw HT.
+ */
+static void
+test_hw_protection_beacons(void)
+{
+	static const struct { uint8_t lo, hi, keep; } words[] = {
+		{ 0x00, 0, 1 }, { 0x01, 0, 1 }, { 0x02, 0, 1 }, { 0x03, 0, 1 },
+		{ 0x07, 0, 1 }, { 0x13, 0, 1 }, { 0x17, 0, 1 },
+		{ 0x08, 0, 0 }, { 0x20, 0, 0 }, { 0x03, 0x01, 0 },
+	};
+
+	for (unsigned i = 0; i < sizeof(words) / sizeof(words[0]); i++) {
+		struct mbuf *m;
+		uint8_t *op;
+		uint32_t resets;
+
+		ht_setup();
+		admitted.protection = IEEE80211_HT20_PROFILE_HW_PROT;
+		CHECK(request(IEEE80211_FC0_SUBTYPE_ASSOC_REQ) == 0);
+		release_capture();
+		deliver(ht_response(), IEEE80211_FC0_SUBTYPE_ASSOC_RESP);
+		CHECK(test_node.ni_ht20.valid &&
+		    test_node.ni_ht20.profile.protection ==
+		    IEEE80211_HT20_PROFILE_HW_PROT);
+		test_ic.ic_state = IEEE80211_S_RUN;
+		native_net.policy.accepting = 1;
+		native_core.sc_ra.active = 1;
+		m = ht_beacon();
+		op = m->m_data + m->m_len - 52 + 28;
+		CHECK(op[0] == 61 && op[2] <= 14);
+		op[4] = words[i].lo;
+		op[5] = words[i].hi;
+		resets = test_ic.ic_ht20_diag.resets;
+		ieee80211_recv_mgmt_beacon(&test_ic, m, &test_node,
+		    IEEE80211_FC0_SUBTYPE_BEACON, 0, 0);
+		m_freem(m);
+		if (words[i].keep) {
+			CHECK(test_ic.ic_ht20_diag.resets == resets);
+			CHECK(test_node.ni_ht20.valid);
+		} else {
+			CHECK(test_ic.ic_ht20_diag.resets == resets + 1);
+			CHECK(test_ic.ic_ht20_diag.reset_clause ==
+			    IEEE80211_HT20_BEACON_PROTECTION);
+			CHECK(!test_node.ni_ht20.valid);
+		}
+		release_capture();
+	}
+	/* Unknown protection qualifications are not admitted. */
+	ht_setup();
+	admitted.protection = 0x02;
+	CHECK(request(IEEE80211_FC0_SUBTYPE_ASSOC_REQ) == 0);
+	CHECK(ht_in_request() == NULL && !test_node.ni_ht20.offered);
+	release_capture();
+}
+
 static void
 test_profile_numeric_bounds(void)
 {
@@ -1135,6 +1193,7 @@ main(void)
 	test_direct_run_failure_ownership();
 	test_delayed_worker_profile();
 	test_current_peer_beacons();
+	test_hw_protection_beacons();
 	test_protection_qualification();
 	test_golden_and_reassociation();
 	test_probe_and_optional_compatibility();

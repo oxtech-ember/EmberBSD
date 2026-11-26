@@ -154,6 +154,24 @@ while the operation word may move within the admitted envelope (0, 4 and
 6, and on 5 GHz 3 and 7). An AP that leaves it (for example mode 1 or
 OBSS `0x0010`) withdraws the HT/VHT profile and the station reassociates.
 
+### Hardware protection providers
+
+A provider can set `IEEE80211_HT20_PROFILE_HW_PROT` in the `protection`
+field of its HT20 profile. It states that the MAC itself sends RTS/CTS or
+CTS-to-self before HT and VHT PPDUs whenever the BSS protection mode
+requires it, on both bands. For such a provider the beacon envelope is the
+protection modes 0-3 with the non-greenfield (bit 2) and OBSS non-HT
+(bit 4) bits, on 2.4 GHz and 5 GHz. Reserved bits and channel centre
+segment 2 still withdraw the profile. The deviation and its preconditions
+above apply only to providers without the flag; `ieee80211_ht20_tx_protection()`
+keeps its no-RTS qualification for them. A change of the flag is a new
+profile, as a change of the MCS sets is.
+
+RTL8852BE (`rtwx`) sets the flag: rtw89 enables RTS and hardware RTS
+selection in the TX descriptor of each data frame and enables hardware
+CTS-to-self in the MAC. A 2.4 GHz AP in non-HT mixed mode 3 no longer
+withdraws the profile at the first beacon.
+
 ### Deviation: Basic VHT-MCS set
 
 IEEE Std 802.11ac-2013 §10.39.7 forbids association unless the station

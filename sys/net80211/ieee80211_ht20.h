@@ -20,10 +20,19 @@ struct ieee80211_frame;
  * Called with Giant, without a driver lock. Snapshot only; no sleeping or PHY
  * mutation. Withdraw active admission before changing the profile/generation.
  * Register after protocol attach, which resets the provider to NULL. */
+/*
+ * Optional provider protection qualification (profile.protection). With
+ * HW_PROT the MAC sends RTS/CTS or CTS-to-self before HT PPDUs whenever
+ * the BSS protection mode requires it, on both bands. Beacons may then use
+ * HT protection modes 0-3 with the non-greenfield and OBSS non-HT bits.
+ * Without it only the bounded no-RTS set below is accepted.
+ */
+#define IEEE80211_HT20_PROFILE_HW_PROT 0x01
 struct ieee80211_ht20_profile {
 	uint32_t generation;
 	uint16_t rx_mcs, tx_mcs;
 	uint8_t ready, ampdu; /* Provider-qualified factor0..3, spacing0..7. */
+	uint8_t protection; /* IEEE80211_HT20_PROFILE_* */
 };
 struct ieee80211_ht20_vht {
 	struct ieee80211_vht_cap local, peer;
