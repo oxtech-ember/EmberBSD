@@ -31,4 +31,4 @@ PROG	usr/sbin/installboot
 
 PROG	usr/sbin/wiconfig
 
-SYMLINK	/altroot/stand	stand
+SYMLINK	altroot/stand	stand
