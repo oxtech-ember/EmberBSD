@@ -6,6 +6,11 @@ The optional `sun50ia133gpu` FDT consumer prepares the pinned GE8300 MIPS
 firmware through the common `sys/dev/powervr` owner. Ordinary device attach
 only creates `hw.<device>.firmware_boot`; it performs no GPU DMA allocation,
 power transition or reset. Writing `1` explicitly requests the bounded boot.
+The explicit caller runs after root is available. File preflight precedes
+every voltage or power transition. After a powered BVNC and clock check,
+the common PowerVR owner requires one cluster and 64 KiB of SLC and
+initializes the firmware interface. The DRM adoption and queue/IRQ checks
+remain separate operations.
 On one office YS-M33 with preserved WLAN power, the explicit firmware boot
 completed and reported BVNC 22.102.54.38 with the fixed 950000 µV setpoint and
 504 MHz effective clock. This is not a DRM device or graphics acceptance.

@@ -105,7 +105,7 @@ static int stage_effect(void) { provider_calls++; return stage_error; }
 #define sun60i_a733_pck_gpu_wait(...) stage_effect()
 #define sun60i_gpu_stage_top_id(...) stage_effect()
 #define sun60i_gpu_stage_identify(...) stage_effect()
-#define sun60i_gpu_stage_fwinfo(...) stage_effect()
+#define sun60i_gpu_stage_fwinfo(sc, start) ((void)(start), stage_effect())
 #define sun60i_gpu_stage_fwmem(...) stage_effect()
 #define sun60i_gpu_stage_fwinit(...) stage_effect()
 #define sun60i_gpu_stage_fwboot(...) stage_effect()
@@ -171,6 +171,7 @@ pvr_job_irq_stop(struct pvr_job_irq *irq)
 	irq_stops++;
 }
 
+struct sun60i_gpu_start_file;
 #include "platform-driver.h"
 
 int

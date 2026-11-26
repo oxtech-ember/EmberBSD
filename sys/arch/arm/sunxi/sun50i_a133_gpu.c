@@ -499,7 +499,7 @@ static int
 a133_gpu_prepare(void *cookie)
 {
 	struct a133_gpu_softc *sc = cookie;
-	uint64_t clusters, slc;
+	struct pvr_fwmem_features features;
 	int error;
 
 	error = a133_gpu_live(sc, &sc->effective_hz);
@@ -518,16 +518,11 @@ a133_gpu_prepare(void *cookie)
 		return error;
 	sc->diag.stage = A133_GPU_STAGE_FEATURES;
 	sc->diag.detail_error = 0;
-	error = pvr_fwinfo_feature(&sc->memory->image.info,
-	    PVR_FW_FEATURE_NUM_CLUSTERS, &clusters);
-	if (error == 0)
-		error = pvr_fwinfo_feature(&sc->memory->image.info,
-		    PVR_FW_FEATURE_SLC_SIZE_IN_KILOBYTES, &slc);
-	if (error != 0 || clusters != 1 || slc != 64)
-		return EOPNOTSUPP;
-	sc->diag.stage = A133_GPU_STAGE_INTERFACE;
-	sc->diag.detail_error = 0;
-	return pvr_fwmem_interface(sc->memory, sc->effective_hz, clusters, slc);
+	error = pvr_fwmem_interface_image(sc->memory, sc->effective_hz,
+	    &features);
+	if (features.clusters != 0)
+		sc->diag.stage = A133_GPU_STAGE_INTERFACE;
+	return error;
 }
 
 /* Admit only reservation forms the current FDT/UVM owner excludes. */

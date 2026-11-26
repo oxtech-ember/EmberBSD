@@ -55,6 +55,10 @@ sed '/^#include /d' "$src/sys/external/bsd/drm2/powervr/pvr_backend.h" \
         capture { print; if ($0 == "}") exit }' \
         "$src/sys/external/bsd/drm2/powervr/pvr_query.c"
 } > "$work/pvr-query-input.c"
+{
+    printf 'int\n'
+    sed -n '/^pvr_fwmem_interface_image(/,/^}/p' "$src/sys/dev/powervr/pvr_fwmem.c"
+} > "$work/fwmem-interface-image.h"
 # Exercise the real parent-specific queue and finalization dispatch as well.
 autoconf="$src/sys/kern/subr_autoconf.c"
 sed -n '1,/^#include /p' "$autoconf" | sed '/^#include /d' \

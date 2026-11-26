@@ -405,6 +405,38 @@ pvr_dma_empty(const struct pvr_dma *dma)
 }
 
 int
+pvr_fwmem_interface_image(struct pvr_fwmem *mem, uint64_t core_hz,
+    struct pvr_fwmem_features *features)
+{
+	uint64_t clusters, slc_kib;
+	int error;
+
+	*features = (struct pvr_fwmem_features){ 0 };
+	if (mem == NULL || (mem->profile != PVR_FW_PROFILE_A733 &&
+	    mem->profile != PVR_FW_PROFILE_GE8300))
+		return EINVAL;
+	error = pvr_fwinfo_feature(&mem->image.info,
+	    PVR_FW_FEATURE_NUM_CLUSTERS, &clusters);
+	if (error == 0)
+		error = pvr_fwinfo_feature(&mem->image.info,
+		    PVR_FW_FEATURE_SLC_SIZE_IN_KILOBYTES, &slc_kib);
+	if (mem->profile == PVR_FW_PROFILE_GE8300) {
+		if (error != 0 || clusters != 1 || slc_kib != 64)
+			return EOPNOTSUPP;
+	} else {
+		if (error != 0)
+			return error;
+		if (clusters == 0 || clusters > UINT32_MAX ||
+		    slc_kib == 0 || slc_kib > UINT32_MAX)
+			return EOPNOTSUPP;
+	}
+	features->clusters = (uint32_t)clusters;
+	features->slc_kib = (uint32_t)slc_kib;
+	return pvr_fwmem_interface(mem, core_hz, features->clusters,
+	    features->slc_kib);
+}
+
+int
 pvr_fwmem_interface(struct pvr_fwmem *mem,
     uint64_t core_hz, uint32_t clusters, uint32_t slc_kib)
 {

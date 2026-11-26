@@ -439,8 +439,15 @@ sun60i_gpu_stage_identify(struct sun60i_gpu_softc *sc)
 }
 
 /* Read and validate file metadata. Never transfer firmware to the GPU. */
+/* Only the automatic mountroot invocation carries a file across stages. */
+struct sun60i_gpu_start_file {
+	void *bytes;
+	size_t size;
+};
+
 static int
-sun60i_gpu_stage_fwinfo(struct sun60i_gpu_softc *sc)
+sun60i_gpu_stage_fwinfo(struct sun60i_gpu_softc *sc,
+    struct sun60i_gpu_start_file *start)
 {
 	struct pvr_fwinfo info;
 	firmware_handle_t fh = NULL;
@@ -480,6 +487,12 @@ out:
 		if (error == 0)
 			error = close_error;
 	}
+	if (error == 0 && start != NULL) {
+		KASSERT(start->bytes == NULL);
+		start->bytes = bytes;
+		start->size = size;
+		bytes = NULL;
+	}
 	if (bytes != NULL)
 		firmware_free(bytes, size);
 	/* Publish only the final result, after parsing and all cleanup. */
@@ -500,7 +513,8 @@ out:
 
 /* Prepare native DMA allocations, but keep every address private to the CPU. */
 static int
-sun60i_gpu_stage_fwmem(struct sun60i_gpu_softc *sc)
+sun60i_gpu_stage_fwmem(struct sun60i_gpu_softc *sc,
+    struct sun60i_gpu_start_file *start)
 {
 	struct sun60i_a733_gpu_fwmem *mem = NULL;
 	firmware_handle_t fh = NULL;
@@ -516,25 +530,34 @@ sun60i_gpu_stage_fwmem(struct sun60i_gpu_softc *sc)
 		error = EBUSY;
 		goto out;
 	}
-	error = firmware_open("powervr", "rogue_36.56.104.183_v1.fw", &fh);
-	if (error != 0)
-		goto out;
-	file_size = firmware_get_size(fh);
-	if (file_size < PVR_FW_BLOCK_SIZE ||
-	    file_size > A733_GPU_FW_MAX_SIZE) {
-		error = EINVAL;
-		goto out;
+	if (start != NULL) {
+		KASSERT(start->bytes != NULL);
+		bytes = start->bytes;
+		size = start->size;
+		start->bytes = NULL;
+		start->size = 0;
+	} else {
+		error = firmware_open("powervr", "rogue_36.56.104.183_v1.fw", &fh);
+		if (error != 0)
+			goto out;
+		file_size = firmware_get_size(fh);
+		if (file_size < PVR_FW_BLOCK_SIZE ||
+		    file_size > A733_GPU_FW_MAX_SIZE) {
+			error = EINVAL;
+			goto out;
+		}
+		size = (size_t)file_size;
+		bytes = firmware_malloc(size);
+		if (bytes == NULL) {
+			error = ENOMEM;
+			goto out;
+		}
+		error = firmware_read(fh, 0, bytes, size);
+		if (error != 0)
+			goto out;
 	}
-	size = (size_t)file_size;
-	bytes = firmware_malloc(size);
-	if (bytes == NULL) {
-		error = ENOMEM;
-		goto out;
-	}
-	error = firmware_read(fh, 0, bytes, size);
-	if (error == 0)
-		error = sun60i_a733_gpu_fwmem_prepare(sc->sc_dmat, bytes, size,
-		    sc->sc_bvnc, &mem);
+	error = sun60i_a733_gpu_fwmem_prepare(sc->sc_dmat, bytes, size,
+	    sc->sc_bvnc, &mem);
 out:
 	if (fh != NULL) {
 		close_error = firmware_close(fh);
@@ -565,7 +588,7 @@ static int
 sun60i_gpu_stage_fwinit(struct sun60i_gpu_softc *sc)
 {
 	struct sun60i_a733_gpu_fwmem *mem = sc->sc_fw_memory;
-	uint64_t clusters, slc_kib;
+	struct pvr_fwmem_features features;
 	int error;
 
 	if (sc->sc_run_stage != A733_GPU_STAGE_FWMEM ||
@@ -575,21 +598,7 @@ sun60i_gpu_stage_fwinit(struct sun60i_gpu_softc *sc)
 		error = EBUSY;
 		goto out;
 	}
-	error = pvr_fwinfo_feature(&mem->image.info,
-	    PVR_FW_FEATURE_NUM_CLUSTERS, &clusters);
-	if (error != 0)
-		goto out;
-	error = pvr_fwinfo_feature(&mem->image.info,
-	    PVR_FW_FEATURE_SLC_SIZE_IN_KILOBYTES, &slc_kib);
-	if (error != 0)
-		goto out;
-	if (clusters == 0 || clusters > UINT32_MAX ||
-	    slc_kib == 0 || slc_kib > UINT32_MAX) {
-		error = EOPNOTSUPP;
-		goto out;
-	}
-	error = sun60i_a733_gpu_fwmem_interface(mem, sc->sc_core_hz,
-	    (uint32_t)clusters, (uint32_t)slc_kib);
+	error = pvr_fwmem_interface_image(mem, sc->sc_core_hz, &features);
 out:
 	if (error != 0) {
 		snprintf(sc->sc_interface_state, sizeof(sc->sc_interface_state),
@@ -600,7 +609,7 @@ out:
 		    "objects=%u core_hz=%u clusters=%u slc_kib=%u",
 		    mem->work.size, mem->config.size,
 		    (u_int)PVR_FWINIT_OBJECT_COUNT, sc->sc_core_hz,
-		    (u_int)clusters, (u_int)slc_kib);
+		    features.clusters, features.slc_kib);
 	}
 	return error;
 }
@@ -1668,7 +1677,8 @@ sun60i_gpu_compute_chain_ready(const struct sun60i_gpu_softc *sc,
 }
 
 static void
-sun60i_gpu_run_stage(struct sun60i_gpu_softc *sc, u_int stage)
+sun60i_gpu_run_stage_file(struct sun60i_gpu_softc *sc, u_int stage,
+    struct sun60i_gpu_start_file *start)
 {
 	int power_node, error = EINVAL;
 
@@ -1783,10 +1793,10 @@ sun60i_gpu_run_stage(struct sun60i_gpu_softc *sc, u_int stage)
 		error = sun60i_gpu_stage_identify(sc);
 		break;
 	case A733_GPU_STAGE_FWINFO:
-		error = sun60i_gpu_stage_fwinfo(sc);
+		error = sun60i_gpu_stage_fwinfo(sc, start);
 		break;
 	case A733_GPU_STAGE_FWMEM:
-		error = sun60i_gpu_stage_fwmem(sc);
+		error = sun60i_gpu_stage_fwmem(sc, start);
 		break;
 	case A733_GPU_STAGE_FWINIT:
 		error = sun60i_gpu_stage_fwinit(sc);
@@ -1822,6 +1832,13 @@ sun60i_gpu_run_stage(struct sun60i_gpu_softc *sc, u_int stage)
 out:
 	sc->sc_run_result = error;
 	mutex_exit(&sc->sc_run_lock);
+}
+
+static void
+sun60i_gpu_run_stage(struct sun60i_gpu_softc *sc, u_int stage)
+{
+
+	sun60i_gpu_run_stage_file(sc, stage, NULL);
 }
 
 /* Select the experiment before it acquires any hardware resource. */
@@ -2489,6 +2506,7 @@ static void
 sun60i_gpu_start(device_t dev)
 {
 	struct sun60i_gpu_softc * const sc = device_private(dev);
+	struct sun60i_gpu_start_file file = { 0 };
 	u_int stage;
 	int error;
 
@@ -2504,7 +2522,7 @@ sun60i_gpu_start(device_t dev)
 	/* Diagnostic writes are disabled for this entire device lifetime. */
 	for (stage = A733_GPU_STAGE_SUPPLY; stage <= A733_GPU_STAGE_FWCACHE;
 	    stage++) {
-		sun60i_gpu_run_stage(sc, stage);
+		sun60i_gpu_run_stage_file(sc, stage, &file);
 		error = sc->sc_run_result;
 		if (!sc->sc_run_pass || (error != 0 &&
 		    !(stage == A733_GPU_STAGE_REQUEST && error == ETIMEDOUT)))
@@ -2514,6 +2532,8 @@ sun60i_gpu_start(device_t dev)
 	if (error == 0)
 		error = sun60i_gpu_exec_attach(sc);
 out:
+	if (file.bytes != NULL)
+		firmware_free(file.bytes, file.size);
 	mutex_enter(&sc->sc_run_lock);
 	sc->sc_run_result = error;
 	if (error != 0)

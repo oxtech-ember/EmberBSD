@@ -15,6 +15,10 @@ for spec in 'void a133_gpu_diag_reset' 'void a133_gpu_preflight_release' 'bool a
     printf 'static %s\n' "$type" >> "$work/preflight.inc"
     sed -n "/^$name(/,/^}/p" "$source" >> "$work/preflight.inc"
 done
+{
+    printf 'static int\n'
+    sed -n '/^pvr_fwmem_interface_image(/,/^}/p' "$src/sys/dev/powervr/pvr_fwmem.c"
+} > "$work/fwmem-interface-image.inc"
 ${CC:-cc} -std=c11 -Wall -Wextra -Werror ${CFLAGS:-} -I"$work" -I"$src/sys/arch/arm/sunxi" \
     "$src/ember/tools/a133-gpu-preflight-contract.c" \
     "$src/sys/arch/arm/sunxi/sun50i_a133_gpu_owner.c" -o "$work/test"

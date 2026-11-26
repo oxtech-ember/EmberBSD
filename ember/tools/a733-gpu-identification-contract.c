@@ -819,8 +819,8 @@ sun60i_a733_gpu_fwmem_prepare(bus_dma_tag_t tag, const void *bytes, size_t size,
 	assert(tag == &dma_tag_cookie);
 	assert(bytes == fw_memory && size == fw_memory_size);
 	assert(expected == UINT64_C(0x00240038006800b7));
-	assert(fw_handle.open);
-	assert(fw_reads == (native_fixture ? 2U : 1U));
+	assert(fw_handle.open == !native_fixture);
+	assert(fw_reads == 1);
 	assert(fw_closes == (native_fixture ? 1U : 0U));
 	assert(out != NULL && *out == NULL && fwmem_live == NULL);
 	fw_not_published();
@@ -831,6 +831,7 @@ sun60i_a733_gpu_fwmem_prepare(bus_dma_tag_t tag, const void *bytes, size_t size,
 	fwmem_live = calloc(1, sizeof(*fwmem_live));
 	assert(fwmem_live != NULL);
 	fwmem_live->dmat = tag;
+	fwmem_live->profile = PVR_FW_PROFILE_A733;
 	fwmem_live->code.size = 102400;
 	fwmem_live->data.size = 20480;
 	fwmem_live->table.size = 16384;
@@ -881,7 +882,7 @@ sun60i_a733_gpu_fwmem_destroy(struct sun60i_a733_gpu_fwmem *mem)
 
 /* Real helper contracts run separately. These are explicit consumer boundaries. */
 int
-sun60i_a733_gpu_fwmem_interface(struct sun60i_a733_gpu_fwmem *mem,
+pvr_fwmem_interface(struct pvr_fwmem *mem,
     uint64_t clock_rate, uint32_t clusters, uint32_t slc_kib)
 {
 	assert(mem == fwmem_live && !fixture_device_owned);
@@ -1192,6 +1193,7 @@ pvr_fwbridge_set_irq(struct pvr_fwbridge *bridge, void *cookie,
 	assert(native_irq_callbacks++ == 0);
 }
 
+#include "fwmem-interface-image.h"
 #include "driver.h"
 #undef pvr_fwinfo_parse
 #define CHECK(c) do { assert(c); checks++; } while (0)
@@ -1875,7 +1877,7 @@ test_fwinfo_stage(void)
 		case 3: sc.sc_have_id = false; break;
 		case 4: sc.sc_bvnc ^= 1; break;
 		}
-		CHECK(sun60i_gpu_stage_fwinfo(&sc) == EBUSY);
+		CHECK(sun60i_gpu_stage_fwinfo(&sc, NULL) == EBUSY);
 		CHECK(fw_opens == 0 && nevents == 0);
 	}
 	/* Stage 0 cannot turn a failed strict identity into permission. */
@@ -2040,7 +2042,7 @@ test_fwmem_stage(void)
 			fw_expected_memory = &existing;
 			break;
 		}
-		CHECK(sun60i_gpu_stage_fwmem(&sc) == EBUSY);
+		CHECK(sun60i_gpu_stage_fwmem(&sc, NULL) == EBUSY);
 		CHECK(fw_opens == 0 && fwmem_prepares == 0 && nevents == 0);
 		CHECK(sc.sc_fw_memory == fw_expected_memory);
 		CHECK(fwmem_destroys == 0 && fwmem_null_destroys == 1);
@@ -3523,7 +3525,7 @@ test_native_startup(void)
 			CHECK(sc.sc_run_result == 0 && sc.sc_run_pass);
 			CHECK(sc.sc_run_stage == 17 && sc.sc_fwbridge.registered);
 			CHECK(native_renders == 1 && native_prepares == 1 && native_publishes == 1);
-			CHECK(fw_opens == 2 && fw_closes == 2 && fw_frees == 2);
+			CHECK(fw_opens == 1 && fw_reads == 1 && fw_closes == 1 && fw_frees == 1);
 			CHECK(fw_boots == 1 && fw_probes == 1 && fw_caches == 1);
 		} else {
 			CHECK(sc.sc_run_result != 0 && !sc.sc_run_pass);
@@ -3533,6 +3535,7 @@ test_native_startup(void)
 			CHECK(native_prepares == (failure >= 19));
 			CHECK(native_publishes == (failure == 20));
 		}
+		CHECK(fw_memory == NULL && !fw_handle.open);
 		CHECK(native_irq_starts == (failure == 0 || failure == 20));
 		CHECK(native_irq_callbacks == native_irq_starts);
 		CHECK(native_irq_stops == (failure == 20));
@@ -3540,6 +3543,17 @@ test_native_startup(void)
 		CHECK(sc.sc_retained == (failure == 0 || failure > 5));
 		native_no_replay();
 	}
+	/* A failed close cannot feed a DMA prepare or leak the file bytes. */
+	native_begin();
+	native_attach();
+	fw_close_error = EIO;
+	native_run();
+	CHECK(sc.sc_run_stage == A733_GPU_STAGE_FWINFO && sc.sc_run_result == EIO);
+	CHECK(fw_opens == 1 && fw_reads == 1 && fw_closes == 1 && fw_frees == 1);
+	CHECK(!fw_handle.open && fw_memory == NULL && fwmem_prepares == 0);
+	CHECK(native_renders == 0 && native_irq_starts == 0);
+	native_no_replay();
+
 	/* A failed route keeps publication on the bounded polling path. */
 	native_begin();
 	native_attach();

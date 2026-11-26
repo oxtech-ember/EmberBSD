@@ -16,6 +16,7 @@
 #define A133_GPU_DFS_SIZE 4
 #define A133_GPU_FW_SIZE 118784
 #define A133_GPU_BVNC_REG 0x20
+#define PVR_FW_PROFILE_A733 0
 #define PVR_FW_PROFILE_GE8300 1
 #define PVR_FW_FEATURE_NUM_CLUSTERS 28
 #define PVR_FW_FEATURE_SLC_SIZE_IN_KILOBYTES 46
@@ -28,6 +29,7 @@ typedef void *firmware_handle_t;
 struct pvr_fwinfo { int unused; };
 struct pvr_dma { uint64_t address; size_t size; };
 struct pvr_fwmem {
+    int profile;
     struct { struct pvr_fwinfo info; } image;
     struct pvr_dma code, data, table, work, config;
 };
@@ -180,6 +182,7 @@ static int pvr_fwmem_prepare(void *d,const void *b,size_t n,uint64_t v,int profi
     uint64_t pa,uint64_t size,uint64_t aux,uint64_t auxsize,struct pvr_fwmem **out) {
     (void)d;(void)b; CHECK(n == A133_GPU_FW_SIZE && v == PVR_GE8300_BVNC && profile == 1);
     CHECK(pa == A133_GPU_BASE && size == A133_GPU_SIZE && aux == A133_GPU_DFS_REG && auxsize == 4);
+    memory.profile = profile;
     memory.code=(struct pvr_dma){0x40000000,4096};
     memory.data=(struct pvr_dma){0x40001000,4096};
     memory.table=(struct pvr_dma){0x40002000,4096};
@@ -187,11 +190,20 @@ static int pvr_fwmem_prepare(void *d,const void *b,size_t n,uint64_t v,int profi
     memory.config=(struct pvr_dma){0x40004000,4096};
     allocations++; *out = &memory; return 0;
 }
+static uint64_t fixture_clusters = 1, fixture_slc = 64;
+static int fixture_feature_error, fixture_interface_error;
+static unsigned fixture_interface_calls;
 static int pvr_fwinfo_feature(const struct pvr_fwinfo *i,int feature,uint64_t *v) {
-    (void)i; *v = feature == PVR_FW_FEATURE_NUM_CLUSTERS ? 1 : 64; return 0;
+    (void)i;
+    if (fixture_feature_error != 0)
+        return fixture_feature_error;
+    *v = feature == PVR_FW_FEATURE_NUM_CLUSTERS ? fixture_clusters : fixture_slc;
+    return 0;
 }
 static int pvr_fwmem_interface(struct pvr_fwmem *m,uint64_t hz,uint32_t clusters,uint32_t slc) {
-    CHECK(m == &memory && hz == 472500000 && clusters == 1 && slc == 64); return 0;
+    CHECK(m == &memory && hz == 472500000 && clusters == 1 && slc == 64);
+    fixture_interface_calls++;
+    return fixture_interface_error;
 }
 static int irq_start_calls, irq_stop_calls, irq_start_error, boot_error;
 static struct pvr_job_irq *active_irq;
@@ -229,6 +241,8 @@ static int pvr_fwboot(int profile,void *t,bus_space_handle_t h,struct pvr_fwmem 
 static int pvr_ge8300_fwinfo_parse(const void *p,size_t n,uint64_t b,struct pvr_fwinfo *i) {
     (void)p;(void)n;(void)b;(void)i;return bad_stage == 11 ? EOPNOTSUPP : 0;
 }
+struct pvr_fwmem_features { uint32_t clusters, slc_kib; };
+#include "fwmem-interface-image.inc"
 #include "preflight.inc"
 int main(void) {
     struct a133_gpu_softc sc;
@@ -340,6 +354,27 @@ int main(void) {
     dfs_value=2; reads=0;
     CHECK(a133_gpu_prepare(&sc) == 0 && reads == 2 && allocations == 1);
     CHECK(sc.firmware == NULL && sc.firmware_size == 0);
+    {
+        struct pvr_fwmem_features features;
+        CHECK(fixture_interface_calls == 1);
+        fixture_clusters = 2;
+        CHECK(pvr_fwmem_interface_image(&memory, 472500000, &features) == EOPNOTSUPP);
+        CHECK(features.clusters == 0 && fixture_interface_calls == 1);
+        fixture_clusters = 1;
+        fixture_slc = 16;
+        CHECK(pvr_fwmem_interface_image(&memory, 472500000, &features) == EOPNOTSUPP);
+        CHECK(features.slc_kib == 0 && fixture_interface_calls == 1);
+        fixture_slc = 64;
+        fixture_feature_error = ENOENT;
+        CHECK(pvr_fwmem_interface_image(&memory, 472500000, &features) == EOPNOTSUPP);
+        CHECK(features.clusters == 0 && fixture_interface_calls == 1);
+        fixture_feature_error = 0;
+        fixture_interface_error = ENOMEM;
+        CHECK(pvr_fwmem_interface_image(&memory, 472500000, &features) == ENOMEM);
+        CHECK(features.clusters == 1 && features.slc_kib == 64 && fixture_interface_calls == 2);
+        fixture_interface_error = 0;
+    }
+
     bad_stage=5;
     CHECK(a133_gpu_start(&sc) == EBUSY && boot_calls == 0);
     CHECK(irq_start_calls == 0 && irq_stop_calls == 0);

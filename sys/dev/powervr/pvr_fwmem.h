@@ -75,6 +75,17 @@ int pvr_fwmem_prepare(bus_dma_tag_t, const void *, size_t, uint64_t,
 int pvr_fwmem_interface(struct pvr_fwmem *,
     uint64_t, uint32_t, uint32_t);
 
+/*
+ * Validate interface features from the prepared image and initialize FWIF.
+ * Report the features if validation succeeds, even if allocation fails.
+ * The caller holds the CPU-owned firmware serialization lock.
+ */
+struct pvr_fwmem_features {
+	uint32_t clusters, slc_kib;
+};
+int pvr_fwmem_interface_image(struct pvr_fwmem *, uint64_t,
+    struct pvr_fwmem_features *);
+
 /* Allocate direct coherent GE compute RAM under an already exposed FW owner.
  * Memory is uninitialized: the caller checks overlap with its other children
  * before writing. The caller owns the descriptor, marks it exposed before any device

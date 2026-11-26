@@ -27,7 +27,7 @@ sed '/^#include /d' "$src/sys/arch/arm/sunxi/sun60i_a733_gpu_fwbridge.h" >> "$wo
 sed '/^#include /d' "$src/sys/external/bsd/drm2/powervr/pvr_fwbridge.c" > "$work/bridge-driver.h"
 sed '/^#include /d' "$src/sys/arch/arm/sunxi/sun60i_a733_gpu_fwbridge.c" >> "$work/bridge-driver.h"
 # Include the complete production lifecycle functions, without sysctl boilerplate.
-awk '/^sun60i_gpu_run_stage\(/ { active=1; print "static void" }
+awk '/^sun60i_gpu_run_stage(_file)?\(/ { active=1; print "static void" }
     /^sun60i_gpu_exec_attach\(/ { active=1; print "static int" }
     active { print }
     active && /^}$/ { active=0 }' \

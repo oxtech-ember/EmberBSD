@@ -25,7 +25,11 @@ A separate filesystem mounted later by userland is too late for this callback.
 The callback selects PLL600 and runs the existing stages 1 through 17.
 These stages reserve power and clocks, confirm CORE ON/Q, validate PBVNC,
 load and start firmware, and check the firmware command interface. The same
-functions serve explicit diagnostics. There is no second startup sequence.
+functions serve explicit diagnostics. Native startup uses one closed and
+validated file snapshot across stages 12 and 13. Separate diagnostic writes
+retain their original open, validate and close operations. Shared PowerVR
+code validates the prepared image features and initializes the CPU-owned
+interface before stage 15 can expose it to firmware.
 Only an `ETIMEDOUT` from stage 8 can continue to the strict stage-9 waiter.
 Every other failure stops the sequence. Successful stage 17 registers the
 render device and publishes the native firmware execution service.
