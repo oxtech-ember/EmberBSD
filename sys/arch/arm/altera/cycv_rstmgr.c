@@ -47,8 +47,6 @@ struct cycv_reset {
 CFATTACH_DECL_NEW(cycvrstmgr, sizeof (struct cycv_rstmgr_softc),
 	cycv_rstmgr_match, cycv_rstmgr_attach, NULL, NULL);
 
-static struct cycv_rstmgr_softc *cycv_rstmgr_sc;
-
 static const struct device_compatible_entry compat_data[] = {
 	{ .compat = "altr,rst-mgr" },
 	DEVICE_COMPAT_EOL
@@ -89,7 +87,6 @@ cycv_rstmgr_attach(device_t parent, device_t self, void *aux)
 	aprint_normal(": reset manager\n");
 
 	fdtbus_register_reset_controller(self, phandle, &cycv_rstmgr_funcs);
-	cycv_rstmgr_sc = sc;
 }
 
 static void *
