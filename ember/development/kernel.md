@@ -259,3 +259,23 @@ Keep pending boot work out of a kernel repair unless it is an explicit, tested d
 
 Update the DevBoards hardware profile or subsystem guide and the relevant README statement after validation.
 Submit through CONTRIBUTING. Prepare any NetBSD upstream proposal separately.
+
+### Orange Pi Zero 4
+
+Build the production Zero 4 kernel with the same SDK inputs as the
+general AArch64 kernel:
+
+```sh
+sh ember/build-orangepi-zero4-kernel.sh /absolute/output
+```
+
+This selects `EMBER64_ORANGEPI_ZERO4`, which includes `EMBER64` and
+sets `HZ=1000`. Run the same command with `--outputs` to list the
+configuration-specific ELF and raw Image names.
+
+The Zero 4 graphics set stages the resulting raw Image as
+`netbsd-EMBER64.img`. Keep its existing
+`sun60i-a733-orangepi-zero4-graphics.dtb` and boot selection. Staging
+may also use the existing `netbsd-EMBER64` ELF name for the board
+installer. Preserve `EMBER64` for shared AArch64 builds and use
+the existing images for documented recovery releases.

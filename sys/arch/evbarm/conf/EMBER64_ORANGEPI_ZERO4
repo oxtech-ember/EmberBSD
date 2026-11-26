@@ -1,0 +1,5 @@
+# Orange Pi Zero 4 kernel for the board's normal, graphics, and NPU DTBs.
+
+include "arch/evbarm/conf/EMBER64"
+
+options HZ=1000
