@@ -1032,6 +1032,47 @@ rtw89_nb_nss(struct rtw89_nb *nb)
 	return MAX(1, MIN(rtwdev->hal.tx_nss, rtwdev->hal.rx_nss));
 }
 
+/*
+ * The last firmware rate-adaptation report and RX rate of the AP entry.
+ * Plain reads of values that the C2H handler updates; diagnostics only.
+ */
+void
+rtw89_nb_link_info(struct rtw89_nb *nb, struct rtw89_nb_link *link)
+{
+	static const u16 bw_mhz[] = {
+		[RATE_INFO_BW_20] = 20, [RATE_INFO_BW_40] = 40,
+		[RATE_INFO_BW_80] = 80, [RATE_INFO_BW_160] = 160,
+	};
+	const struct rtw89_sta *rtwsta;
+	const struct rate_info *r;
+
+	memset(link, 0, sizeof(*link));
+	if (!nb->started || nb->sta_state < IEEE80211_STA_ASSOC)
+		return;
+	rtwsta = (const struct rtw89_sta *)nb->sta->drv_priv;
+	r = &rtwsta->ra_report.txrate;
+	link->valid = true;
+	if (r->flags & RATE_INFO_FLAGS_HE_MCS)
+		link->tx_mode = RTW89_NB_MODE_HE;
+	else if (r->flags & RATE_INFO_FLAGS_VHT_MCS)
+		link->tx_mode = RTW89_NB_MODE_VHT;
+	else if (r->flags & RATE_INFO_FLAGS_MCS)
+		link->tx_mode = RTW89_NB_MODE_HT;
+	else
+		link->tx_mode = RTW89_NB_MODE_LEGACY;
+	link->tx_mcs = r->mcs;
+	/* rtw89 reports NSS for VHT and HE; an HT MCS implies it. */
+	link->tx_nss = link->tx_mode == RTW89_NB_MODE_HT ? r->mcs / 8 + 1 :
+	    r->nss;
+	link->tx_sgi = (r->flags & RATE_INFO_FLAGS_SHORT_GI) != 0;
+	link->tx_bw = r->bw < __arraycount(bw_mhz) ? bw_mhz[r->bw] : 0;
+	link->tx_legacy = r->legacy;
+	link->tx_hw_rate = rtwsta->ra_report.hw_rate;
+	link->rx_hw_rate = rtwsta->rx_hw_rate;
+	link->rssi = RTW89_RSSI_RAW_TO_DBM(ewma_rssi_read(
+	    __UNCONST(&rtwsta->avg_rssi)));
+}
+
 /* True when the best-effort data ring can take one more frame. */
 bool
 rtw89_nb_tx_space(struct rtw89_nb *nb)

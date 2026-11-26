@@ -91,6 +91,24 @@ struct rtw89_nb_edca {
 	uint16_t	txop;		/* 32 us units */
 };
 
+/* Link observations of the associated AP, for diagnostics only. */
+#define RTW89_NB_MODE_LEGACY	0
+#define RTW89_NB_MODE_HT	1
+#define RTW89_NB_MODE_VHT	2
+#define RTW89_NB_MODE_HE	3
+struct rtw89_nb_link {
+	bool		valid;		/* a station entry exists */
+	uint8_t		tx_mode;	/* RTW89_NB_MODE_* of the last RA report */
+	uint8_t		tx_mcs;		/* HT MCS 0-31 or VHT/HE MCS 0-11 */
+	uint8_t		tx_nss;
+	uint8_t		tx_sgi;
+	uint16_t	tx_bw;		/* MHz */
+	uint16_t	tx_legacy;	/* 100 kbit/s units, legacy mode only */
+	uint16_t	tx_hw_rate;	/* RTW89 hardware rate code */
+	uint16_t	rx_hw_rate;	/* hardware rate code of the last RX data */
+	int		rssi;		/* average RSSI in dBm */
+};
+
 /* Access categories in net80211 order (WME_AC_BE, BK, VI, VO). */
 #define RTW89_NB_NAC		4
 
@@ -118,6 +136,7 @@ int	rtw89_nb_tx(struct rtw89_nb *, const void *, size_t, unsigned int,
 	    unsigned int);
 bool	rtw89_nb_tx_space(struct rtw89_nb *);
 unsigned int rtw89_nb_nss(struct rtw89_nb *);
+void	rtw89_nb_link_info(struct rtw89_nb *, struct rtw89_nb_link *);
 void	rtw89_nb_conf_wme(struct rtw89_nb *,
 	    const struct rtw89_nb_edca[RTW89_NB_NAC]);
 void	rtw89_nb_set_debug(unsigned int);

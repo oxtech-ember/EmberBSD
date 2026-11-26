@@ -78,6 +78,7 @@ Debug controls:
 | `sysctl -w hw.rtw89.hwdebug=<mask>` | Set the rtw89 `RTW89_DBG_*` message mask |
 | `modload -i debug=<n> if_rtw89` | Set `hw.rtw89.debug` before attachment |
 | `sysctl hw.rtw89.txagg` | Show the number of frames given to the MAC for A-MPDU aggregation |
+| `sysctl hw.rtw89.link` | Show the last firmware TX rate (mode, MCS, NSS, width, GI), the RX rate code, the RSSI and the net80211 HT/VHT and TX block-ack counters |
 
 ## HT and VHT
 
@@ -107,6 +108,11 @@ Local capabilities:
   transmits with short GI and LDPC when the AP receives them.
 - The kernel log reports the negotiated link, for example
   `rtwx0: VHT80 link on channel 64 (center 58), TX map 0xfffa, SGI 1, LDPC 1`.
+- The HT20 profile sets `IEEE80211_HT20_PROFILE_HW_PROT`: each data frame
+  has RTS and hardware RTS selection enabled in its TX descriptor, and the
+  MAC has hardware CTS-to-self enabled. The station keeps HT when a 2.4 GHz
+  AP uses HT protection mode 3. See
+  [net80211 hardware protection providers](../../../net80211/docs/net80211-vht-ies.md#hardware-protection-providers).
 
 The receive path accepts MPDUs up to 4096 bytes, so an A-MSDU of 3839
 bytes or a VHT MPDU of 3895 bytes fits one buffer. The transmit path keeps
@@ -155,10 +161,27 @@ The firmware reported three L1 SER events (`0x1000`-`0x1002`); the chip
 recovered each one without a link loss. The same events occur with the
 legacy profile. Receive used about 8 % of the CPU time in interrupts.
 
-On 2.4 GHz channel 1 the station reached RUN with HT20 MCS 0-15, but the
-SAE authentication of wpa_supplicant timed out each time. The legacy
-profile has the same failure with this AP, so no 2.4 GHz throughput is
-recorded.
+`hw.rtw89.link` showed the firmware transmitting at VHT MCS 9, two
+streams, 80 MHz with short GI (866 Mbit/s on the air), RX at VHT MCS 7 on
+two streams and an RSSI of -33 to -42 dBm. Four parallel TCP connections
+moved 308 Mbit/s from the laptop and 187 Mbit/s to it, with about 90 %
+idle CPU time. So a single TCP connection, not the radio link, limits the
+figures in the table above.
+
+### 2.4 GHz, 2026-11-26
+
+The same AP on 2.4 GHz channel 1 uses HT protection mode 3. Before
+`IEEE80211_HT20_PROFILE_HW_PROT`, net80211 withdrew the HT profile at the
+first beacon and the station returned to INIT before the 4-way handshake.
+With the flag the station runs HT20 with MCS 0-15; the firmware transmits
+at MCS 13-15. One TCP connection moved 74-76 Mbit/s from the laptop and
+43 Mbit/s to it.
+
+This AP refuses several association attempts on 2.4 GHz before it answers
+the 4-way handshake, and 60 seconds after each association it sends a
+protected deauthentication with reason 4 (inactivity), also during TCP
+traffic. The station then joins the 5 GHz BSS. This is AP policy for a
+dual-band station; a long 2.4 GHz run needs an AP without it.
 
 Roaming and Bluetooth coexistence under load are not tested.
 
