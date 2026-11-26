@@ -3,7 +3,6 @@
 #
 # PROVIDE: ember_update
 # REQUIRE: LOGIN NETWORKING syslogd certctl_init
-# BEFORE: ember_os_update ember_pkg_update
 # KEYWORD: shutdown
 
 $_rc_subr_loaded . /etc/rc.subr
