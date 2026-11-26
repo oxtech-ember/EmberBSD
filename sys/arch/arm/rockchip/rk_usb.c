@@ -37,6 +37,7 @@ __KERNEL_RCSID(0, "$NetBSD: rk_usb.c,v 1.13 2021/08/07 16:18:45 thorpej Exp $");
 #include <sys/systm.h>
 #include <sys/time.h>
 #include <sys/kmem.h>
+#include <sys/mutex.h>
 
 #include <dev/clk/clk_backend.h>
 
@@ -63,14 +64,29 @@ static void rk_usb_attach(device_t, device_t, void *);
 
 #define	RK3399_PHY_NO(_sc)	((_sc)->sc_reg == 0xe450 ? 0 : 1)
 
+/* RK3506 OTG1 uses a PHY register window and a separate GRF. */
+#define	RK3506_PHY_CLKOUT	0x41c
+#define	 RK3506_CLKOUT_CTL	__BITS(7,2)
+#define	 RK3506_CLKOUT_480M	__SHIFTIN(0x27, RK3506_CLKOUT_CTL)
+#define	RK3506_PHY_HS		0x430
+#define	 RK3506_HS_EYE		__BITS(6,4)
+#define	 RK3506_RX_IN_SUSPEND	__BIT(2)
+#define	RK3506_PHY_LS		0x494
+#define	 RK3506_LS_SOURCE	__BITS(6,3)
+#define	RK3506_GRF_OTG1_CON0	0x70
+#define	 RK3506_UTMI_CTL	__BITS(8,0)
+#define	 RK3506_UTMI_SUSPEND	0x1d1
+
 enum rk_usb_type {
 	USB_RK3328 = 1,
 	USB_RK3399,
+	USB_RK3506,
 };
 
 static const struct device_compatible_entry compat_data[] = {
 	{ .compat = "rockchip,rk3328-usb2phy",	.value = USB_RK3328 },
 	{ .compat = "rockchip,rk3399-usb2phy",	.value = USB_RK3399 },
+	{ .compat = "rockchip,rk3506-usb2phy",	.value = USB_RK3506 },
 	DEVICE_COMPAT_EOL
 };
 
@@ -85,8 +101,14 @@ struct rk_usb_softc {
 
 	struct clk_domain	sc_clkdom;
 	struct rk_usb_clk	sc_usbclk;
+	struct clk		*sc_phyclk;
+	struct clk		*sc_pclk;
 
 	bus_addr_t		sc_reg;
+	bus_space_tag_t		sc_bst;
+	bus_space_handle_t	sc_bsh;
+	kmutex_t		sc_lock;
+	u_int			sc_clk_users;
 };
 
 CFATTACH_DECL_NEW(rk_usb, sizeof(struct rk_usb_softc),
@@ -115,12 +137,37 @@ rk_usb_clk_get_rate(void *priv, struct clk *clk)
 }
 
 static int
+rk3506_usb_clk(struct rk_usb_softc *sc, bool enable)
+{
+	uint32_t value = RK3506_CLKOUT_CTL << 16;
+
+	mutex_enter(&sc->sc_lock);
+	if (enable) {
+		if (sc->sc_clk_users++ == 0) {
+			bus_space_write_4(sc->sc_bst, sc->sc_bsh,
+			    RK3506_PHY_CLKOUT, value | RK3506_CLKOUT_480M);
+			delay(1300);	/* Allow the 480 MHz output to settle. */
+		}
+	} else if (sc->sc_clk_users == 0) {
+		mutex_exit(&sc->sc_lock);
+		return EINVAL;
+	} else if (--sc->sc_clk_users == 0) {
+		bus_space_write_4(sc->sc_bst, sc->sc_bsh, RK3506_PHY_CLKOUT,
+		    value);
+	}
+	mutex_exit(&sc->sc_lock);
+	return 0;
+}
+
+static int
 rk_usb_clk_enable(void *priv, struct clk *clk)
 {
 	struct rk_usb_softc * const sc = priv;
 	uint32_t reg, write_mask, write_val;
 
 	switch (sc->sc_type) {
+	case USB_RK3506:
+		return rk3506_usb_clk(sc, true);
 	case USB_RK3328:
 		reg = RK3328_CON2_REG;
 		write_mask = RK3328_USBPHY_COMMONONN << 16;
@@ -151,6 +198,8 @@ rk_usb_clk_disable(void *priv, struct clk *clk)
 	uint32_t reg, write_mask, write_val;
 
 	switch (sc->sc_type) {
+	case USB_RK3506:
+		return rk3506_usb_clk(sc, false);
 	case USB_RK3328:
 		reg = RK3328_CON2_REG;
 		write_mask = RK3328_USBPHY_COMMONONN << 16;
@@ -211,27 +260,50 @@ rk_usb_attach(device_t parent, device_t self, void *aux)
 	struct rk_usb_softc * const sc = device_private(self);
 	struct fdt_attach_args * const faa = aux;
 	const int phandle = faa->faa_phandle;
-	struct clk *clk;
+	bus_size_t size;
 	int child;
 
 	/* Cache the base address of this PHY so we know which instance we are */
-	if (fdtbus_get_reg(phandle, 0, &sc->sc_reg, NULL) != 0) {
+	if (fdtbus_get_reg(phandle, 0, &sc->sc_reg, &size) != 0) {
 		aprint_error(": couldn't get registers\n");
-		return;
-	}
-
-	clk = fdtbus_clock_get(phandle, "phyclk");
-	if (clk && clk_enable(clk) != 0) {
-		aprint_error(": couldn't enable phy clock\n");
 		return;
 	}
 
 	sc->sc_dev = self;
 	sc->sc_type = of_compatible_lookup(phandle, compat_data)->value;
-	sc->sc_syscon = fdtbus_syscon_lookup(OF_parent(phandle));
+	if (sc->sc_type == USB_RK3506)
+		sc->sc_syscon = fdtbus_syscon_acquire(phandle, "rockchip,usbgrf");
+	else
+		sc->sc_syscon = fdtbus_syscon_lookup(OF_parent(phandle));
 	if (sc->sc_syscon == NULL) {
 		aprint_error(": couldn't get grf syscon\n");
 		return;
+	}
+	sc->sc_phyclk = fdtbus_clock_get(phandle, "phyclk");
+	if (sc->sc_type == USB_RK3506 &&
+	    (sc->sc_phyclk == NULL || clk_get_rate(sc->sc_phyclk) != 24000000)) {
+		aprint_error(": missing 24 MHz PHY reference clock\n");
+		goto put_phyclk;
+	}
+	if (sc->sc_phyclk && clk_enable(sc->sc_phyclk) != 0) {
+		aprint_error(": couldn't enable phy clock\n");
+		goto put_phyclk;
+	}
+	if (sc->sc_type == USB_RK3506) {
+		sc->sc_pclk = fdtbus_clock_get(phandle, "pclk");
+		if (sc->sc_pclk == NULL || clk_enable(sc->sc_pclk) != 0) {
+			aprint_error(": couldn't enable PHY bus clock\n");
+			goto put_pclk;
+		}
+		sc->sc_bst = faa->faa_bst;
+		if (size < RK3506_PHY_LS + 4 ||
+		    bus_space_map(sc->sc_bst, sc->sc_reg, size, 0,
+		    &sc->sc_bsh) != 0) {
+			aprint_error(": couldn't map PHY registers\n");
+			clk_disable(sc->sc_pclk);
+			goto put_pclk;
+		}
+		mutex_init(&sc->sc_lock, MUTEX_DEFAULT, IPL_NONE);
 	}
 
 	const char *clkname = fdtbus_get_string(phandle, "clock-output-names");
@@ -261,6 +333,15 @@ rk_usb_attach(device_t parent, device_t self, void *aux)
 
 		config_found(self, &cfaa, NULL, CFARGS_NONE);
 	}
+	return;
+
+put_pclk:
+	if (sc->sc_pclk != NULL)
+		clk_put(sc->sc_pclk);
+	clk_disable(sc->sc_phyclk);
+put_phyclk:
+	if (sc->sc_phyclk != NULL)
+		clk_put(sc->sc_phyclk);
 }
 
 /*
@@ -274,6 +355,8 @@ struct rk_usbphy_softc {
 	device_t	sc_dev;
 	int		sc_phandle;
 	struct fdtbus_regulator *sc_supply;
+	kmutex_t	sc_lock;
+	u_int		sc_users;
 };
 
 CFATTACH_DECL_NEW(rk_usbphy, sizeof(struct rk_usbphy_softc),
@@ -335,6 +418,59 @@ rk_usbphy_otg_enable(device_t dev, void *priv, bool enable)
 }
 
 static int
+rk3506_usbphy_host_enable(struct rk_usbphy_softc *sc,
+    struct rk_usb_softc *usb, bool enable)
+{
+	const uint32_t hs_mask = RK3506_RX_IN_SUSPEND | RK3506_HS_EYE;
+	int error = 0;
+
+	mutex_enter(&sc->sc_lock);
+	if (!enable && sc->sc_users == 0) {
+		error = EINVAL;
+		goto out;
+	}
+	if ((enable && sc->sc_users > 0) || (!enable && sc->sc_users > 1))
+		goto count;
+
+	if (sc->sc_supply) {
+		error = enable ? fdtbus_regulator_enable(sc->sc_supply) :
+		    fdtbus_regulator_disable(sc->sc_supply);
+		if (error)
+			goto out;
+	}
+	if (enable) {
+		error = clk_enable(&usb->sc_usbclk.base);
+		if (error) {
+			if (sc->sc_supply)
+				fdtbus_regulator_disable(sc->sc_supply);
+			goto out;
+		}
+		/* Set the 425 mV HS eye and the FS/LS transmit line state. */
+		bus_space_write_4(usb->sc_bst, usb->sc_bsh, RK3506_PHY_HS,
+		    (hs_mask << 16) | __SHIFTIN(5, RK3506_HS_EYE));
+		bus_space_write_4(usb->sc_bst, usb->sc_bsh, RK3506_PHY_LS,
+		    (RK3506_LS_SOURCE << 16) | __SHIFTIN(3, RK3506_LS_SOURCE));
+	}
+	syscon_lock(usb->sc_syscon);
+	syscon_write_4(usb->sc_syscon, RK3506_GRF_OTG1_CON0,
+	    (RK3506_UTMI_CTL << 16) | (enable ? 0 : RK3506_UTMI_SUSPEND));
+	syscon_unlock(usb->sc_syscon);
+	if (enable)
+		delay(2000);	/* Wait for the UTMI clock before HCD access. */
+	else
+		clk_disable(&usb->sc_usbclk.base);
+
+count:
+	if (enable)
+		sc->sc_users++;
+	else
+		sc->sc_users--;
+out:
+	mutex_exit(&sc->sc_lock);
+	return error;
+}
+
+static int
 rk_usbphy_host_enable(device_t dev, void *priv, bool enable)
 {
 	struct rk_usbphy_softc * const sc = device_private(dev);
@@ -343,6 +479,8 @@ rk_usbphy_host_enable(device_t dev, void *priv, bool enable)
 	int error;
 
 	switch (usb_sc->sc_type) {
+	case USB_RK3506:
+		return rk3506_usbphy_host_enable(sc, usb_sc, enable);
 	case USB_RK3328:
 		reg = RK3328_CON1_REG;
 		write_mask = 0x1ffU << 16;
@@ -388,11 +526,13 @@ const struct fdtbus_phy_controller_func rk_usbphy_host_funcs = {
 static int
 rk_usbphy_match(device_t parent, cfdata_t cf, void *aux)
 {
+	struct rk_usb_softc * const usb_sc = device_private(parent);
 	struct fdt_attach_args * const faa = aux;
 	const int phandle = faa->faa_phandle;
 	const char *name = fdtbus_get_string(phandle, "name");
 
-	if (strcmp(name, "otg-port") == 0 || strcmp(name, "host-port") == 0)
+	if (strcmp(name, "host-port") == 0 ||
+	    (usb_sc->sc_type != USB_RK3506 && strcmp(name, "otg-port") == 0))
 		return 1;
 
 	return 0;
@@ -422,6 +562,10 @@ rk_usbphy_attach(device_t parent, device_t self, void *aux)
 		aprint_normal(": USB2 OTG port\n");
 		fdtbus_register_phy_controller(self, phandle, &rk_usbphy_otg_funcs);
 	} else if (strcmp(name, "host-port") == 0) {
+		struct rk_usb_softc * const usb_sc = device_private(parent);
+
+		if (usb_sc->sc_type == USB_RK3506)
+			mutex_init(&sc->sc_lock, MUTEX_DEFAULT, IPL_NONE);
 		aprint_normal(": USB2 host port\n");
 		fdtbus_register_phy_controller(self, phandle, &rk_usbphy_host_funcs);
 	}

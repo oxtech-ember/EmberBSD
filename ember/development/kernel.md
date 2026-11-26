@@ -161,6 +161,12 @@ enabled. Use the matching DTB with the upstream clock and reset IDs.
 The vendor SDK uses different IDs for the same CRU compatible string.
 The driver uses the upstream binding's required `xin` input to identify it.
 
+OTG1 at `0xff780000` connects to the onboard CH334F USB hub. The DTB selects
+host mode. The USB2 PHY uses the 24 MHz reference and its internal 480 MHz
+output. U-Boot must leave the system bus clocks running and the USB resets
+released. On the serial console, check for the DWC2 host and the downstream
+hub. The onboard AIC8800DC requires a separate USB radio driver.
+
 The clock and reset IDs come from [Linux commit
 84898f8e9cea](https://github.com/torvalds/linux/commit/84898f8e9cea06f8178fc5ca53f068180f7bfba0).
 The board-level wiring follows the [Zero W schematic and SDK

@@ -8,6 +8,7 @@
 #include <dt-bindings/gpio/gpio.h>
 #include <dt-bindings/pinctrl/rockchip.h>
 #include "rk3506.dtsi"
+#include "rk3506-usb.dtsi"
 
 / {
 	model = "Luckfox Lyra Zero W";
@@ -91,5 +92,19 @@
 &uart0 {
 	/* U-Boot leaves the 24 MHz baud clock and UART0 pins enabled. */
 	clock-frequency = <24000000>;
+	status = "okay";
+};
+
+&usb2phy {
+	status = "okay";
+};
+
+&usb2phy_otg1 {
+	status = "okay";
+};
+
+&usb20_otg1 {
+	/* The onboard CH334F connects the radio and downstream ports. */
+	dr_mode = "host";
 	status = "okay";
 };

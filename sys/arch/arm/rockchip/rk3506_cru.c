@@ -2,7 +2,7 @@
 /*
  * Copyright (c) 2026 The EmberBSD Project.
  *
- * RK3506 clocks for the SD card and its card-detect GPIO.
+ * RK3506 clocks for the SD card, card-detect GPIO and USB host.
  */
 
 #include <sys/param.h>
@@ -41,8 +41,14 @@ static const char *sdmmc_parents[] = {
 
 static struct rk_cru_clk rk3506_clks[] = {
 	RK_GATE(XIN24M_GATE, "xin24m_gate", "xin24m", RK3506_CLKGATE(0), 1),
+	RK_GATE(CLK_REF_USBPHY_TOP, "clk_ref_usbphy_top", "xin24m",
+	    RK3506_CLKGATE(1), 4),
 	RK_GATE(PCLK_GPIO1, "pclk_gpio1", "aclk_core_root", RK3506_CLKGATE(3), 8),
 	RK_GATE(DBCLK_GPIO1, "dbclk_gpio1", "xin24m_gate", RK3506_CLKGATE(3), 9),
+	RK_GATE(HCLK_USBOTG1, "hclk_usbotg1", "hclk_bus_root",
+	    RK3506_CLKGATE(7), 8),
+	RK_GATE(PCLK_USBPHY, "pclk_usbphy", "pclk_bus_root",
+	    RK3506_CLKGATE(7), 11),
 	RK_GATE(HCLK_SDMMC, "hclk_sdmmc", "hclk_hsperi_root", RK3506_CLKGATE(17), 7),
 	RK_COMPOSITE(CCLK_SRC_SDMMC, "cclk_src_sdmmc", sdmmc_parents,
 	    RK3506_CLKSEL(49), __BITS(14,13), __BITS(12,7),

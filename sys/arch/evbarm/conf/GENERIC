@@ -579,6 +579,8 @@ imxusbphy* 	at fdt? pass 9		# i.MX USB PHY
 mesonusbphy* 	at fdt? pass 9		# Amlogic Meson USB2 PHY
 rk3288usb*	at fdt? pass 9		# Rockchip USB PHY
 rk3288usbphy*	at rk3288usb?
+rkusb*		at fdt? pass 9		# Rockchip Innosilicon USB2 PHY
+rkusbphy*	at rkusb?
 sun9iusbphy* 	at fdt? pass 9		# Allwinner A80 USB PHY
 sunxiusbphy* 	at fdt? pass 9		# Allwinner USB PHY
 sunxiusb3phy* 	at fdt? pass 9		# Allwinner USB3 PHY
