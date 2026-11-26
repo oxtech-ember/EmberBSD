@@ -28,6 +28,7 @@ CWARNFLAGS.clang+=	-Wno-nullability-completeness
 .endif
 COPTS.t_ubsan.c += -Wno-stack-protector
 COPTS.t_ubsanxx.cpp += -Wno-stack-protector
+COPTS.t_ubsanxx.cpp+=	${${ACTIVE_CC} == "clang":? -Wno-vla-cxx-extension :}
 COPTS.ubsan.c+=    ${${ACTIVE_CC} == "clang" && ${MACHINE_ARCH} == "powerpc":? -O0 :}
 
 COPTS.t_ubsan.c+=	${${ACTIVE_CC} == "gcc" && ${HAVE_GCC:U0} >= 7:? -Wno-int-in-bool-context :}

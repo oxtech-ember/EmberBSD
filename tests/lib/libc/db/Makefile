@@ -19,4 +19,7 @@ FILESDIR=	${TESTSDIR}
 
 FILES+=		README
 
+# XXdbp is set only for a debugger.
+COPTS.h_db.c+=	${${ACTIVE_CC} == "clang":? -Wno-unused-but-set-global :}
+
 .include <bsd.test.mk>

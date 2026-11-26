@@ -2,8 +2,13 @@
 
 .include <bsd.own.mk>
 
-SUBDIR+=bf bn cast conf des dh dsa ec engine evp hmac \
+SUBDIR+=bf bn cast conf des dh dsa ec evp hmac \
 	rc2 rc4 rsa srp threads
+
+# OpenSSL 4 has no enginetest.c.
+.if ${HAVE_OPENSSL} < 40
+SUBDIR+= engine
+.endif
 
 .if ${HAVE_OPENSSL} <= 11
 SUBDIR+= ecdh ecdsa md2

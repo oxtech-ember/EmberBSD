@@ -155,7 +155,7 @@ ATF_TC_HEAD(setitimer_err, tc)
 
 ATF_TC_BODY(setitimer_err, tc)
 {
-	struct itimerval it, ot;
+	struct itimerval it = { { 0, 0 }, { 0, 0 } }, ot;
 
 	errno = 0;
 	ATF_REQUIRE_ERRNO(EINVAL, setitimer(-1, &it, &ot) == -1);

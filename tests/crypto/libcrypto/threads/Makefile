@@ -33,6 +33,6 @@ HELPER_SRCS=	${${HAVE_OPENSSL} == 10 :? mttest.c : threadstest.c}
 .PATH:		${OPENSSLSRC}/apps
 .PATH:		${OPENSSLSRC}/test/recipes/90-test_threads_data
 .PATH:		${OPENSSLSRC}/test/recipes/90-test_threads_data/store
-LIBCRYPTO!= cd ${OPENSSLSRC}/../lib/libcrypto && ${PRINTOBJDIR}
+LIBCRYPTO!= cd ${NETBSDSRCDIR}/crypto/external/apache2/openssl/lib/libcrypto && ${PRINTOBJDIR}
 LDADD_AFTER+=  ${LIBCRYPTO}/libcrypto.a
 DPADD_AFTER+=          ${LIBCRYPT}

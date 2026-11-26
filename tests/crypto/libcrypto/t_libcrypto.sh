@@ -25,17 +25,6 @@
 # POSSIBILITY OF SUCH DAMAGE.
 #
 
-atf_test_case engine
-engine_head()
-{
-	atf_set "descr" "Checks ENGINE framework"
-}
-engine_body()
-{
-	atf_check -o ignore -e ignore "$(atf_get_srcdir)/h_enginetest" \
-	    "$(atf_get_srcdir)/d_server.pem"
-}
-
 atf_test_case bn
 bn_head()
 {
@@ -84,7 +73,6 @@ threads_body()
 
 atf_init_test_cases()
 {
-	atf_add_test_case engine
 	atf_add_test_case bn
 	atf_add_test_case conf
 	atf_add_test_case threads
