@@ -104,6 +104,7 @@ main(int argc, char *argv[])
 	fstype_t	*fstype;
 	fsinfo_t	 fsoptions;
 	fsnode		*root;
+	NODE		*specroot;
 	int	 	 ch, i;
 	size_t		 len;
 	char		*specfile;
@@ -300,11 +301,12 @@ main(int argc, char *argv[])
 	/* -x must be accompanied by -F */
 	if (fsoptions.onlyspec != 0 && specfile == NULL)
 		errx(EXIT_FAILURE, "-x requires -F mtree-specfile.");
+	specroot = specfile != NULL ? read_specfile(specfile) : NULL;
 
 				/* walk the tree */
 	TIMER_START(start);
 	root = walk_dir(argv[1], ".", NULL, NULL, fsoptions.replace,
-	    fsoptions.follow);
+	    fsoptions.follow, fsoptions.onlyspec == 1 ? specroot : NULL);
 	TIMER_RESULTS(start, "walk_dir");
 
 	/* append extra directory */
@@ -316,13 +318,13 @@ main(int argc, char *argv[])
 			errx(EXIT_FAILURE, "%s: not a directory", argv[i]);
 		TIMER_START(start);
 		root = walk_dir(argv[i], ".", NULL, root, fsoptions.replace,
-		    fsoptions.follow);
+		    fsoptions.follow, fsoptions.onlyspec == 1 ? specroot : NULL);
 		TIMER_RESULTS(start, "walk_dir2");
 	}
 
 	if (specfile) {		/* apply a specfile */
 		TIMER_START(start);
-		apply_specfile(specfile, argv[1], root, fsoptions.onlyspec);
+		apply_specfile(specfile, specroot, argv[1], root, fsoptions.onlyspec);
 		TIMER_RESULTS(start, "apply_specfile");
 	}
 

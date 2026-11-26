@@ -185,6 +185,23 @@ fsnode_join(fsnode **curp, fsnode *join, fsnode *last, const char *path,
 	return 0;
 }
 
+/* Find a directory in the already parsed -x specification. */
+static const NODE *
+spec_directory(const NODE *node, const char *dir)
+{
+	char path[MAXPATHLEN + 1], *part, *rest = path;
+
+	strlcpy(path, dir, sizeof(path));
+	while (node != NULL && (part = strsep(&rest, "/")) != NULL) {
+		if (strcmp(part, ".") == 0)
+			continue;
+		for (node = node->child; node != NULL; node = node->next)
+			if (strcmp(node->name, part) == 0)
+				break;
+	}
+	return node;
+}
+
 /*
  * walk_dir --
  *	build a tree of fsnodes from `root' and `dir', with a parent
@@ -195,15 +212,17 @@ fsnode_join(fsnode **curp, fsnode *join, fsnode *last, const char *path,
  */
 fsnode *
 walk_dir(const char *root, const char *dir, fsnode *parent, fsnode *join,
-    int replace, int follow)
+    int replace, int follow, const NODE *specroot)
 {
 	fsnode		*first, *cur, *prev, *last;
 	DIR		*dirp;
 	struct dirent	*dent;
 	char		path[MAXPATHLEN + 1];
 	struct stat	stbuf;
-	char		*name, *rp;
-	int		dot, len;
+	const char	*name;
+	char		*rp;
+	const NODE	*entry = NULL;
+	int		dot, len, needdot = 1;
 
 	assert(root != NULL);
 	assert(dir != NULL);
@@ -213,8 +232,13 @@ walk_dir(const char *root, const char *dir, fsnode *parent, fsnode *join,
 		errx(EXIT_FAILURE, "Pathname too long.");
 	if (debug & DEBUG_WALK_DIR)
 		printf("%s: %s %p\n", __func__, path, parent);
-	if ((dirp = opendir(path)) == NULL)
-		err(EXIT_FAILURE, "Can't opendir `%s'", path);
+	if ((dirp = opendir(path)) == NULL) {
+		if (errno != EACCES || specroot == NULL)
+			err(EXIT_FAILURE, "Can't opendir `%s'", path);
+		entry = spec_directory(specroot, dir);
+		if (entry != NULL)
+			entry = entry->child;
+	}
 	rp = path + strlen(root) + 1;
 	if (join != NULL) {
 		first = cur = join;
@@ -223,8 +247,21 @@ walk_dir(const char *root, const char *dir, fsnode *parent, fsnode *join,
 		prev = last = cur;
 	} else
 		last = first = prev = NULL;
-	while ((dent = readdir(dirp)) != NULL) {
-		name = dent->d_name;
+	for (;;) {
+		if (dirp != NULL) {
+			if ((dent = readdir(dirp)) == NULL)
+				break;
+			name = dent->d_name;
+		} else if (needdot) {
+			/* A search-only directory can still supply named entries. */
+			needdot = 0;
+			name = ".";
+		} else {
+			if (entry == NULL)
+				break;
+			name = entry->name;
+			entry = entry->next;
+		}
 		dot = 0;
 		if (name[0] == '.')
 			switch (name[1]) {
@@ -243,9 +280,17 @@ walk_dir(const char *root, const char *dir, fsnode *parent, fsnode *join,
 		if (debug & DEBUG_WALK_DIR_NODE)
 			printf("%s: scanning %s/%s/%s\n",
 			    __func__, root, dir, name);
-		if (snprintf(path + len, sizeof(path) - len, "/%s", name) >=
+		path[len] = '\0';
+		if ((!dot || dirp != NULL) &&
+		    snprintf(path + len, sizeof(path) - len, "/%s", name) >=
 		    (int)sizeof(path) - len)
 			errx(EXIT_FAILURE, "Pathname too long.");
+		/* A later source directory may supply this entry. */
+		if (dirp == NULL && !dot && lstat(path, &stbuf) == -1) {
+			if (errno == ENOENT)
+				continue;
+			err(EXIT_FAILURE, "Can't lstat `%s'", path);
+		}
 		if (follow) {
 			if (stat(path, &stbuf) == -1)
 				err(EXIT_FAILURE, "Can't stat `%s'", path);
@@ -277,7 +322,7 @@ walk_dir(const char *root, const char *dir, fsnode *parent, fsnode *join,
 			if (fsnode_join(&cur, join, last, path, name, &stbuf,
 			    replace)) {
 				cur->child = walk_dir(root, rp, cur,
-				    cur->child, replace, follow);
+				    cur->child, replace, follow, specroot);
 				continue;
 			} else if (cur) {
 				if (prev == cur) {
@@ -310,7 +355,7 @@ walk_dir(const char *root, const char *dir, fsnode *parent, fsnode *join,
 			cur->first = first;
 			if (S_ISDIR(cur->type)) {
 				cur->child = walk_dir(root, rp, cur, NULL,
-				    replace, follow);
+				    replace, follow, specroot);
 				continue;
 			}
 		}
@@ -344,7 +389,7 @@ walk_dir(const char *root, const char *dir, fsnode *parent, fsnode *join,
 	if (join == NULL)
 		for (cur = first->next; cur != NULL; cur = cur->next)
 			cur->first = first;
-	if (closedir(dirp) == -1)
+	if (dirp != NULL && closedir(dirp) == -1)
 		err(EXIT_FAILURE, "Can't closedir `%s/%s'", root, dir);
 
 	return fsnode_sort(first, root, dir);
@@ -429,25 +474,14 @@ free_fsnodes(fsnode *node)
 	}
 }
 
-/*
- * apply_specfile --
- *	read in the mtree(8) specfile, and apply it to the tree
- *	at dir,parent. parameters in parent on equivalent types
- *	will be changed to those found in specfile, and missing
- *	entries will be added.
- */
-void
-apply_specfile(const char *specfile, const char *dir, fsnode *parent, int speconly)
+NODE *
+read_specfile(const char *specfile)
 {
 	struct timeval	 start;
 	FILE	*fp;
 	NODE	*root;
 
 	assert(specfile != NULL);
-	assert(parent != NULL);
-
-	if (debug & DEBUG_APPLY_SPECFILE)
-		printf("%s: %s, %s %p\n", __func__, specfile, dir, parent);
 
 				/* read in the specfile */
 	if ((fp = fopen(specfile, "r")) == NULL)
@@ -464,8 +498,17 @@ apply_specfile(const char *specfile, const char *dir, fsnode *parent, int specon
 		    "Specfile `%s' did not contain a tree", specfile);
 	assert(strcmp(root->name, ".") == 0);
 	assert(root->type == F_DIR);
+	return root;
+}
 
-				/* merge in the changes */
+/* Apply the target metadata and add entries defined only by the specification. */
+void
+apply_specfile(const char *specfile, NODE *root, const char *dir, fsnode *parent,
+    int speconly)
+{
+	assert(parent != NULL);
+	if (debug & DEBUG_APPLY_SPECFILE)
+		printf("%s: %s, %s %p\n", __func__, specfile, dir, parent);
 	apply_specdir(dir, root, parent, speconly);
 
 	free_nodes(root);

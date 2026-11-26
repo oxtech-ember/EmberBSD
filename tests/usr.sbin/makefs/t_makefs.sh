@@ -60,6 +60,50 @@ replace_cleanup() {
 	rm -fr 1 2 foo foo.dump foo.img
 }
 
+atf_test_case search_only cleanup
+search_only_head() {
+	atf_set "descr" "Build selected entries from a search-only directory"
+	atf_set "require.user" "unprivileged"
+	atf_set "require.progs" "makefs dump restore"
+}
+
+search_only_body() {
+	mkdir -p src/empty src/hidden overlay/hidden result
+	echo retained > src/hidden/selected
+	echo excluded > src/hidden/other
+	echo overlay > overlay/hidden/second
+	chmod 0000 src/empty
+	chmod 0111 src/hidden
+	cat > spec <<'EOF'
+. type=dir uid=0 gid=0 mode=0755
+./empty type=dir uid=0 gid=0 mode=0000
+./hidden type=dir uid=0 gid=0 mode=0111
+./hidden/selected type=file uid=0 gid=0 mode=0644
+./hidden/second type=file uid=0 gid=0 mode=0644
+EOF
+	atf_check -s exit:0 -o ignore -e ignore makefs -r -x -F spec \
+	    -t ffs -s 2m image src overlay
+	dump 0f image.dump -F image || atf_fail "cannot read the image"
+	(cd result && restore -rf ../image.dump)
+	atf_check -o inline:"0\n" stat -f '%Lp' result/empty
+	atf_check -o inline:"111\n" stat -f '%Lp' result/hidden
+	atf_check -o inline:"retained\n" cat result/hidden/selected
+	atf_check -o inline:"overlay\n" cat result/hidden/second
+	atf_check test ! -e result/hidden/other
+	atf_check -s not-exit:0 -o ignore -e match:"Can't opendir" \
+	    makefs -F spec -t ffs -s 2m all.img src
+	atf_check -s not-exit:0 -o ignore -e match:"Can't opendir" \
+	    makefs -x -x -F spec -t ffs -s 2m strict.img src
+	chmod 0000 src/hidden/selected
+	atf_check -s not-exit:0 -o ignore -e ignore makefs -r -x -F spec \
+	    -t ffs -s 2m unreadable.img src overlay
+}
+
+search_only_cleanup() {
+	chmod 0700 src/empty src/hidden result/empty result/hidden 2>/dev/null || true
+}
+
 atf_init_test_cases() {
 	atf_add_test_case replace
+	atf_add_test_case search_only
 }

@@ -185,7 +185,10 @@ typedef struct makefs_fsinfo {
 
 
 
-void		apply_specfile(const char *, const char *, fsnode *, int);
+struct _node;
+struct _node *	read_specfile(const char *);
+void		apply_specfile(const char *, struct _node *, const char *,
+    fsnode *, int);
 void		dump_fsnodes(fsnode *);
 const char *	inode_type(mode_t);
 int		set_option(const option_t *, const char *, char *, size_t);
@@ -193,7 +196,7 @@ void		print_options(FILE *, const option_t *);
 int		set_option_var(const option_t *, const char *, const char *,
     char *, size_t);
 fsnode *	walk_dir(const char *, const char *, fsnode *, fsnode *, int,
-    int);
+    int, const struct _node *);
 void		free_fsnodes(fsnode *);
 option_t *	copy_opts(const option_t *);
 
