@@ -168,7 +168,7 @@ static const struct device_compatible_entry compat_data[] = {
 	DEVICE_COMPAT_EOL
 };
 
-static int omapfb_console_phandle = -1;
+static int omapfb_console_phandle __unused = -1;
 
 static int
 omapfb_match(device_t parent, cfdata_t match, void *aux)
