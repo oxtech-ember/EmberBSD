@@ -49,6 +49,9 @@ ifdef arm
 attach	rkiomux at fdt with rk3288_iomux
 file	arch/arm/rockchip/rk3288_iomux.c	rk3288_iomux & soc_rk3288
 
+attach	rkiomux at fdt with rk3506_iomux
+file	arch/arm/rockchip/rk3506_iomux.c	rk3506_iomux & soc_rk3506
+
 else
 
 attach	rkiomux at fdt with rk3328_iomux

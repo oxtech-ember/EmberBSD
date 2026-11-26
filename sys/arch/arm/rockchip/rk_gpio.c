@@ -56,7 +56,9 @@ __KERNEL_RCSID(0, "$NetBSD: rk_gpio.c,v 1.8 2025/06/03 18:26:38 rjs Exp $");
 #define	GPIO_EXT_PORTA_REG		0x0050
 #define	GPIO_LS_SYNC_REG		0x0060
 #define	GPIO_VER_ID_REG			0x0078
-#define	GPIO_VER_ID_GPIOV2		0x0101157c
+#define	GPIO_VER_ID_GPIOV2		0x01000c2b
+#define	GPIO_VER_ID_GPIOV2_1		0x0101157c
+#define	GPIO_VER_ID_GPIOV2_2		0x010219c8
 
 /*
  * In "version 2" GPIO controllers, half of each register is used by the
@@ -130,7 +132,7 @@ rk_gpio_acquire(device_t dev, const void *data, size_t len, int flags)
 	if (len != 12)
 		return NULL;
 
-	const uint8_t pin = be32toh(gpio[1]) & 0xff;
+	const u_int pin = be32toh(gpio[1]);
 	const bool actlo = be32toh(gpio[2]) & 1;
 
 	if (pin >= __arraycount(sc->sc_pins))
@@ -583,7 +585,7 @@ rk_gpio_attach_ports(struct rk_gpio_softc *sc)
 	for (pin = 0; pin < __arraycount(sc->sc_pins); pin++) {
 		sc->sc_pins[pin].pin_num = pin;
 		sc->sc_pins[pin].pin_caps = GPIO_PIN_INPUT | GPIO_PIN_OUTPUT;
-		sc->sc_pins[pin].pin_state = rk_gpio_pin_read(sc, pin);
+		sc->sc_pins[pin].pin_state = sc->sc_gp.gp_pin_read(sc, pin);
 	}
 
 	memset(&gba, 0, sizeof(gba));
@@ -647,11 +649,12 @@ rk_gpio_attach(device_t parent, device_t self, void *aux)
 		gp->gp_intr_unmask = rk_gpio_intr_unmask;
 		break;
 	case GPIO_VER_ID_GPIOV2:
+	case GPIO_VER_ID_GPIOV2_1:
+	case GPIO_VER_ID_GPIOV2_2:
 		ver = 2;
 		gp->gp_pin_read = rk_gpio_v2_pin_read;
 		gp->gp_pin_write = rk_gpio_v2_pin_write;
 		gp->gp_pin_ctl = rk_gpio_v2_pin_ctl;
-		/* XXX */
 		break;
 	default:
 		aprint_error(": unknown version 0x%08" PRIx32 "\n", ver_id);
@@ -666,6 +669,10 @@ rk_gpio_attach(device_t parent, device_t self, void *aux)
 	fdtbus_register_gpio_controller(self, phandle, &rk_gpio_funcs);
 
 	rk_gpio_attach_ports(sc);
+
+	/* Only v1 interrupt registers and dispatch are implemented. */
+	if (ver != 1)
+		return;
 
 	WR4(sc, GPIO_INTEN_REG, 0);
 
