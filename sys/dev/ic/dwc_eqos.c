@@ -150,6 +150,7 @@ eqos_mdio_access(device_t dev, int phy, int reg, uint16_t data,
 	const bus_size_t size = GMAC_MAC_MDIO_DATA - GMAC_MAC_MDIO_ADDRESS + 4;
 	uint32_t addr;
 
+	mutex_enter(&sc->sc_mdio_lock);
 	/* A previous command may still be active after a timeout. */
 	if (!eqos_mdio_idle(sc, &retries))
 		goto timeout;
@@ -178,9 +179,11 @@ eqos_mdio_access(device_t dev, int phy, int reg, uint16_t data,
 		    size, BUS_SPACE_BARRIER_READ);
 		*result = RD4(sc, GMAC_MAC_MDIO_DATA) & 0xffff;
 	}
+	mutex_exit(&sc->sc_mdio_lock);
 	return 0;
 
 timeout:
+	mutex_exit(&sc->sc_mdio_lock);
 	device_printf(dev, "phy %s timeout, phy=%d reg=%d\n",
 	    result != NULL ? "read" : "write", phy, reg);
 	return ETIMEDOUT;
@@ -260,7 +263,10 @@ eqos_mii_statchg(struct ifnet *ifp)
 {
 	struct eqos_softc * const sc = ifp->if_softc;
 
+	KASSERT(mii_locked(&sc->sc_mii));
+	EQOS_LOCK(sc);
 	eqos_update_link(sc);
+	EQOS_UNLOCK(sc);
 }
 
 static void
@@ -467,11 +473,10 @@ eqos_tick(void *softc)
 	struct eqos_softc * const sc = softc;
 	struct mii_data * const mii = &sc->sc_mii;
 
-	EQOS_LOCK(sc);
+	mii_lock(mii);
 	mii_tick(mii);
-	if ((sc->sc_if_flags & IFF_RUNNING) != 0)
-		callout_schedule(&sc->sc_stat_ch, hz);
-	EQOS_UNLOCK(sc);
+	callout_schedule(&sc->sc_stat_ch, hz);
+	mii_unlock(mii);
 }
 
 static uint32_t
@@ -608,18 +613,14 @@ eqos_init_rings(struct eqos_softc *sc, int qid)
 	    sc->sc_rx.desc_ring_paddr, RX_DESC_COUNT);
 }
 
-static int
+static void
 eqos_init_locked(struct eqos_softc *sc)
 {
 	struct ifnet * const ifp = &sc->sc_ec.ec_if;
-	struct mii_data * const mii = &sc->sc_mii;
 	uint32_t val, tqs, rqs;
 
 	EQOS_ASSERT_LOCKED(sc);
 	EQOS_ASSERT_TXLOCKED(sc);
-
-	if ((ifp->if_flags & IFF_RUNNING) != 0)
-		return 0;
 
 	/* Setup TX/RX rings */
 	eqos_init_rings(sc, 0);
@@ -712,26 +713,29 @@ eqos_init_locked(struct eqos_softc *sc)
 
 	ifp->if_flags |= IFF_RUNNING;
 	sc->sc_if_flags |= IFF_RUNNING;
-
-	mii_mediachg(mii);
-	callout_schedule(&sc->sc_stat_ch, hz);
-
-	return 0;
 }
 
 static int
 eqos_init(struct ifnet *ifp)
 {
 	struct eqos_softc * const sc = ifp->if_softc;
-	int error;
+	struct mii_data * const mii = &sc->sc_mii;
 
 	EQOS_LOCK(sc);
+	if ((ifp->if_flags & IFF_RUNNING) != 0) {
+		EQOS_UNLOCK(sc);
+		return 0;
+	}
 	EQOS_TXLOCK(sc);
-	error = eqos_init_locked(sc);
+	eqos_init_locked(sc);
 	EQOS_TXUNLOCK(sc);
 	EQOS_UNLOCK(sc);
 
-	return error;
+	mii_lock(mii);
+	mii_mediachg(mii);
+	callout_schedule(&sc->sc_stat_ch, hz);
+	mii_unlock(mii);
+	return 0;
 }
 
 static void
@@ -746,10 +750,6 @@ eqos_stop_locked(struct eqos_softc *sc, int disable)
 	EQOS_TXLOCK(sc);
 	sc->sc_txrunning = false;
 	EQOS_TXUNLOCK(sc);
-
-	callout_halt(&sc->sc_stat_ch, &sc->sc_lock);
-
-	mii_down(&sc->sc_mii);
 
 	/* Disable receiver */
 	val = RD4(sc, GMAC_MAC_CONFIGURATION);
@@ -801,6 +801,13 @@ static void
 eqos_stop(struct ifnet *ifp, int disable)
 {
 	struct eqos_softc * const sc = ifp->if_softc;
+	struct mii_data * const mii = &sc->sc_mii;
+
+	/* Drain a running tick and any callout it scheduled. */
+	callout_halt(&sc->sc_stat_ch, NULL);
+	mii_lock(mii);
+	mii_down(mii);
+	mii_unlock(mii);
 
 	EQOS_LOCK(sc);
 	eqos_stop_locked(sc, disable);
@@ -1604,7 +1611,10 @@ eqos_attach(struct eqos_softc *sc)
 
 	/* Attach MII driver */
 	sc->sc_ec.ec_mii = mii;
-	ifmedia_init(&mii->mii_media, 0, ether_mediachange, ether_mediastatus);
+	mutex_init(&sc->sc_media_lock, MUTEX_DEFAULT, IPL_SOFTNET);
+	mutex_init(&sc->sc_mdio_lock, MUTEX_DEFAULT, IPL_SOFTNET);
+	ifmedia_init_with_lock(&mii->mii_media, 0, ether_mediachange,
+	    ether_mediastatus, &sc->sc_media_lock);
 	mii->mii_ifp = ifp;
 	mii->mii_readreg = eqos_mii_readreg;
 	mii->mii_writereg = eqos_mii_writereg;
@@ -1613,6 +1623,9 @@ eqos_attach(struct eqos_softc *sc)
 	    MIIF_DOPAUSE);
 
 	if (LIST_EMPTY(&mii->mii_phys)) {
+		ifmedia_fini(&mii->mii_media);
+		mutex_destroy(&sc->sc_mdio_lock);
+		mutex_destroy(&sc->sc_media_lock);
 		aprint_error_dev(sc->sc_dev, "no PHY found!\n");
 		return ENOENT;
 	}

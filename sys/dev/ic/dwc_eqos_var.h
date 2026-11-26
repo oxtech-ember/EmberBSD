@@ -70,6 +70,8 @@ struct eqos_softc {
 	callout_t		sc_stat_ch;
 	kmutex_t		sc_lock;
 	kmutex_t		sc_txlock;
+	kmutex_t		sc_media_lock;
+	kmutex_t		sc_mdio_lock;
 	u_short			sc_if_flags;
 	bool			sc_txrunning;
 
