@@ -70,7 +70,7 @@ endif
 # GPIO
 device	rkgpio: gpiobus
 attach	rkgpio at rkiomux with rk_gpio
-file	arch/arm/rockchip/rk_gpio.c		rk_gpio
+file	arch/arm/rockchip/rk_gpio.c		rk_gpio	needs-flag
 
 # I2C
 device	rkiic: i2cbus, i2cexec

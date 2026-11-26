@@ -43,6 +43,8 @@ __KERNEL_RCSID(0, "$NetBSD: rk_gpio.c,v 1.8 2025/06/03 18:26:38 rjs Exp $");
 #include <dev/fdt/fdtvar.h>
 #include <dev/gpio/gpiovar.h>
 
+#include <arm/rockchip/rk_gpiovar.h>
+
 #define	GPIO_SWPORTA_DR_REG		0x0000
 #define	GPIO_SWPORTA_DDR_REG		0x0004
 #define	GPIO_INTEN_REG			0x0030
@@ -121,6 +123,25 @@ static void	rk_gpio_attach(device_t, device_t, void *);
 
 CFATTACH_DECL_NEW(rk_gpio, sizeof(struct rk_gpio_softc),
 	rk_gpio_match, rk_gpio_attach, NULL, NULL);
+
+int
+rk_gpio_config_output(device_t dev, u_int pin, int value, bool apply)
+{
+	struct rk_gpio_softc * const sc = device_private(dev);
+
+	if (pin >= __arraycount(sc->sc_pins))
+		return EINVAL;
+	if ((sc->sc_pins[pin].pin_caps & GPIO_PIN_OUTPUT) == 0)
+		return ENXIO;
+	if (apply) {
+		/* Set the latch before the pad starts to drive. */
+		gpiobus_pin_write(&sc->sc_gp, pin, value);
+		gpiobus_pin_ctl(&sc->sc_gp, pin, GPIO_PIN_OUTPUT);
+		sc->sc_pins[pin].pin_state = value;
+		sc->sc_pins[pin].pin_flags = GPIO_PIN_OUTPUT;
+	}
+	return 0;
+}
 
 static void *
 rk_gpio_acquire(device_t dev, const void *data, size_t len, int flags)

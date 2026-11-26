@@ -39,10 +39,15 @@
 #include <dev/fdt/fdtvar.h>
 #include <dev/fdt/syscon.h>
 
+#include <arm/rockchip/rk_gpiovar.h>
+
+#include "rk_gpio.h"
+
 #define	RK3506_MUX_REG(bank, pin)	(0x20 * (bank) + 4 * ((pin) / 4))
 #define	RK3506_PULL_REG(bank, pin)	(0x200 + 0x10 * (bank) + 4 * ((pin) / 8))
 
 struct rk3506_iomux_softc {
+	device_t sc_gpio1;
 	struct syscon *sc_ioc1;
 	struct syscon *sc_ioc234;
 };
@@ -69,7 +74,10 @@ rk3506_iomux_pin(struct rk3506_iomux_softc *sc, const uint32_t *cells,
 	const int cfg = fdtbus_get_phandle_from_native(be32toh(cells[3]));
 	struct syscon *ioc;
 	uint32_t mask, val;
-	int bias;
+	int bias, direction, value;
+#if NRK_GPIO > 0
+	int error;
+#endif
 
 	if (bank >= __arraycount(npins) || pin >= npins[bank] ||
 	    mux > 15 || cfg < 0)
@@ -88,8 +96,24 @@ rk3506_iomux_pin(struct rk3506_iomux_softc *sc, const uint32_t *cells,
 	    of_hasprop(cfg, "input-schmitt-enable") ||
 	    of_hasprop(cfg, "input-schmitt-disable") ||
 	    of_hasprop(cfg, "input-disable") ||
-	    fdtbus_pinctrl_parse_input_output(cfg, NULL) >= 0)
+	    of_hasprop(cfg, "output-disable") ||
+	    (of_hasprop(cfg, "output-low") && of_hasprop(cfg, "output-high")))
 		return EOPNOTSUPP;
+	direction = fdtbus_pinctrl_parse_input_output(cfg, &value);
+	if (direction >= 0) {
+		if (direction != GPIO_PIN_OUTPUT || value < 0 || mux != 0 ||
+		    bank != 1)
+			return EOPNOTSUPP;
+#if NRK_GPIO > 0
+		if (sc->sc_gpio1 == NULL)
+			return ENXIO;
+		error = rk_gpio_config_output(sc->sc_gpio1, pin, value, apply);
+		if (error)
+			return error;
+#else
+		return ENXIO;
+#endif
+	}
 	bias = fdtbus_pinctrl_parse_bias(cfg, NULL);
 	if (!apply)
 		return 0;
@@ -167,7 +191,8 @@ rk3506_iomux_attach(device_t parent, device_t self, void *aux)
 	struct rk3506_iomux_softc * const sc = device_private(self);
 	struct fdt_attach_args * const faa = aux;
 	const int phandle = faa->faa_phandle;
-	int child, group, grf;
+	int child, group, grf, error;
+	int gpio1 = -1;
 
 	sc->sc_ioc234 = fdtbus_syscon_acquire(phandle, "rockchip,grf");
 	if (sc->sc_ioc234 == NULL) {
@@ -182,8 +207,10 @@ rk3506_iomux_attach(device_t parent, device_t self, void *aux)
 			continue;
 		if (of_compatible(child, gpio_bank)) {
 			grf = fdtbus_get_phandle(child, "rockchip,grf");
-			if (grf >= 0 && of_compatible(grf, ioc1))
+			if (grf >= 0 && of_compatible(grf, ioc1)) {
 				sc->sc_ioc1 = fdtbus_syscon_lookup(grf);
+				gpio1 = child;
+			}
 			continue;
 		}
 		for (group = OF_child(child); group; group = OF_peer(group)) {
@@ -195,12 +222,22 @@ rk3506_iomux_attach(device_t parent, device_t self, void *aux)
 
 	for (child = OF_child(phandle); child; child = OF_peer(child)) {
 		struct fdt_attach_args cfaa = *faa;
+		device_t bank;
 
 		if (!fdtbus_status_okay(child) || !of_compatible(child, gpio_bank))
 			continue;
 		cfaa.faa_phandle = child;
 		cfaa.faa_name = fdtbus_get_string(child, "name");
 		cfaa.faa_quiet = false;
-		config_found(self, &cfaa, NULL, CFARGS_NONE);
+		bank = config_found(self, &cfaa, NULL, CFARGS_NONE);
+		if (child == gpio1)
+			sc->sc_gpio1 = bank;
+	}
+
+	/* The controller can apply its own state after its banks attach. */
+	if (fdtbus_pinctrl_has_config(phandle, "default")) {
+		error = fdtbus_pinctrl_set_config(phandle, "default");
+		if (error)
+			aprint_error_dev(self, "cannot set default pins: %d\n", error);
 	}
 }

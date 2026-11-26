@@ -51,6 +51,21 @@
 };
 
 &pinctrl {
+	pinctrl-names = "default";
+	pinctrl-0 = <&wifi_antenna>;
+
+	pcfg_output_high: pcfg-output-high {
+		bias-disable;
+		output-high;
+	};
+
+	wifi {
+		/* U9 connects the onboard antenna when GPIO1_C7 is high. */
+		wifi_antenna: wifi-antenna {
+			rockchip,pins = <1 RK_PC7 RK_FUNC_GPIO &pcfg_output_high>;
+		};
+	};
+
 	pcfg_pull_none: pcfg-pull-none {
 		bias-disable;
 	};
