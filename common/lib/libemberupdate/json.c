@@ -27,8 +27,8 @@ struct parser {
 };
 
 /* Reject invalid encodings, surrogate code points, and embedded NULs. */
-static int
-utf8(const unsigned char *s, size_t n)
+int
+eu_utf8(const unsigned char *s, size_t n)
 {
 	size_t i;
 	uint32_t c, minimum;
@@ -318,7 +318,7 @@ eu_json_parse(const void *data, size_t len)
 	jsmn_parser lexer;
 	struct eu_json *root = NULL;
 
-	if (data == NULL || len == 0 || len > JSON_LIMIT || !utf8(data, len))
+	if (data == NULL || len == 0 || len > JSON_LIMIT || !eu_utf8(data, len))
 		goto done;
 	jsmn_init(&lexer);
 	p.count = jsmn_parse(&lexer, data, len, NULL, 0);

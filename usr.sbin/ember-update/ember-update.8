@@ -1,0 +1,83 @@
+.\" SPDX-License-Identifier: BSD-2-Clause
+.Dd November 26, 2026
+.Dt EMBER-UPDATE 8
+.Os
+.Sh NAME
+.Nm ember-update
+.Nd check and install signed system and package releases
+.Sh SYNOPSIS
+.Nm
+.Cm status | check | history
+.Nm
+.Cm apply
+.Op Fl Fl reboot
+.Nm
+.Cm apply-kernel
+.Ar directory
+.Op Fl Fl reboot
+.Sh DESCRIPTION
+.Nm
+selects a signed release for the installed target and OS profile.
+Commands that change the system require root.
+.Bl -tag -width apply-kernel
+.It Cm status
+Print the local status as JSON.
+.It Cm history
+Print up to 32 recent local update events as JSON.
+.It Cm check
+Check the signed channel, release, OS descriptor, and binary package catalog.
+.It Cm apply
+Download each selected artifact and verify its size and SHA-256.
+Install the selected OS sets and package upgrades in the inactive slot.
+Arm a single trial boot.
+A single-root profile updates packages on its running root.
+.It Cm apply-kernel
+Stage the local kernel from the specified directory in the inactive slot.
+The OS installer verifies the kernel files.
+The resulting kernel receipt holds automatic OS changes.
+Package updates remain available.
+.El
+.Pp
+Set
+.Va ember_update=YES
+in
+.Pa /etc/rc.conf
+to check at boot and hourly.
+Set
+.Va ember_update_packages
+and
+.Va ember_update_os
+to YES or NO.
+.Va ember_update_channel
+names the signed channel and defaults to current.
+.Va ember_update_reboot
+accepts ask, always, or a local interval such as 01:00-04:00.
+An interval may cross midnight.
+The default ask leaves the trial ready for the next restart.
+.Cm apply Fl Fl reboot
+requests an immediate restart.
+.Pp
+At startup the controller compares the running trial with the installed
+receipt, checks local health, and confirms that slot.
+If the kernel or health check fails, the trial watchdog returns the
+device to the previous confirmed slot.
+.Sh FILES
+.Bl -tag -width indent
+.It Pa /etc/ember-update-profile.json
+Device target, OS set roles, and boot slot settings.
+.It Pa /etc/openssl/emberbsd-release-root.pem
+Installed signing trust anchor.
+.It Pa /etc/ember-os-health
+Local executable that must report a healthy trial within 30 seconds.
+.It Pa /var/db/ember-update/state.json
+Atomic status for local applications.
+All users can read it.
+.El
+.Sh EXIT STATUS
+The
+.Nm
+utility exits 0 on success and exits greater than 0 on failure.
+.Sh SEE ALSO
+.Xr pkg_add 1 ,
+.Xr rc.conf 5 ,
+.Xr certctl 8

@@ -1,0 +1,24 @@
+#!/bin/sh
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# PROVIDE: ember_update
+# REQUIRE: LOGIN NETWORKING syslogd
+# BEFORE: ember_os_update ember_pkg_update
+# KEYWORD: shutdown
+
+$_rc_subr_loaded . /etc/rc.subr
+
+name=ember_update
+rcvar=$name
+command=/usr/sbin/ember-update
+command_args=watch
+pidfile=/var/run/ember_update.pid
+required_files=/etc/ember-update-profile.json
+
+load_rc_config "$name"
+# A manually staged trial still needs a health check at the next boot.
+if [ "$1" = start ] && [ -f "$required_files" ] && ! checkyesno ember_update; then
+	"$command" boot
+	exit $?
+fi
+run_rc_command "$1"

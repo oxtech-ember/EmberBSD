@@ -16,6 +16,7 @@ struct eu_json {
 	struct eu_json *next;
 };
 
+int eu_utf8(const unsigned char *, size_t);
 struct eu_json *eu_json_parse(const void *, size_t);
 struct eu_json *eu_json_file(const char *, size_t);
 const struct eu_json *eu_get(const struct eu_json *, const char *);
