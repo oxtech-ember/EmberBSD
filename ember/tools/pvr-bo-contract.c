@@ -131,6 +131,8 @@ struct dma_buf {
 };
 struct sg_table { struct drm_gem_object *obj; };
 struct drm_gem_object_funcs {
+	int (*begin_cpu_read)(struct drm_gem_object *, size_t, const void **);
+	void (*end_cpu_read)(struct drm_gem_object *);
 	void (*free)(struct drm_gem_object *);
 	struct dma_buf *(*export)(struct drm_gem_object *, int);
 	struct sg_table *(*get_sg_table)(struct drm_gem_object *);
@@ -168,6 +170,16 @@ static struct { int npages, reserve_kernel, reserve_pagedaemon, freemin;
 static int available_pages = 1048576;
 static int uvm_availmem(bool cached) { return available_pages; }
 static unsigned int atomic_inc_uint_nv(volatile unsigned int *p) { return ++*p; }
+static unsigned int
+atomic_cas_uint(volatile unsigned int *ptr, unsigned int old, unsigned int value)
+{
+	__atomic_compare_exchange_n(ptr, &old, value, false, __ATOMIC_SEQ_CST,
+	    __ATOMIC_SEQ_CST);
+	return old;
+}
+#define atomic_load_relaxed(p) __atomic_load_n((p), __ATOMIC_RELAXED)
+#define atomic_store_release(p, v) __atomic_store_n((p), (v), __ATOMIC_RELEASE)
+
 static struct drm_vma_offset_manager manager;
 #define CHECK(e) do { checks++; if (!(e)) { \
 	fprintf(stderr, "FAIL line %d: %s\n", __LINE__, #e); abort(); \
