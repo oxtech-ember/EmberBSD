@@ -38,12 +38,19 @@ cp "$input/control.json" "$root/etc/ember-os-update.json"
 cp "$input/legacy-profile.json" "$root/etc/ember-uboot-slots.json"
 cp "$input/seal.json" "$root/usr/share/ember-update/handoff/$profile.json"
 for f in release.json etc.tar.xz; do install -m 0600 "$input/$f" "$root/var/db/ember-os-update/$f"; done
-cp "$input/buildinfo" "$root/buildinfo"
+# newvers stores one newline. sysctl -n adds another when it prints the value.
+buildinfo=$(cat "$input/buildinfo")
+printf '%s\n' "$buildinfo" >"$root/buildinfo"
 cp "$input/version" "$root/version"
 : >"$root/dev/null"
 cat >"$root/sbin/sysctl" <<'SH'
 #!/bin/sh
-case "$2" in kern.buildinfo) cat /buildinfo ;; kern.version) cat /version ;; *) exit 2 ;; esac
+case "$1 $2" in
+'-r kern.buildinfo') cat /buildinfo; printf '\0' ;;
+'-n kern.buildinfo') cat /buildinfo; printf '\n' ;;
+'-n kern.version') cat /version ;;
+*) exit 2 ;;
+esac
 SH
 cat >"$root/usr/libexec/ember-os-slot" <<'SH'
 #!/bin/sh
@@ -89,7 +96,19 @@ rm "$root/unhealthy"
 cp "$root/buildinfo" "$root/original-buildinfo"
 printf 'local kernel\n' >"$root/buildinfo"
 refused "trial kernel differs"
+printf 'EmberBSD:%040d\n' 0 >"$root/buildinfo"
+refused "trial kernel differs"
+cat "$root/original-buildinfo" >"$root/buildinfo"
+printf 'extra identity\n' >>"$root/buildinfo"
+refused "trial kernel differs"
+cat "$root/original-buildinfo" >"$root/buildinfo"
+printf '\n' >>"$root/buildinfo"
+refused "trial kernel differs"
 mv "$root/original-buildinfo" "$root/buildinfo"
+mv "$root/version" "$root/original-version"
+printf 'NetBSD 11.1 (CUSTOM) #0\n' >"$root/version"
+refused "trial kernel differs"
+mv "$root/original-version" "$root/version"
 printf 'prior unrelated archive
 ' >"$root/etc/ember-os-update.migrated.json"
 refused "different archived legacy configuration"

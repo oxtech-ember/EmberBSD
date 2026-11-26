@@ -287,7 +287,8 @@ load_hardware(struct hardware *h)
 		eu_json_free(local);
 	} else {
 		char *build = NULL, *want = NULL;
-		const char *args[] = {"/sbin/sysctl", "-n", "kern.buildinfo", NULL};
+		/* newvers adds a newline. Read the kernel string without display formatting. */
+		const char *args[] = {"/sbin/sysctl", "-r", "kern.buildinfo", NULL};
 		if (eu_run(args, &build, 512) < 0 ||
 		    asprintf(&want, "EmberBSD:%s\n", h->commit) < 0)
 			fail("cannot read the running kernel build identity");
