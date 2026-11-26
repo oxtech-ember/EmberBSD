@@ -498,6 +498,7 @@ void
 tmpfs_dir_attach(tmpfs_node_t *dnode, tmpfs_dirent_t *de, tmpfs_node_t *node)
 {
 	vnode_t *dvp = dnode->tn_vnode;
+	tmpfs_dirent_t *prev;
 	/* Origin: EmberBSD (AI-assisted), remove an unused notification mask. */
 
 	KASSERT(dvp != NULL);
@@ -520,8 +521,24 @@ tmpfs_dir_attach(tmpfs_node_t *dnode, tmpfs_dirent_t *de, tmpfs_node_t *node)
 		atomic_or_32(&dnode->tn_gen, TMPFS_WHITEOUT_BIT);
 	}
 
-	/* Insert the entry to the directory (parent of inode). */
-	TAILQ_INSERT_TAIL(&dnode->tn_spec.tn_dir.tn_dir, de, td_entries);
+	/*
+	 * Insert the entry to the directory (parent of inode).
+	 *
+	 * Origin: EmberBSD (AI-assisted).  Keep the entries in the order
+	 * of their sequence numbers, so that tmpfs_dir_lookupbyseq() can
+	 * find the next entry after a removed one.  Numbers from the
+	 * first half increase, so the entry goes to the tail.  Numbers
+	 * from the vmem(9) half can be reused and need a search.
+	 */
+	prev = TAILQ_LAST(&dnode->tn_spec.tn_dir.tn_dir, tmpfs_dir);
+	while (prev != NULL && prev->td_seq > de->td_seq)
+		prev = TAILQ_PREV(prev, tmpfs_dir, td_entries);
+	if (prev == NULL)
+		TAILQ_INSERT_HEAD(&dnode->tn_spec.tn_dir.tn_dir, de,
+		    td_entries);
+	else
+		TAILQ_INSERT_AFTER(&dnode->tn_spec.tn_dir.tn_dir, prev, de,
+		    td_entries);
 	KASSERT(dnode->tn_size <= __type_max(off_t) - sizeof(tmpfs_dirent_t));
 	dnode->tn_size += sizeof(tmpfs_dirent_t);
 	uvm_vnp_setsize(dvp, dnode->tn_size);
@@ -731,6 +748,8 @@ tmpfs_dir_putseq(tmpfs_node_t *dnode, tmpfs_dirent_t *de)
 
 /*
  * tmpfs_dir_lookupbyseq: lookup a directory entry by the sequence number.
+ *
+ * => Returns the next entry if there is no entry with this number.
  */
 tmpfs_dirent_t *
 tmpfs_dir_lookupbyseq(tmpfs_node_t *node, off_t seq)
@@ -747,10 +766,16 @@ tmpfs_dir_lookupbyseq(tmpfs_node_t *node, off_t seq)
 		KASSERT(de->td_seq != TMPFS_DIRSEQ_NONE);
 		return de;
 	}
+
+	/*
+	 * Origin: EmberBSD (AI-assisted).  The entries are in the order
+	 * of their sequence numbers, see tmpfs_dir_attach().  If the entry
+	 * was removed after the previous readdir, return the next entry.
+	 */
 	TAILQ_FOREACH(de, &node->tn_spec.tn_dir.tn_dir, td_entries) {
 		KASSERT(de->td_seq >= TMPFS_DIRSEQ_START);
 		KASSERT(de->td_seq != TMPFS_DIRSEQ_NONE);
-		if (de->td_seq == seq)
+		if (de->td_seq >= seq)
 			return de;
 	}
 	return NULL;
@@ -837,10 +862,14 @@ tmpfs_dir_getdents(tmpfs_node_t *node, struct uio *uio, off_t *cntp)
 		goto done;
 	}
 
-	/* Locate the directory entry given by the given sequence number. */
+	/*
+	 * Locate the directory entry given by the given sequence number,
+	 * or the next one.  If there is none, all remaining entries were
+	 * removed: mark EOF.
+	 */
 	de = tmpfs_dir_lookupbyseq(node, uio->uio_offset);
 	if (de == NULL) {
-		error = EINVAL;
+		uio->uio_offset = TMPFS_DIRSEQ_EOF;
 		goto done;
 	}
 

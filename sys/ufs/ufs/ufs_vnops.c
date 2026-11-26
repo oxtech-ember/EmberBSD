@@ -1596,8 +1596,12 @@ ufs_readdir(void *v)
 	struct direct	*rawdp, *stoprawdp;
 	/* general */
 	int		error;
+	bool		skipped;
 
 	KASSERT(VOP_ISLOCKED(vp));
+
+again:
+	skipped = false;
 
 	/*
 	 * Figure out where the user wants us to read and how much.
@@ -1753,9 +1757,19 @@ ufs_readdir(void *v)
 				rawdp = _DIRENT_NEXT(rawdp);
 				continue;
 			}
-			/* caller's start position wasn't on an entry */
-			error = EINVAL;
-			goto out;
+			/*
+			 * Origin: EmberBSD (AI-assisted).  The caller's
+			 * start position is inside this entry.  A remove
+			 * after the previous call merged the entry at that
+			 * position into this one.  This entry starts before
+			 * the position, so skip it and resume at the next
+			 * entry.
+			 */
+			curoffset += rawdp->d_reclen - skipstart;
+			skipstart = 0;
+			skipped = true;
+			rawdp = _DIRENT_NEXT(rawdp);
+			continue;
 		}
 		if (rawdp->d_reclen == 0) {
 			struct dirent *save = dirent;
@@ -1800,9 +1814,21 @@ ufs_readdir(void *v)
 
 	/* transfer the dirents to the caller's buffer */
 	callerbytes = ((char *)(void *)dirent - direntbuf);
+	if (callerbytes == 0 && skipped && curoffset < VTOI(vp)->i_size) {
+		/*
+		 * Origin: EmberBSD (AI-assisted).  The skipped entry
+		 * ended the blocks read.  Read the next blocks, because
+		 * an empty result means the end of the directory.
+		 */
+		if (ap->a_cookies)
+			free(cookies, M_TEMP);
+		kmem_free(direntbuf, direntbufmax);
+		kmem_free(rawbuf, rawbufmax);
+		calleruio->uio_offset = curoffset;
+		goto again;
+	}
 	error = uiomove(direntbuf, callerbytes, calleruio);
 
-out:
 	calleruio->uio_offset = curoffset;
 	if (ap->a_cookies) {
 		if (error) {
