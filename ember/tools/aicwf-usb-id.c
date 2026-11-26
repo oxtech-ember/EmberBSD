@@ -285,9 +285,11 @@ main(void)
 	iface.desc.bAlternateSetting = 1;
 	assert(uaicfw_match(0, 0, &a) == UMATCH_NONE);
 	iface.desc.bAlternateSetting = 0;
+	/* The two Bluetooth interfaces use the wireless-controller class. */
 	a.uiaa_class = 0xe0;
+	a.uiaa_subclass = a.uiaa_proto = 1;
 	assert(uaicfw_match(0, 0, &a) == UMATCH_NONE);
-	a.uiaa_class = 0xff;
+	a.uiaa_class = a.uiaa_subclass = a.uiaa_proto = 0xff;
 	a.uiaa_product++;
 	assert(uaicfw_match(0, 0, &a) == UMATCH_NONE);
 	a.uiaa_product--;

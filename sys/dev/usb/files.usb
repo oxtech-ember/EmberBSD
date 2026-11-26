@@ -398,7 +398,7 @@ file	dev/usb/if_otus.c		otus
 
 # AIC8800DC USB firmware identification
 device	uaicfw
-attach	uaicfw at usbdevif
+attach	uaicfw at usbifif
 file	dev/usb/uaicfw.c		uaicfw
 
 # DAVICOM DM9601
