@@ -427,8 +427,10 @@ _LIB.so:=${_LIB}.so
 _LIB.so.major:=${_LIB}.so.${SHLIB_MAJOR}
 _LIB.so.full:=${_LIB}.so.${SHLIB_FULLVERSION}
 _LIB.so.link:=${_LIB}.so.${SHLIB_FULLVERSION}.link
+.PRECIOUS: ${_LIB.so.full}
 .if ${MKDEBUG:Uno} != "no" && !defined(NODEBUG)
 _LIB.so.debug:=${_LIB.so.full}.debug
+.PRECIOUS: ${_LIB.so.link} ${_LIB.so.debug}
 .endif
 .endif
 
@@ -673,22 +675,23 @@ _MAINLIBDEPS=	${SOLIB} ${DPADD} ${DPLIBC} \
 .if defined(_LIB.so.debug)
 ${_LIB.so.debug}: ${_LIB.so.link}
 	${_MKTARGET_CREATE}
-	( ${OBJCOPY} --only-keep-debug --compress-debug-sections \
-	    ${_LIB.so.link} ${_LIB.so.debug} \
-	) || (rm -f ${.TARGET}; false)
+	rm -f ${.TARGET}.tmp
+	${OBJCOPY} --only-keep-debug --compress-debug-sections \
+	    ${_LIB.so.link} ${.TARGET}.tmp
+	${MV} ${.TARGET}.tmp ${.TARGET}
 ${_LIB.so.full}: ${_LIB.so.link} ${_LIB.so.debug}
 	${_MKTARGET_CREATE}
-	(  ${OBJCOPY} --strip-debug -R .gnu_debuglink \
+	rm -f ${.TARGET}.tmp
+	${OBJCOPY} --strip-debug -R .gnu_debuglink \
 	    --add-gnu-debuglink=${_LIB.so.debug} \
-	    ${_LIB.so.link} ${_LIB.so.full}.tmp && \
-	    ${MV} ${_LIB.so.full}.tmp ${_LIB.so.full} \
-	) || (rm -f ${.TARGET}; false)
+	    ${_LIB.so.link} ${.TARGET}.tmp
+	${MV} ${.TARGET}.tmp ${.TARGET}
 ${_LIB.so.link}: ${_MAINLIBDEPS}
 .else # aka no MKDEBUG
 ${_LIB.so.full}: ${_MAINLIBDEPS}
 .endif
 	${_MKTARGET_BUILD}
-	rm -f ${.TARGET}
+	rm -f ${.TARGET}.tmp
 	${LIBCC} ${LDLIBC} -shared ${SHLIB_SHFLAGS} \
 	    ${_LDFLAGS.${_LIB}} -o ${.TARGET}.tmp ${_LIBLDOPTS} \
 	    -Wl,--whole-archive ${SOLIB} \

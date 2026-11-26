@@ -37,8 +37,10 @@ SUBDIR+= pam-u2f
 SUBDIR+= pcc
 .endif
 .if (${MKDTRACE} != "no")
-SUBDIR+= libproc
-SUBDIR+= librtld_db
+SUBDIR+= librtld_db libproc
+.for target in all dependall install
+${target}-libproc: ${target}-librtld_db
+.endfor
 .endif
 .if ${MKUNBOUND} != "no"
 SUBDIR+= unbound

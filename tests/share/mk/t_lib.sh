@@ -55,6 +55,38 @@ EOF
 	atf_check -o inline:'module1\nmodule2\n' ./main
 }
 
+atf_test_case failed_relink
+failed_relink_body() {
+	create_c_module module symbol
+	cat >Makefile <<'EOF'
+LIB=sample
+SRCS=module.c
+SHLIB_MAJOR=1
+SHLIB_MINOR=0
+.if defined(FORCE_TARGET)
+.PHONY: force
+${FORCE_TARGET}: force
+.endif
+.include <bsd.lib.mk>
+EOF
+	[ "$(make -V MKPIC)" != no ] || atf_skip "Shared libraries disabled"
+	so=libsample.so.1.0
+	atf_check -o ignore make MKDEBUG=no "$so"
+	cp "$so" saved
+	atf_check -s not-exit:0 -o ignore -e ignore make MKDEBUG=no \
+	    FORCE_TARGET="$so" LIBCC=false "$so"
+	atf_check cmp saved libsample.so
+
+	atf_check -o ignore make MKDEBUG=yes "$so"
+	for target in "$so.debug" "$so"; do
+		cp "$target" saved
+		atf_check -s not-exit:0 -o ignore -e ignore make MKDEBUG=yes \
+		    FORCE_TARGET="$target" OBJCOPY=false "$target"
+		atf_check cmp saved "$target"
+	done
+}
+
 atf_init_test_cases() {
 	atf_add_test_case defaults__build_and_install
+	atf_add_test_case failed_relink
 }
