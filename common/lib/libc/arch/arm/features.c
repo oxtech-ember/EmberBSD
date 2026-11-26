@@ -29,13 +29,7 @@
  */
 
 /*
- * This file is used to have the compiler check for feature and then
- * have make set a variable based on that test.
- *
- * FEAT_EABI!=if ${COMPILE.c} -fsyntax-only -DEABI_TEST ${TESTFILE} >/dev/null 2>/dev/null; then echo yes; else echo no; fi
- * FEAT_LDREX!=if ${COMPILE.c} -fsyntax-only -DLDREX_TEST ${TESTFILE} >/dev/null 2>/dev/null; then echo yes; else echo no; fi
- * FEAT_LDRD!=if ${COMPILE.c} -fsyntax-only -DLDRD_TEST ${TESTFILE} >/dev/null 2>/dev/null; then echo yes; else echo no; fi
- * FEAT_THUMB2!=if ${COMPILE.c} -fsyntax-only -DTHUMB2_TEST ${TESTFILE} >/dev/null 2>/dev/null; then echo yes; else echo no; fi
+ * features.mk selects one test macro at a time to check the target compiler.
  */
 
 #if defined(__ARM_ARCH_8A) || defined (__ARM_ARCH_8A__)  || \

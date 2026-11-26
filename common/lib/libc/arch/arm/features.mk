@@ -2,8 +2,8 @@
 
 .ifnmake obj
 TESTFILE=${NETBSDSRCDIR}/common/lib/libc/arch/arm/features.c
-FEAT_EABI!=if ${COMPILE.c} ${COPTS} -fsyntax-only -DEABI_TEST ${TESTFILE} >/dev/null 2>/dev/null; then echo yes; else echo no; fi
-FEAT_LDREX!=if ${COMPILE.c} ${COPTS} -fsyntax-only -DLDREX_TEST ${TESTFILE} >/dev/null 2>/dev/null; then echo yes; else echo no; fi
-FEAT_LDRD!=if ${COMPILE.c} ${COPTS} -fsyntax-only -DLDRD_TEST ${TESTFILE} >/dev/null 2>/dev/null; then echo yes; else echo no; fi
-FEAT_THUMB2!=if ${COMPILE.c} ${COPTS} -fsyntax-only -DTHUMB2_TEST ${TESTFILE} >/dev/null 2>/dev/null; then echo yes; else echo no; fi
+# Syntax-only checks select their own compiler action.
+.for feature in EABI LDREX LDRD THUMB2
+FEAT_${feature}!=if ${COMPILE.c:N-c} ${COPTS} -fsyntax-only -D${feature}_TEST ${TESTFILE} >/dev/null 2>/dev/null; then echo yes; else echo no; fi
+.endfor
 .endif
