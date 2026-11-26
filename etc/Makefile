@@ -581,6 +581,7 @@ build_kernels: .PHONY
 build_kernels: kern-${configfile}
 kern-${configfile}: .PHONY .MAKE
 	umask 022 && \
+	mkdir -p ${KERNOBJDIR} && \
 	cd ${KERNCONFDIR} && ${TOOL_CONFIG} ${CONFIGOPTS} -s ${KERNSRCDIR} \
 	    ${MKDEBUGKERNEL == "yes" :? -DDEBUG=-g :} \
 	    -b ${KERNOBJDIR}/${configfile:C/.*\///} ${configfile}
