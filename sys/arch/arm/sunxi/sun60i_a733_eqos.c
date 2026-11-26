@@ -31,6 +31,8 @@
  * system-control register; the MAC, not the PHY, delays the clocks.
  */
 
+#include "opt_multiprocessor.h"
+
 #include <sys/cdefs.h>
 __KERNEL_RCSID(0, "$NetBSD$");
 
@@ -53,6 +55,7 @@ __KERNEL_RCSID(0, "$NetBSD$");
 
 #include <dev/ic/dwc_eqos_var.h>
 
+#include <arm/fdt/arm_fdtvar.h>
 #include <arm/sunxi/sunxi_sid.h>
 
 #include <prop/proplib.h>
@@ -77,6 +80,67 @@ static const struct device_compatible_entry compat_data[] = {
 	{ .compat = "allwinner,sun60i-a733-gmac210" },
 	DEVICE_COMPAT_EOL
 };
+
+struct sun60i_a733_eqos_softc {
+	struct eqos_softc eqos;
+#ifdef MULTIPROCESSOR
+	int phandle;
+	void *affinity_ih;
+#endif
+};
+
+#ifdef MULTIPROCESSOR
+static bool
+sun60i_a733_eqos_explicit_affinity(int phandle)
+{
+	static const struct device_compatible_entry gicv3[] = {
+		{ .compat = "arm,gic-v3" }, DEVICE_COMPAT_EOL
+	};
+	const int parent = fdtbus_intr_parent(phandle);
+
+	return OF_getproplen(phandle, "interrupt-affinity") == sizeof(uint32_t) &&
+	    parent > 0 && of_compatible_match(parent, gicv3);
+}
+
+static void
+sun60i_a733_eqos_affinity(device_t self)
+{
+	struct sun60i_a733_eqos_softc *esc = device_private(self);
+	int error;
+
+	error = arm_fdt_intr_distribute(esc->phandle, 0, esc->affinity_ih);
+	/* A failed affinity request leaves the default route usable. */
+	fdtbus_intr_unmask(esc->phandle, esc->affinity_ih);
+	if (error != 0)
+		aprint_error_dev(self,
+		    "cannot set interrupt affinity (%d); using default route\n",
+		    error);
+}
+#endif
+
+static void *
+sun60i_a733_eqos_establish_irq(device_t self, int phandle,
+    struct sun60i_a733_eqos_softc *esc)
+{
+#ifdef MULTIPROCESSOR
+	if (sun60i_a733_eqos_explicit_affinity(phandle)) {
+		void *ih = fdtbus_intr_establish_xname(phandle, 0, IPL_NET,
+		    FDT_INTR_MPSAFE | FDT_INTR_EXCLUSIVE_MASKED, eqos_intr,
+		    &esc->eqos, device_xname(self));
+		if (ih != NULL) {
+			esc->phandle = phandle;
+			esc->affinity_ih = ih;
+			config_interrupts(self, sun60i_a733_eqos_affinity);
+			return ih;
+		}
+	}
+	if (of_hasprop(phandle, "interrupt-affinity"))
+		aprint_error_dev(self,
+		    "interrupt affinity unavailable; using default route\n");
+#endif
+	return fdtbus_intr_establish_xname(phandle, 0, IPL_NET, FDT_INTR_MPSAFE,
+	    eqos_intr, &esc->eqos, device_xname(self));
+}
 
 static int
 sun60i_a733_eqos_match(device_t parent, cfdata_t cf, void *aux)
@@ -151,7 +215,8 @@ sun60i_a733_eqos_set_address(struct eqos_softc *sc, int phandle)
 static void
 sun60i_a733_eqos_attach(device_t parent, device_t self, void *aux)
 {
-	struct eqos_softc * const sc = device_private(self);
+	struct sun60i_a733_eqos_softc * const esc = device_private(self);
+	struct eqos_softc * const sc = &esc->eqos;
 	prop_dictionary_t dict = device_properties(self);
 	struct fdt_attach_args * const faa = aux;
 	const int phandle = faa->faa_phandle;
@@ -249,8 +314,7 @@ sun60i_a733_eqos_attach(device_t parent, device_t self, void *aux)
 	if (eqos_attach(sc) != 0)
 		return;
 
-	if (fdtbus_intr_establish_xname(phandle, 0, IPL_NET, FDT_INTR_MPSAFE,
-	    eqos_intr, sc, device_xname(self)) == NULL) {
+	if (sun60i_a733_eqos_establish_irq(self, phandle, esc) == NULL) {
 		aprint_error_dev(self, "failed to establish interrupt on %s\n",
 		    intrstr);
 		return;
@@ -258,5 +322,5 @@ sun60i_a733_eqos_attach(device_t parent, device_t self, void *aux)
 	aprint_normal_dev(self, "interrupting on %s\n", intrstr);
 }
 
-CFATTACH_DECL_NEW(sun60i_a733_eqos, sizeof(struct eqos_softc),
+CFATTACH_DECL_NEW(sun60i_a733_eqos, sizeof(struct sun60i_a733_eqos_softc),
 	sun60i_a733_eqos_match, sun60i_a733_eqos_attach, NULL, NULL);

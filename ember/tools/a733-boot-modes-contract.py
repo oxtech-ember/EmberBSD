@@ -157,6 +157,7 @@ REFERENCE_ARGS = {
     "clocks": "#clock-cells", "iommus": "#iommu-cells",
     "nsi": 1, "phy-handle": 0, "pinctrl-0": 0, "syscon": 0,
     "resets": "#reset-cells", "mmc-pwrseq": 0, "phys": "#phy-cells",
+    "interrupt-affinity": 0,
     "gpio": "#gpio-cells", "reset-gpios": "#gpio-cells",
     "gpu-supply": 0, "vbus-supply": 0, "vqmmc-supply": 0,
     "npu-supply": 0, "operating-points-v2": 0,
@@ -243,6 +244,14 @@ def main():
     diagnostic = trees["zero3w-diagnostic"]
     zero4 = trees["zero4"]
     graphics = trees["zero4-graphics"]
+    eqos = "/soc/ethernet@4500000"
+    affinity = (eqos, "interrupt-affinity")
+    for name, tree in trees.items():
+        if name.startswith("zero4"):
+            require(tree.get(affinity) == tree.get(("/cpus/cpu@600", "phandle"))
+                    and affinity in tree, f"{name}: EQOS CPU6 phandle")
+        else:
+            require(affinity not in tree, f"{name}: Unexpected EQOS affinity")
     gpu = "/soc/gpu@1800000"
     observe = "netbsd,observe-only"
     for node in (gpu, "/display"):
