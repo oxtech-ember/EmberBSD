@@ -18,6 +18,7 @@
 #include <util.h>
 
 #include "slot.h"
+#include "profile.h"
 
 #define PROFILE "/etc/ember-update-profile.json"
 
@@ -253,16 +254,15 @@ slot_layout(struct slot *s)
 {
 	char buf[69], running[2];
 	const struct eu_json *roots;
-	const char *adapter;
+	enum eu_adapter adapter;
 	ssize_t n;
 
 	memset(s, 0, sizeof(*s));
 	s->profile = slot_profile();
-	adapter = field(s->profile, "adapter");
-	s->efi = !strcmp(adapter, "efiboot");
-	if ((!s->efi && strcmp(adapter, "uboot-ffs")) ||
-	    strcmp(field(s->profile, "storage"), "ffs"))
+	adapter = eu_profile_adapter(s->profile);
+	if (adapter != EU_ADAPTER_UBOOT && adapter != EU_ADAPTER_EFI)
 		errx(1, "unsupported slot adapter or storage");
+	s->efi = adapter == EU_ADAPTER_EFI;
 	check_machine("hw.model", field(s->profile, "model"));
 	const struct eu_json *dmi = eu_get(s->profile, "dmi");
 	if (dmi) {
@@ -306,4 +306,14 @@ slot_inactive(struct slot *s, int dest)
 	if (s->running != confirmed || s->running == dest || s->mounted[dest] || s->next >= 0 ||
 	    (s->trial && s->good != s->running))
 		errx(1, "operation needs a confirmed root and an unmounted inactive slot");
+}
+
+void
+slot_begin_prepare(const struct slot *s, int dest)
+{
+	if (s->good != s->running)
+		slot_marker(s, "osgood.dat", s->running);
+	if (s->back != s->running)
+		slot_marker(s, "osback.dat", s->running);
+	slot_receipt(s, dest, NULL);
 }

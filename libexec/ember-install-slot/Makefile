@@ -4,7 +4,7 @@
 PROG=	ember-install-slot
 BINDIR=	/usr/libexec
 MAN=
-SRCS=	install.c merge.c layout.c efi.c
+SRCS=	install.c merge.c loader_files.c layout.c efi.c
 SLOTDIR=${.CURDIR}/../ember-os-slot
 .PATH: ${SLOTDIR}
 CPPFLAGS+= -I${SLOTDIR}

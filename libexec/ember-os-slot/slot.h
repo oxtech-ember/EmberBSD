@@ -15,6 +15,7 @@ struct slot {
 
 struct eu_json *slot_profile(void);
 void slot_layout(struct slot *);
+void slot_begin_prepare(const struct slot *, int);
 void slot_inactive(struct slot *, int);
 void slot_lock(void);
 int slot_id(const char *);

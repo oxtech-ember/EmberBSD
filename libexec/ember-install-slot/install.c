@@ -20,6 +20,7 @@
 #include <unistd.h>
 
 #include "install.h"
+#include "profile.h"
 
 #define DB "var/db/ember-update"
 #define PLAN "emberbsd.install-plan.v1"
@@ -66,8 +67,8 @@ run(const char *program, ...)
 		errx(1, "%s failed", program);
 }
 
-static const char *
-relative(const char *v)
+const char *
+install_relpath(const char *v)
 {
 	const char *p = v;
 	size_t n;
@@ -84,21 +85,21 @@ relative(const char *v)
 	return v;
 }
 
-static const char *
-component(const struct eu_json *v)
+const char *
+install_component(const struct eu_json *v)
 {
 	const char *s = eu_string(v);
 	if (!s || !*s || *s == '-' || strchr(s, '/'))
 		errx(1, "expected a file name");
-	return relative(s);
+	return install_relpath(s);
 }
 
-static void
-dirs(const char *root, const char *rel)
+void
+install_mkdirs(const char *root, const char *rel)
 {
 	char path[MAXPATHLEN], *p;
 	struct stat st;
-	slot_path(path, sizeof(path), root, relative(rel));
+	slot_path(path, sizeof(path), root, install_relpath(rel));
 	for (p = path + strlen(root) + (strcmp(root, "/") != 0);; p++) {
 		int last = !*p;
 		if (!last && *p != '/')
@@ -134,8 +135,8 @@ read_json(const char *dir, const char *leaf)
 	return j;
 }
 
-static const struct eu_json *
-array(const struct eu_json *j, const char *name)
+const struct eu_json *
+install_array(const struct eu_json *j, const char *name)
 {
 	const struct eu_json *a = eu_get(j, name);
 	if (!a || a->type != EU_ARRAY)
@@ -147,7 +148,7 @@ static int
 has(const struct eu_json *array, const char *item)
 {
 	for (; array; array = array->next)
-		if (!strcmp(component(array), item))
+		if (!strcmp(install_component(array), item))
 			return 1;
 	return 0;
 }
@@ -163,8 +164,8 @@ check_target(const struct eu_json *a, const struct eu_json *b)
 
 /* A root-owned child below /var/tmp is protected by the sticky parent.
  * All entries below the selected directory must be private to its owner. */
-static void
-trusted_input(const char *directory, const char *leaf)
+void
+install_trusted_input(const char *directory, const char *leaf)
 {
 	char path[MAXPATHLEN], *p;
 	struct stat st;
@@ -204,19 +205,15 @@ load_input(struct input *in, const struct slot *s, const char *kind, const char 
 	    (st.st_mode & 022))
 		errx(1, "staging requires a root-owned directory");
 	if (in->local) {
-		trusted_input(dir, "netbsd");
-		for (p = array(s->profile, "modules"); p; p = p->next) {
+		install_trusted_input(dir, "netbsd");
+		for (p = install_array(s->profile, "modules"); p; p = p->next) {
 			char member[MAXPATHLEN];
-			if (snprintf(member, sizeof(member), "modules/%s.kmod", component(p)) >=
+			if (snprintf(member, sizeof(member), "modules/%s.kmod", install_component(p)) >=
 			    (int)sizeof(member))
 				errx(1, "module path too long");
-			trusted_input(dir, member);
+			install_trusted_input(dir, member);
 		}
-		if (!s->efi) {
-			trusted_input(dir, "netbsd.img");
-			for (p = array(s->profile, "trees"); p; p = p->next)
-				trusted_input(dir, component(p));
-		}
+		check_loader_inputs(s, dir);
 		hash_file(dir, "netbsd", sha);
 		/* The same canonical bytes become the trial identity in the new root. */
 		char receipt[160];
@@ -225,19 +222,19 @@ load_input(struct input *in, const struct slot *s, const char *kind, const char 
 		SHA256_Data((const uint8_t *)receipt, len, in->digest);
 		return;
 	}
-	trusted_input(dir, "plan.json");
+	install_trusted_input(dir, "plan.json");
 	in->plan = read_json(dir, "plan.json");
 	if (strcmp(field(in->plan, "schema"), PLAN) ||
 	    strcmp(field(in->plan, "profile"), field(s->profile, "profile")))
 		errx(1, "incompatible installation plan");
 	check_target(eu_get(in->plan, "target"), eu_get(s->profile, "target"));
-	in->packages = array(in->plan, "packages");
+	in->packages = install_array(in->plan, "packages");
 	hash_file(dir, "plan.json", in->digest);
 	descriptor = eu_get(in->plan, "os_update_sha256");
 	if (!descriptor)
 		errx(1, "missing OS selection");
 	if (descriptor->type != EU_NULL) {
-		trusted_input(dir, "update.json");
+		install_trusted_input(dir, "update.json");
 		in->os = read_json(dir, "update.json");
 		hash_file(dir, "update.json", sha);
 		if (!slot_hash(eu_string(descriptor)) || strcmp(sha, descriptor->text) ||
@@ -255,7 +252,7 @@ load_input(struct input *in, const struct slot *s, const char *kind, const char 
 		    !p || p->type != EU_INTEGER || generation->integer != p->integer)
 			errx(1, "OS generation mismatch");
 		sets = eu_get(in->os, "sets");
-		want = array(s->profile, "sets");
+		want = install_array(s->profile, "sets");
 		if (!sets || sets->type != EU_OBJECT)
 			errx(1, "missing distribution sets");
 		for (p = sets->child; p; p = p->next) {
@@ -267,9 +264,9 @@ load_input(struct input *in, const struct slot *s, const char *kind, const char 
 		}
 		for (p = want; p; p = p->next) {
 			char setname[NAME_MAX + 1];
-			snprintf(setname, sizeof(setname), "%s.tar.xz", component(p));
-			trusted_input(dir, setname);
-			if (!eu_get(sets, component(p)))
+			snprintf(setname, sizeof(setname), "%s.tar.xz", install_component(p));
+			install_trusted_input(dir, setname);
+			if (!eu_get(sets, install_component(p)))
 				errx(1, "missing distribution set");
 			count--;
 		}
@@ -279,7 +276,7 @@ load_input(struct input *in, const struct slot *s, const char *kind, const char 
 	} else if (!in->packages)
 		errx(1, "empty update");
 	for (p = in->packages; p; p = p->next) {
-		const char *name = component(eu_get(p, "name"));
+		const char *name = install_component(eu_get(p, "name"));
 		const struct eu_json *manual = eu_get(p, "manual");
 		if (manual && (manual->type != EU_BOOL || !manual->integer))
 			errx(1, "invalid manual package selection");
@@ -289,7 +286,7 @@ load_input(struct input *in, const struct slot *s, const char *kind, const char 
 		    size->integer <= 0 || !slot_hash(field(p, "sha256")))
 			errx(1, "invalid package plan record");
 		snprintf(leaf, sizeof(leaf), "packages/%s.tgz", name);
-		trusted_input(dir, leaf);
+		install_trusted_input(dir, leaf);
 		slot_path(path, sizeof(path), dir, leaf);
 		hash_file(dir, leaf, sha);
 		if (stat(path, &st) || st.st_size != size->integer ||
@@ -298,8 +295,8 @@ load_input(struct input *in, const struct slot *s, const char *kind, const char 
 	}
 }
 
-static void
-copy(const char *srcdir, const char *src, const char *dstdir, const char *dst, mode_t mode)
+void
+install_copy(const char *srcdir, const char *src, const char *dstdir, const char *dst, mode_t mode)
 {
 	char a[MAXPATHLEN], b[MAXPATHLEN];
 	check_parents(srcdir, src);
@@ -322,8 +319,8 @@ native_elf(const unsigned char *kernel)
 }
 
 /* Check both kernel file formats and the build ID carried by the booted kernel. */
-static void
-kernel(const char *dir, const char *name, const char *commit, const char *tag, int raw)
+void
+install_check_kernel(const char *dir, const char *name, const char *commit, const char *tag, int raw)
 {
 	char path[MAXPATHLEN], id[52] = {0};
 	struct stat st;
@@ -380,17 +377,17 @@ update_sets(const struct input *in, const char *root, const char *work)
 	run("/bin/tar", "-xpf", etc, "-C", new, NULL);
 	merge_defaults(root, old, new);
 	install_file(etc, baseline, 0600);
-	copy(in->dir, "update.json", root, DB "/os-release.json", 0600);
+	install_copy(in->dir, "update.json", root, DB "/os-release.json", 0600);
 }
 
-/* EFI loads the kernel from its FFS root. U-Boot also consumes a raw image and DTBs on FAT. */
+/* Install the shared ELF kernel and modules before the adapter prepares its boot files. */
 static void
 boot_files(
     const struct slot *s, const struct input *in, const char *root, int dest, const char *work)
 {
-	const struct eu_json *p, *mods = array(s->profile, "modules");
-	const char *moddir = relative(field(s->profile, "module_directory"));
-	const char *src = in->dir, *boot = dest ? "/boot/os-b" : "/boot";
+	const struct eu_json *p, *mods = install_array(s->profile, "modules");
+	const char *moddir = install_relpath(field(s->profile, "module_directory"));
+	const char *src = in->dir;
 	char tmp[MAXPATHLEN], bundle[MAXPATHLEN], path[MAXPATHLEN], a[MAXPATHLEN], b[MAXPATHLEN];
 	const char *tag = field(s->profile, "kernel");
 	FILE *f;
@@ -406,8 +403,8 @@ boot_files(
 		src = tmp;
 	}
 	if (in->os || in->local) {
-		kernel(src, "netbsd", in->commit, tag, 0);
-		copy(src, "netbsd", root, "netbsd", 0555);
+		install_check_kernel(src, "netbsd", in->commit, tag, 0);
+		install_copy(src, "netbsd", root, "netbsd", 0555);
 		slot_path(path, sizeof(path), root, "etc/modules.conf");
 		f = fopen(path, "r");
 		if (!f && errno != ENOENT)
@@ -426,33 +423,19 @@ boot_files(
 		slot_path(path, sizeof(path), root, moddir);
 		run("/bin/rm", "-rf", path, NULL);
 		for (p = mods; p; p = p->next) {
-			const char *m = component(p);
+			const char *m = install_component(p);
 			if (strlen(m) > NAME_MAX - 6)
 				errx(1, "module name too long");
 			slot_path(path, sizeof(path), moddir, m);
-			dirs(root, path);
+			install_mkdirs(root, path);
 			snprintf(a, sizeof(a), "modules/%s.kmod", m);
 			snprintf(b, sizeof(b), "%s.kmod", m);
 			char dst[MAXPATHLEN];
 			slot_path(dst, sizeof(dst), path, b);
-			copy(src, a, root, dst, 0444);
+			install_copy(src, a, root, dst, 0444);
 		}
 	}
-	if (s->efi)
-		return;
-	if (dest)
-		dirs("/boot", "os-b");
-	const char *trees = relative(field(s->profile, "tree_directory"));
-	dirs(boot, trees);
-	if (!in->os && !in->local)
-		src = s->running ? "/boot/os-b" : "/boot";
-	kernel(src, "netbsd.img", in->commit, tag, 1);
-	copy(src, "netbsd.img", boot, "netbsd.img", 0644);
-	for (p = array(s->profile, "trees"); p; p = p->next) {
-		const char *tree = component(p);
-		slot_path(b, sizeof(b), trees, tree);
-		copy(src, in->os || in->local ? tree : b, boot, b, 0644);
-	}
+	install_loader_files(s, dest, in->os || in->local ? src : NULL, in->commit);
 }
 
 static int
@@ -547,11 +530,11 @@ packages(const struct input *in, const char *root)
 	strlcpy(inside, !strcmp(root, "/") ? tmp : tmp + strlen(root), sizeof(inside));
 	if (setenv("PKG_PATH", inside, 1) || setenv("PKG_DBDIR", db, 1))
 		err(1, "package environment");
-	dirs(root, "usr/pkg/pkgdb");
+	install_mkdirs(root, "usr/pkg/pkgdb");
 	slot_path(pkgs, sizeof(pkgs), in->dir, "packages");
 	for (p = in->packages; p; p = p->next) {
 		char leaf[NAME_MAX + 1], sha[65];
-		const char *name = component(eu_get(p, "name"));
+		const char *name = install_component(eu_get(p, "name"));
 		snprintf(leaf, sizeof(leaf), "%s.tgz", name);
 		slot_path(src, sizeof(src), pkgs, leaf);
 		slot_path(dst, sizeof(dst), tmp, leaf);
@@ -640,7 +623,7 @@ populate(const struct slot *s, int dest, const struct input *in, const char *roo
 	if (!slash || strcmp(slash, "/root"))
 		errx(1, "expected private work directory");
 	*slash = 0;
-	dirs(root, DB);
+	install_mkdirs(root, DB);
 	if (in->os)
 		update_sets(in, root, work);
 	boot_files(s, in, root, dest, work);
@@ -654,9 +637,9 @@ populate(const struct slot *s, int dest, const struct input *in, const char *roo
 		    dprintf(fd, "{\"schema\":\"" LOCAL "\",\"sha256\":\"%s\"}\n", sha) < 0 ||
 		    fsync(fd) || close(fd))
 			err(1, "%s", path);
-		copy(root, DB "/local-kernel.json", root, DB "/installed.json", 0600);
+		install_copy(root, DB "/local-kernel.json", root, DB "/installed.json", 0600);
 	} else
-		copy(in->dir, "plan.json", root, DB "/installed.json", 0600);
+		install_copy(in->dir, "plan.json", root, DB "/installed.json", 0600);
 	hash_file(root, DB "/installed.json", sha);
 	if (strcmp(sha, in->digest))
 		errx(1, "installed plan readback failed");
@@ -675,8 +658,7 @@ main(int argc, char **argv)
 			errx(1, "package installation requires root");
 		slot_lock();
 		s.profile = slot_profile();
-		if (strcmp(field(s.profile, "storage"), "single") ||
-		    strcmp(field(s.profile, "adapter"), "none"))
+		if (eu_profile_adapter(s.profile) != EU_ADAPTER_SINGLE)
 			errx(1, "live package update requires a single-root profile");
 		load_input(&in, &s, "prepare", argv[2]);
 		const struct eu_json *gen = eu_get(in.plan, "os_generation"),
@@ -705,11 +687,7 @@ main(int argc, char **argv)
 	slot_inactive(&s, dest);
 	if (!mkdtemp(work))
 		err(1, "create slot work directory");
-	if (s.good != s.running)
-		slot_marker(&s, "osgood.dat", s.running);
-	if (s.back != s.running)
-		slot_marker(&s, "osback.dat", s.running);
-	slot_receipt(&s, dest, NULL);
+	slot_begin_prepare(&s, dest);
 	run("/usr/libexec/ember-stage-ffs", work, s.device[dest], argv[pos], argv[pos + 1], dir,
 	    NULL);
 	slot_receipt(&s, dest, in.digest);
