@@ -4,6 +4,8 @@ set -eu
 src=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
 work=$(mktemp -d "${TMPDIR:-/tmp}/aicwf-pmf-transport.XXXXXX")
 trap 'rm -rf "$work"' EXIT HUP INT TERM
+awk '/^#define[[:space:]]+AICWF_HDR_LEN[[:space:]]/ {print}' \
+    "$src/sys/dev/ic/aicwf_command.h" > "$work/frame.h"
 cat > "$work/check.c" <<'C'
 #include <assert.h>
 #include <stdbool.h>
@@ -23,7 +25,7 @@ cat > "$work/check.c" <<'C'
 #define ETHER_ADDR_LEN 6
 #define IEEE80211_ADDR_EQ(a,b) (memcmp(a,b,6)==0)
 #define AICWF_KEY_SLOT_PAIRWISE 4
-#define AICWF_HDR_LEN 4
+#include "frame.h"
 #define AICWF_TXDESC_LEN 28
 #define AICWF_TYPE_DATA 1
 #define AICWF_HWQ_VO 3
