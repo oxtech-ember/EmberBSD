@@ -51,9 +51,10 @@ The first-stage loader selects the second stage from microSD. The Armbian SPL re
 
 Inspect both GPT copies, read the combined loader back at byte 32768, compare the three payloads in the `uboot` FIT and extract the kernel, DTB and boot script from FAT. Compare the bytes with the selected inputs. Physical acceptance requires a cold boot on the target, console output from the selected kernel, and, for a full installation, a mounted root and a network login.
 
-Test the kernel header and CRC checks, init link resolution and the console device with the selected host tools.
+Test both SPL formats, the kernel header and CRCs, init link resolution and the console device with the selected host tools.
 
 ```sh
+"$TOOL_PYTHON" -B "$src/distrib/utils/embedded/rk3506-spl-fit-test.py" "$RK3506_UBOOT"
 "$TOOL_PYTHON" "$src/distrib/utils/embedded/check-armv7-uboot-test.py" "$TOOL_MKUBOOTIMAGE"
 "$TOOL_PYTHON" -B "$src/distrib/utils/embedded/check-prepared-root-test.py"
 ```
