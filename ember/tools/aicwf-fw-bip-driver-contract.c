@@ -89,7 +89,7 @@ struct aicwf_softc;
 struct aicwf_bus_ops { int (*verify)(struct aicwf_softc *); };
 struct aicwf_softc {
 	const struct aicwf_bus_ops *sc_ops;
-	bool sc_dc;
+	bool sc_dc, sc_receive_only;
 	void *sc_dev;
 	bool sc_fw_bip_pending, sc_fw_bip_verified, sc_fw_bip_ready;
 	bool sc_fw_bip_wstatus_valid, sc_fw_bip_bootstatus_valid;

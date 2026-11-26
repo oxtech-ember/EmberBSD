@@ -11,11 +11,29 @@ The device name comes from the `aicwf` attachment. The first station is
 | AIC8800D80 | SDIO function 1. The adapter loads the selected WLAN image, applies the board settings, and checks FIFO credits and CRC. | The tested U02 version is `0x06090101`. Firmware and PHY capabilities govern 5 GHz, VHT and external SAE. The firmware BIP path has additional image and readback checks. |
 | AIC8800DC U02 on Lyra Zero W | The WLAN driver claims interface 2 of composite USB device `a69c:88dc`. The radio accepts data on the first bulk OUT pipe and commands on the second. Both bulk IN pipes can deliver firmware messages. | A hardware run reported chip ID `0x07`, sub-ID `0x01`, and FullMAC version `0x06040301`. The board profile covers 2.4 GHz channels 1 through 11. The power limit is the lower of 15 dBm and the current net80211 limit. |
 
-The DC version response confirms that the command service answered. The DC
-transport must complete its revision-specific startup and RF setup before it
-registers a network interface. The common station leaves the D80 firmware
-extensions disabled on DC. Physical scan, association and IP transfer each
-require a separate observation.
+## DC passive survey
+
+On the known U02 command version, bring the interface up and request a scan.
+
+```sh
+ifconfig aicwf0 up
+ifconfig aicwf0 scan
+```
+
+The driver starts in manual roaming mode. A scan creates a temporary firmware
+station interface, listens on the selected channels and removes the interface.
+Every channel has the no-initiate-radiation flag and a zero transmit power
+field. The interface advertises passive channels and no WPA capability.
+WPA configuration and association return `EOPNOTSUPP`. The USB adapter opens
+the command OUT pipe and both IN pipes. It never opens the data OUT pipe.
+Both IN pipes can deliver firmware messages.
+
+The driver waits up to four seconds for scan completion after the start
+confirmation. A late completion retires its original scan. A failed VIF
+removal leaves the device state uncertain and stops further scans.
+The DC command version confirms basic service. Enabling association and
+data transfer requires the revision-specific normal startup and RF setup.
+Physical scan, association and IP transfer each require a separate observation.
 
 The shared wire definitions are in [commands](../aicwf_command.h),
 [station messages](../aicwf_sta.h), [SAE](../aicwf_sae.h) and

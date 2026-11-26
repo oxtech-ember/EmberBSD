@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
 /*
- * AIC8800DC USB firmware identification. The vendor WLAN interface uses
- * the second bulk pipe in each direction for firmware commands.
+ * AIC8800DC USB WLAN transport. The second bulk OUT pipe carries commands.
+ * Both bulk IN pipes can deliver firmware messages.
  * Hardware facts: Luckfox SDK 6dcbca0d8a51, aic8800_fdrv/aicwf_usb.c
  * and aicwf_compat_8800dc.c.
  */
@@ -14,9 +14,11 @@
 #include <sys/systm.h>
 
 #include <dev/ic/aicwf_command.h>
+#include <dev/ic/aicwf_sta.h>
 #include <dev/usb/usb.h>
 #include <dev/usb/usbdi.h>
 #include <dev/usb/usbdevs.h>
+#include <dev/usb/uaicfwvar.h>
 
 #define	UAICFW_IDENT_REG	0x40500000
 #define	UAICFW_SUBID_REG	0x00000020
@@ -46,6 +48,12 @@ struct uaicfw_softc {
 	kmutex_t sc_cmd_lock;	/* serialize command writers */
 	kmutex_t sc_rx_lock;	/* synchronize the sender with both IN pipes */
 	kcondvar_t sc_cv;
+	struct usbd_device *sc_udev;
+	struct usb_task sc_recover_task;
+	unsigned int sc_stalled, sc_retried;
+	uaicfw_input_fn sc_input;
+	void *sc_input_arg;
+	struct aicwf_version sc_fw_version;
 	struct uaicfw_pipe sc_tx;
 	struct uaicfw_pipe sc_rx[2];
 	struct uaicfw_request *sc_request;
@@ -151,6 +159,40 @@ uaicfw_rx_submit(struct uaicfw_softc *sc, struct usbd_xfer *xfer)
 	return usbd_transfer(xfer);
 }
 
+/*
+ * CLEAR_FEATURE(ENDPOINT_HALT) needs a sleepable context. Rearm only the
+ * affected WLAN pipe. A second stall before any successful IN transfer
+ * is terminal. The host sends each OUT command at most once.
+ */
+static void
+uaicfw_recover_rx(void *arg)
+{
+	struct uaicfw_softc * const sc = arg;
+	usbd_status status;
+
+	for (size_t i = 0; i < __arraycount(sc->sc_rx); i++) {
+		const unsigned int bit = 1U << i;
+		mutex_enter(&sc->sc_rx_lock);
+		if (sc->sc_stopping || sc->sc_error != USBD_NORMAL_COMPLETION ||
+		    (sc->sc_stalled & bit) == 0) {
+			mutex_exit(&sc->sc_rx_lock);
+			continue;
+		}
+		sc->sc_stalled &= ~bit;
+		mutex_exit(&sc->sc_rx_lock);
+		status = usbd_clear_endpoint_stall(sc->sc_rx[i].pipe);
+		if (status == USBD_NORMAL_COMPLETION)
+			status = uaicfw_rx_submit(sc, sc->sc_rx[i].xfer);
+		if (status != USBD_IN_PROGRESS && status != USBD_NORMAL_COMPLETION) {
+			mutex_enter(&sc->sc_rx_lock);
+			sc->sc_error = status;
+			cv_broadcast(&sc->sc_cv);
+			mutex_exit(&sc->sc_rx_lock);
+			return;
+		}
+	}
+}
+
 /* Both IN pipes can carry firmware messages. The transfer owns the bytes. */
 static usbd_status
 uaicfw_receive(struct uaicfw_softc *sc, const uint8_t *p, size_t len)
@@ -195,6 +237,7 @@ static void
 uaicfw_rxeof(struct usbd_xfer *xfer, void *priv, usbd_status status)
 {
 	struct uaicfw_softc * const sc = priv;
+	const unsigned int bit = xfer == sc->sc_rx[0].xfer ? 1U : 2U;
 	uint32_t actual;
 
 	mutex_enter(&sc->sc_rx_lock);
@@ -202,10 +245,22 @@ uaicfw_rxeof(struct usbd_xfer *xfer, void *priv, usbd_status status)
 		mutex_exit(&sc->sc_rx_lock);
 		return;
 	}
+	if (status == USBD_STALLED && sc->sc_input != NULL &&
+	    (sc->sc_retried & bit) == 0) {
+		sc->sc_retried |= bit;
+		sc->sc_stalled |= bit;
+		usb_add_task(sc->sc_udev, &sc->sc_recover_task, USB_TASKQ_DRIVER);
+		mutex_exit(&sc->sc_rx_lock);
+		return;
+	}
 	if (status == USBD_NORMAL_COMPLETION) {
+		sc->sc_retried &= ~bit;
 		usbd_get_xfer_status(xfer, NULL, NULL, &actual, NULL);
 		status = actual > UAICFW_RX_SIZE ? USBD_INVAL :
 		    uaicfw_receive(sc, usbd_get_buffer(xfer), actual);
+		if (status == USBD_NORMAL_COMPLETION && sc->sc_input != NULL &&
+		    actual >= AICWF_HDR_LEN)
+			sc->sc_input(sc->sc_input_arg, usbd_get_buffer(xfer), actual);
 	}
 	if (status != USBD_NORMAL_COMPLETION) {
 		sc->sc_error = status;
@@ -308,6 +363,8 @@ uaicfw_stop(struct uaicfw_softc *sc)
 	cv_broadcast(&sc->sc_cv);
 	mutex_exit(&sc->sc_rx_lock);
 
+	/* Completion of the halt-clear task precedes destruction of its pipes. */
+	usb_rem_task_wait(sc->sc_udev, &sc->sc_recover_task, USB_TASKQ_DRIVER, NULL);
 	/* Suspend waits for callbacks and prevents a resubmit during detach. */
 	for (size_t i = 0; i < __arraycount(sc->sc_rx); i++)
 		if (sc->sc_rx[i].pipe != NULL)
@@ -321,6 +378,134 @@ uaicfw_stop(struct uaicfw_softc *sc)
 	mutex_exit(&sc->sc_cmd_lock);
 }
 
+static int
+uaicfw_errno(usbd_status status)
+{
+	switch (status) {
+	case USBD_NORMAL_COMPLETION:
+		return 0;
+	case USBD_TIMEOUT:
+		return ETIMEDOUT;
+	case USBD_CANCELLED:
+		return ENXIO;
+	case USBD_NOMEM:
+		return ENOMEM;
+	case USBD_INVAL:
+		return EPROTO;
+	default:
+		return EIO;
+	}
+}
+
+static void
+uaicfw_listen(void *arg, uaicfw_input_fn fn, void *cookie)
+{
+	struct uaicfw_softc * const sc = arg;
+	mutex_enter(&sc->sc_rx_lock);
+	sc->sc_input = fn;
+	sc->sc_input_arg = cookie;
+	mutex_exit(&sc->sc_rx_lock);
+}
+
+/* Accept the four station operations available before RF initialization. */
+static bool
+uaicfw_survey_command(const uint8_t *packet, size_t len)
+{
+	const size_t hdr = AICWF_TX_MSG_OFFSET + AICWF_MSG_HDR_LEN;
+	uint16_t freqs[11];
+	uint8_t expected[AICWF_STA_SCAN_LEN];
+
+	if (len < hdr || packet[2] != AICWF_TYPE_MSG || packet[3] != 0 ||
+	    le16dec(packet) != len - AICWF_HDR_LEN ||
+	    le16dec(packet + AICWF_TX_MSG_OFFSET + 6) != len - hdr)
+		return false;
+	const uint16_t id = le16dec(packet + AICWF_TX_MSG_OFFSET);
+	const uint8_t *p = packet + hdr;
+	if (le16dec(packet + AICWF_TX_MSG_OFFSET + 2) != id >> 10 ||
+	    le16dec(packet + AICWF_TX_MSG_OFFSET + 4) != AICWF_TASK_DRIVER)
+		return false;
+	switch (id) {
+	case AICWF_MM_GET_MAC_ADDR_REQ:
+		return len == hdr + 4 && le32dec(p) == 1;
+	case AICWF_MM_ADD_IF_REQ:
+		return len == hdr + 10 && le16dec(p) == 0 && le16dec(p + 8) == 0 &&
+		    (p[2] & 1) == 0 && memcmp(p + 2, (uint8_t[6]){ 0 }, 6) != 0;
+	case AICWF_MM_REMOVE_IF_REQ:
+		return len == hdr + 1 && p[0] < 4;
+	case AICWF_SCANU_START_REQ:
+		if (len != hdr + AICWF_STA_SCAN_LEN || p[AICWF_STA_SCAN_VIF] >= 4)
+			return false;
+		unsigned count = p[AICWF_STA_SCAN_COUNT];
+		if (count == 0 || count > __arraycount(freqs))
+			return false;
+		for (unsigned i = 0; i < count; i++) {
+			freqs[i] = le16dec(p + i * 6);
+			if (freqs[i] < 2412 || freqs[i] > 2462 ||
+			    (freqs[i] - 2412) % 5 != 0 ||
+			    (i > 0 && freqs[i] <= freqs[i - 1]))
+				return false;
+		}
+		(void)aicwf_sta_scan_build(expected, freqs, count, p[AICWF_STA_SCAN_VIF], 0);
+		return memcmp(p, expected, sizeof(expected)) == 0;
+	default:
+		return false;
+	}
+}
+
+static int
+uaicfw_write(void *arg, const uint8_t *packet, size_t len, bool *attempted)
+{
+	struct uaicfw_softc * const sc = arg;
+	struct usbd_xfer *xfer;
+	uint32_t actual;
+	usbd_status status;
+
+	if (attempted != NULL)
+		*attempted = false;
+	if (!uaicfw_survey_command(packet, len))
+		return EOPNOTSUPP;
+	mutex_enter(&sc->sc_cmd_lock);
+	mutex_enter(&sc->sc_rx_lock);
+	status = sc->sc_stopping ? USBD_CANCELLED : sc->sc_error;
+	mutex_exit(&sc->sc_rx_lock);
+	if (status != USBD_NORMAL_COMPLETION)
+		goto out;
+	xfer = sc->sc_tx.xfer;
+	uint8_t *buf = usbd_get_buffer(xfer);
+	memcpy(buf, packet, len);
+	usbd_setup_xfer(xfer, NULL, buf, len, USBD_FORCE_SHORT_XFER, UAICFW_TIMEOUT_MS, NULL);
+	if (attempted != NULL)
+		*attempted = true;
+	status = usbd_sync_transfer(xfer);
+	if (status == USBD_STALLED) {
+		usbd_status clear = usbd_clear_endpoint_stall(sc->sc_tx.pipe);
+		if (clear != USBD_NORMAL_COMPLETION) {
+			mutex_enter(&sc->sc_rx_lock);
+			sc->sc_error = clear;
+			cv_broadcast(&sc->sc_cv);
+			mutex_exit(&sc->sc_rx_lock);
+		}
+	}
+	if (status == USBD_NORMAL_COMPLETION) {
+		usbd_get_xfer_status(xfer, NULL, NULL, &actual, NULL);
+		if (len != actual)
+			status = USBD_SHORT_XFER;
+	}
+out:
+	mutex_exit(&sc->sc_cmd_lock);
+	return uaicfw_errno(status);
+}
+
+static void
+uaicfw_mountroot(device_t self)
+{
+	struct uaicfw_softc * const sc = device_private(self);
+	struct uaicfw_attach_args aa = {
+		.cookie = sc, .write = uaicfw_write, .listen = uaicfw_listen,
+	};
+	(void)config_found(self, &aa, NULL, CFARGS(.iattr = "aicwfusbbus"));
+}
+
 static void
 uaicfw_attach(device_t parent, device_t self, void *aux)
 {
@@ -329,7 +514,6 @@ uaicfw_attach(device_t parent, device_t self, void *aux)
 	struct uaicfw_softc * const sc = device_private(self);
 	struct uaicfw_endpoints eps;
 	uint32_t chip, sub;
-	struct aicwf_version fw_version;
 	uint8_t cfm[AICWF_VERSION_LEN];
 	usbd_status status;
 
@@ -338,6 +522,8 @@ uaicfw_attach(device_t parent, device_t self, void *aux)
 	mutex_init(&sc->sc_cmd_lock, MUTEX_DEFAULT, IPL_NONE);
 	mutex_init(&sc->sc_rx_lock, MUTEX_DEFAULT, IPL_SOFTUSB);
 	cv_init(&sc->sc_cv, "uaicfw");
+	sc->sc_udev = uiaa->uiaa_device;
+	usb_init_task(&sc->sc_recover_task, uaicfw_recover_rx, sc, USB_TASKQ_MPSAFE);
 	if (!uaicfw_endpoints(iface, &eps)) {
 		aprint_error_dev(self, "unsupported firmware endpoint layout\n");
 		return;
@@ -365,9 +551,16 @@ uaicfw_attach(device_t parent, device_t self, void *aux)
 	status = uaicfw_command(sc, AICWF_MM_VERSION_REQ, NULL, 0,
 	    AICWF_MM_VERSION_CFM, cfm, sizeof(cfm));
 	if (status == USBD_NORMAL_COMPLETION) {
-		aicwf_version_decode(cfm, &fw_version);
+		aicwf_version_decode(cfm, &sc->sc_fw_version);
 		aprint_normal_dev(self, "FullMAC version 0x%08x, features 0x%08x\n",
-		    fw_version.lmac, fw_version.features);
+		    sc->sc_fw_version.lmac, sc->sc_fw_version.features);
+		const usb_config_descriptor_t *desc =
+		    usbd_get_config_descriptor(uiaa->uiaa_device);
+		if (((chip >> 16) & 0xff) == 7 && (sub & 0xff) == 1 &&
+		    sc->sc_fw_version.lmac == 0x06040301 && desc != NULL &&
+		    desc->bNumInterface == 3) {
+			config_mountroot(self, uaicfw_mountroot);
+		}
 	} else {
 		uaicfw_stop(sc);
 		aprint_verbose_dev(self, "FullMAC version unavailable: %s\n",
@@ -385,6 +578,10 @@ uaicfw_detach(device_t self, int flags)
 {
 	struct uaicfw_softc * const sc = device_private(self);
 
+	(void)config_mountroot_cancel(self);
+	int error = config_detach_children(self, flags);
+	if (error != 0)
+		return error;
 	uaicfw_stop(sc);
 	cv_destroy(&sc->sc_cv);
 	mutex_destroy(&sc->sc_rx_lock);

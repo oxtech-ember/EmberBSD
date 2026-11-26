@@ -1,0 +1,156 @@
+/* SPDX-License-Identifier: BSD-2-Clause */
+/* AIC8800DC FullMAC station on a configured USB WLAN interface. */
+#include <sys/param.h>
+#include <sys/device.h>
+#include <sys/kmem.h>
+#include <sys/queue.h>
+#include <sys/systm.h>
+
+#include <sys/endian.h>
+#include <dev/ic/aicwf_command.h>
+#include <dev/ic/aicwfvar.h>
+#include <dev/usb/usb.h>
+#include <dev/usb/usbdi.h>
+#include <dev/usb/uaicfwvar.h>
+
+struct aicwf_usb_packet {
+	SIMPLEQ_ENTRY(aicwf_usb_packet) link;
+	size_t len;
+	uint64_t serial;
+	uint8_t data[];
+};
+
+struct aicwf_usb_softc {
+	struct aicwf_softc wifi;
+	struct uaicfw_attach_args bus;
+	kmutex_t lock;
+	struct workqueue *rxq;
+	struct work rxwork;
+	SIMPLEQ_HEAD(, aicwf_usb_packet) packets;
+	unsigned count;
+	bool scheduled;
+	bool prepared;
+};
+
+static int aicwf_usb_match(device_t, cfdata_t, void *);
+static void aicwf_usb_attach(device_t, device_t, void *);
+static int aicwf_usb_detach(device_t, int);
+
+CFATTACH_DECL_NEW(aicwf_usb, sizeof(struct aicwf_usb_softc),
+    aicwf_usb_match, aicwf_usb_attach, aicwf_usb_detach, NULL);
+
+static int
+aicwf_usb_write(struct aicwf_softc *sc, size_t len, u_int reserve,
+    bool *attempted)
+{
+	struct aicwf_usb_softc * const usc = sc->sc_bus;
+	return usc->bus.write(usc->bus.cookie, sc->sc_txbuf, len, attempted);
+}
+
+/* The USB callback cannot take net80211's sleep locks. */
+static void
+aicwf_usb_input(void *cookie, const uint8_t *p, size_t len)
+{
+	struct aicwf_usb_softc * const usc = cookie;
+	struct aicwf_softc * const sc = &usc->wifi;
+	struct aicwf_usb_packet *packet;
+
+	mutex_enter(&usc->lock);
+	/* Keep eight of the 32 slots available for control traffic. */
+	if (usc->count >= 32 || (usc->count >= 24 && (p[2] & AICWF_TYPE_CFG) == 0)) {
+		mutex_exit(&usc->lock);
+		return;
+	}
+	packet = kmem_intr_alloc(sizeof(*packet) + len, KM_NOSLEEP);
+	if (packet != NULL) {
+		packet->len = len;
+		memcpy(packet->data, p, len);
+		mutex_spin_enter(&sc->sc_epoch_lock);
+		packet->serial = sc->sc_rx_serial;
+		mutex_spin_exit(&sc->sc_epoch_lock);
+		SIMPLEQ_INSERT_TAIL(&usc->packets, packet, link);
+		usc->count++;
+		if (!usc->scheduled) {
+			usc->scheduled = true;
+			workqueue_enqueue(usc->rxq, &usc->rxwork, NULL);
+		}
+	}
+	mutex_exit(&usc->lock);
+}
+
+static void
+aicwf_usb_rx_work(struct work *wk, void *arg)
+{
+	struct aicwf_usb_softc * const usc = arg;
+	struct aicwf_usb_packet *packet;
+
+	mutex_enter(&usc->lock);
+	while ((packet = SIMPLEQ_FIRST(&usc->packets)) != NULL) {
+		SIMPLEQ_REMOVE_HEAD(&usc->packets, link);
+		usc->count--;
+		mutex_exit(&usc->lock);
+		if (!atomic_load_relaxed(&usc->wifi.sc_dying))
+			aicwf_rx(&usc->wifi, packet->data, packet->len, packet->serial);
+		kmem_intr_free(packet, sizeof(*packet) + packet->len);
+		mutex_enter(&usc->lock);
+	}
+	usc->scheduled = false;
+	mutex_exit(&usc->lock);
+}
+
+static int
+aicwf_usb_match(device_t parent, cfdata_t cf, void *aux)
+{
+	return 1;
+}
+
+static void
+aicwf_usb_attach(device_t parent, device_t self, void *aux)
+{
+	struct aicwf_usb_softc * const usc = device_private(self);
+	static const struct aicwf_bus_ops ops = { .write = aicwf_usb_write };
+	struct aicwf_softc * const sc = &usc->wifi;
+	int error;
+
+	aprint_naive("\n");
+	aprint_normal(": AIC8800DC station, passive receive only\n");
+	usc->bus = *(struct uaicfw_attach_args *)aux;
+	mutex_init(&usc->lock, MUTEX_DEFAULT, IPL_SOFTUSB);
+	SIMPLEQ_INIT(&usc->packets);
+	aicwf_prepare(sc, self, &ops, usc, true);
+	sc->sc_receive_only = true;
+	usc->prepared = true;
+	error = workqueue_create(&usc->rxq, "aicwfrx", aicwf_usb_rx_work, usc,
+	    PRI_NONE, IPL_SOFTUSB, WQ_MPSAFE);
+	if (error != 0)
+		goto fail;
+	usc->bus.listen(usc->bus.cookie, aicwf_usb_input, usc);
+	error = aicwf_station_setup(sc);
+	if (error != 0)
+		goto fail;
+	error = aicwf_ifattach(sc);
+	if (error == 0)
+		return;
+fail:
+	aprint_error_dev(self, "station setup failed: %d\n", error);
+	(void)aicwf_usb_detach(self, 0);
+}
+
+static int
+aicwf_usb_detach(device_t self, int flags)
+{
+	struct aicwf_usb_softc * const usc = device_private(self);
+
+	if (!usc->prepared)
+		return 0;
+	usc->bus.listen(usc->bus.cookie, NULL, NULL);
+	aicwf_quiesce(&usc->wifi);
+	if (usc->rxq != NULL) {
+		workqueue_wait(usc->rxq, &usc->rxwork);
+		workqueue_destroy(usc->rxq);
+	}
+	aicwf_release(&usc->wifi);
+	mutex_destroy(&usc->lock);
+	usc->prepared = false;
+	return 0;
+}

@@ -7,6 +7,8 @@ trap 'rm -rf "$work"' EXIT HUP INT TERM
 awk '/^aicwf_cmd_reply\(/ {copy=1; print "static int"}
 copy {print} copy && /^}/ {exit}' \
     "$src/sys/dev/ic/aicwf.c" > "$work/command.h"
+awk '/^aicwf_confirm\(/ {copy=1; print "static void"}
+copy {print} copy && /^}/ {exit}' "$src/sys/dev/ic/aicwf.c" >> "$work/command.h"
 awk '/^aicwf_crc8\(/ {copy=1; print "static uint8_t"}
 copy {print} copy && /^}/ {exit}' \
     "$src/sys/dev/sdmmc/if_aicwf.c" > "$work/crc.h"
@@ -21,20 +23,22 @@ cat > "$work/check.c" <<'C'
 #include <string.h>
 #include <errno.h>
 #define KASSERT assert
+#define device_printf(...) ((void)0)
 #define AICWF_MSG_MAX_PARAM 1032
 #define AICWF_TX_MAX 2048
 #define AICWF_CMD_TIMEOUT_MS 2000
 #define AICWF_SCANU_START_REQ 0x1000
+#define AICWF_SCANU_START_ACK 0x1009
 #define AICWF_SCANU_CANCEL_REQ 0x100a
 #define MIN(a,b) ((a) < (b) ? (a) : (b))
 #define explicit_memset memset
 struct aicwf_softc {
     uint8_t sc_txbuf[2048], sc_cfm[1032];
     int sc_lock, sc_cv; uint64_t sc_sae_epoch;
-    bool sc_cmd_busy, sc_cfm_done, sc_dying;
+    bool sc_cmd_busy, sc_cfm_done, sc_dying, sc_dc, sc_receive_only;
     bool sc_sta_scan_pending, sc_sta_scan_started, sc_sta_scan_draining;
     bool sc_scanning, sc_scan_published;
-    uint16_t sc_cfm_len, sc_cfm_id;
+    uint16_t sc_cfm_len, sc_cfm_id, sc_lost_cfm;
 };
 static bool aicwf_sta_ready(struct aicwf_softc *sc) { (void)sc; return true; }
 static int write_error, reply_len, writes; static struct aicwf_softc *waiting;
@@ -45,6 +49,7 @@ static void cv_wait(int *cv, int *lock) { (void)cv; assert(*lock); assert(waitin
 static int cv_timedwait(int *cv, int *lock, int ticks)
 { (void)cv; (void)lock; assert(ticks == 2000); return ETIMEDOUT; }
 static void cv_broadcast(int *cv) { (void)cv; }
+static unsigned getticks(void) { return 100; }
 static int mstohz(int n) { return n; }
 static void le16enc(void *p, unsigned n)
 { uint8_t *b = p; b[0] = n; b[1] = n >> 8; }
@@ -117,7 +122,19 @@ int main(void)
     reply_len = 4;
     assert(aicwf_cmd_reply(&sc, 0x24, param, 4, 0x25,
         (uint8_t[4]){0}, 4, 2, 0) == 0);
-    puts("PASS: SDIO command bytes and CRC, 12 reply, lifetime, cleanup and erasure cases");
+    sc.sc_dc = true;
+    reply_len = -1;
+    assert(aicwf_cmd_reply(&sc, 0x24, param, 4, 0x25, NULL, 0, true, 0) == ETIMEDOUT);
+    int issued = writes;
+    assert(sc.sc_lost_cfm == 0x25);
+    aicwf_confirm(&sc, 6, param, 4);
+    assert(aicwf_cmd_reply(&sc, 0x24, param, 4, 0x25, NULL, 0, true, 0) == EAGAIN);
+    assert(writes == issued);
+    aicwf_confirm(&sc, 0x25, param, 4);
+    reply_len = 0;
+    assert(aicwf_cmd_reply(&sc, 0x24, param, 4, 0x25, NULL, 0, true, 0) == 0);
+    assert(writes == issued + 1);
+    puts("PASS: SDIO CRC and command lifetime; DC timeout, late reply and retry");
 
     return 0;
 }

@@ -76,6 +76,8 @@ struct aicwf_softc {
 	const struct aicwf_bus_ops *sc_ops;
 	void			*sc_bus;
 	bool			sc_dc;
+	bool			sc_receive_only, sc_survey_failed;
+	bool			sc_survey_draining, sc_survey_ok;
 	bool			sc_dying;
 
 	kmutex_t		sc_lock;
@@ -86,6 +88,7 @@ struct aicwf_softc {
 
 	/* The confirmation the sender of a request waits for. */
 	uint16_t		sc_cfm_id;
+	uint16_t		sc_lost_cfm;	/* submitted USB command without a reply */
 	bool			sc_cfm_done;
 	uint16_t		sc_cfm_len;
 	uint8_t			sc_cfm[AICWF_MSG_MAX_PARAM];

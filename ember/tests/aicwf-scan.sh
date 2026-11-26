@@ -23,6 +23,7 @@ enum ieee80211_state {
     IEEE80211_S_ASSOC, IEEE80211_S_RUN
 };
 enum ieee80211_opmode { IEEE80211_M_STA };
+#define IEEE80211_F_ASCAN 0x100
 #define IEEE80211_F_SCAN 1
 #define IEEE80211_FEXT_STA_LEFT 0x10
 #define AICWF_SCAN_INTERVAL_MS 3000
@@ -43,7 +44,7 @@ struct ieee80211com {
     u_int8_t ic_chan_active[32];
     struct ieee80211_node *ic_bss;
 };
-struct aicwf_softc {
+struct aicwf_softc { bool sc_receive_only;
     struct ieee80211com sc_ic;
     bool sc_connected, sc_connecting, sc_scanning;
     int sc_scan_ticks;
@@ -76,6 +77,7 @@ static void aicwf_disconnect(struct aicwf_softc *sc)
     if (sc->sc_connected || sc->sc_connecting) disconnects++;
     sc->sc_connected = sc->sc_connecting = false;
 }
+static void aicwf_passive_scan(struct aicwf_softc *sc) { (void)sc; assert(0); }
 static void aicwf_scan(struct aicwf_softc *sc)
 { sc->sc_scanning = true; scans++; }
 /* The relevant generic transition: RUN leaves; INIT begins a fresh scan. */

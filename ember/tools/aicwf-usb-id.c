@@ -20,6 +20,7 @@ typedef enum {
 	USBD_NOMEM,
 	USBD_IOERROR,
 	USBD_IN_PROGRESS,
+	USBD_STALLED,
 	USBD_CANCELLED
 } usbd_status;
 
@@ -37,15 +38,33 @@ struct usbd_interface {
 	usb_endpoint_descriptor_t eps[4];
 };
 
+typedef struct { unsigned bNumInterface; } usb_config_descriptor_t;
+static usb_config_descriptor_t config = { 3 };
 struct usbif_attach_arg {
 	unsigned uiaa_vendor, uiaa_product, uiaa_configno;
 	unsigned uiaa_class, uiaa_subclass, uiaa_proto;
 	struct usbd_interface *uiaa_iface;
+	void *uiaa_device;
 };
 
 struct usbd_pipe {
 	unsigned addr;
 };
+
+struct usbd_device;
+struct usb_task { void (*fn)(void *); void *arg; bool pending; };
+#define USB_TASKQ_MPSAFE 1
+#define USB_TASKQ_DRIVER 1
+static unsigned clears;
+static bool clear_error;
+static void usb_init_task(struct usb_task *t, void (*fn)(void *), void *arg, int flags)
+{ t->fn = fn; t->arg = arg; t->pending = false; }
+static void usb_add_task(struct usbd_device *d, struct usb_task *t, int q)
+{ t->pending = true; }
+static void usb_rem_task_wait(struct usbd_device *d, struct usb_task *t, int q, void *l)
+{ t->pending = false; }
+static usbd_status usbd_clear_endpoint_stall(struct usbd_pipe *p)
+{ assert(p); clears++; return clear_error ? USBD_IOERROR : USBD_NORMAL_COMPLETION; }
 
 struct usbd_xfer;
 typedef void (*usbd_callback)(struct usbd_xfer *, void *, usbd_status);
@@ -88,6 +107,7 @@ static void cv_destroy(kcondvar_t *cv) { assert(!*cv); }
 static void cv_broadcast(kcondvar_t *cv) { (void)cv; }
 static int cv_timedwait(kcondvar_t *, kmutex_t *, int);
 static void *device_private(device_t);
+#define explicit_memset memset
 #define KASSERT assert
 #define roundup(x, y) (((x) + (y) - 1) / (y) * (y))
 #define CFATTACH_DECL_NEW(...)
@@ -119,6 +139,7 @@ le16dec(const void *p)
 	return b[0] | ((uint16_t)b[1] << 8);
 }
 
+
 static uint32_t
 le32dec(const void *p)
 {
@@ -143,6 +164,8 @@ le32enc(void *p, uint32_t v)
 }
 
 #include "aicwf_command.h"
+#include "uaicfwvar.h"
+#include "aicwf_sta.h"
 
 enum fault {
 	NONE,
@@ -170,11 +193,25 @@ enum fault {
 	ON_DATA,
 	EARLY_REPLY,
 	FW_ERROR,
-	POST_ERROR
+	POST_ERROR,
+	WRONG_FAMILY
 };
 static enum fault fault;
 static unsigned opens, allocs, writes, reads, errors;
 static uint32_t requested;
+static unsigned children;
+static struct uaicfw_attach_args radio;
+static void (*mountroot_hook)(device_t);
+static usb_config_descriptor_t *usbd_get_config_descriptor(void *device)
+{ return &config; }
+static void config_mountroot(device_t dev, void (*fn)(device_t))
+{ assert(!mountroot_hook); mountroot_hook = fn; }
+static int config_mountroot_cancel(device_t dev)
+{ mountroot_hook = NULL; return 0; }
+static int config_detach_children(device_t dev, int flags) { return 0; }
+#define CFARGS(...) 0
+static device_t config_found(device_t dev, struct uaicfw_attach_args *a, void *pr, int cf)
+{ children++; radio = *a; return 1; }
 static struct usbd_xfer *inputs[2];
 
 static usb_interface_descriptor_t *
@@ -194,7 +231,7 @@ static usbd_status
 usbd_open_pipe(
     struct usbd_interface *i, unsigned addr, int flags, struct usbd_pipe **out)
 {
-	assert(flags == USBD_EXCLUSIVE_USE && (addr == 0x81 || addr == 0x82 || addr == 2));
+	assert(flags == USBD_EXCLUSIVE_USE && (addr == 0x81 || addr == 0x82 || addr == 2 || addr == 1));
 	if ((addr == 0x81 && fault == OPEN_DATA) ||
 	    (addr == 0x82 && fault == OPEN_RX) ||
 	    (addr == 2 && fault == OPEN_TX))
@@ -297,13 +334,16 @@ emulate_transfer(struct usbd_xfer *x)
 			assert(x->len == 20 && memcmp(b, hdr, sizeof(hdr)) == 0);
 			requested = le32dec(b + 16);
 			assert(requested == (writes == 0 ? 0x40500000 : 0x20));
-		} else {
-			assert(writes == 2 && x->len == sizeof(version_hdr));
+		} else if (writes == 2) {
+			assert(x->len == sizeof(version_hdr));
 			assert(memcmp(b, version_hdr, sizeof(version_hdr)) == 0);
+		} else {
+			assert(writes == 3 && x->len == 20 && le16dec(b + 8) == AICWF_MM_GET_MAC_ADDR_REQ);
+			assert(b[16] == 1 && !b[17] && !b[18] && !b[19]);
 		}
 		assert(inputs[0] && inputs[0]->pending && inputs[1] && inputs[1]->pending);
 		writes++;
-		if (fault == EARLY_REPLY)
+		if (fault == EARLY_REPLY && writes <= 3)
 			deliver();
 		if (fault == TX_ERROR)
 			return USBD_INVAL;
@@ -325,6 +365,7 @@ emulate_transfer(struct usbd_xfer *x)
 		b[2] = 0x11;
 		le16enc(b + 4, 0x1004);
 		b += 16;
+
 		if (writes == 3) {
 			le16enc(b, 12 + 28);
 			b[2] = 0x11;
@@ -353,7 +394,7 @@ emulate_transfer(struct usbd_xfer *x)
 static usbd_status
 usbd_sync_transfer(struct usbd_xfer *x)
 {
-	assert(x->pipe->addr == 2 && x->cb == NULL);
+	assert(x->pipe->addr < 0x80 && x->cb == NULL);
 	return emulate_transfer(x);
 }
 
@@ -391,13 +432,34 @@ usbd_get_xfer_status(
 static struct uaicfw_softc device;
 static void *device_private(device_t self) { return &device; }
 
+static void
+ignore_input(void *cookie, const uint8_t *p, size_t len)
+{
+}
+
+static void
+stall_input(struct usbd_xfer *x)
+{
+	assert(x->pending);
+	x->pending = false;
+	x->cb(x, x->arg, USBD_STALLED);
+}
+
+static void
+run_usb_task(struct usb_task *t)
+{
+	assert(t->pending);
+	t->pending = false;
+	t->fn(t->arg);
+}
+
 int
 main(void)
 {
 	struct usbd_interface iface = {
 	    {0, 4}, {{1, 2, 512}, {0x81, 2, 512}, {2, 2, 512}, {0x82, 2, 512}}};
 	struct usbif_attach_arg a = {
-	    0xa69c, 0x88dc, 1, 0xff, 0xff, 0xff, &iface};
+	    0xa69c, 0x88dc, 1, 0xff, 0xff, 0xff, &iface, NULL};
 	assert(uaicfw_match(0, 0, &a) == UMATCH_VENDOR_PRODUCT_CONF_IFACE);
 	iface.desc.bAlternateSetting = 1;
 	assert(uaicfw_match(0, 0, &a) == UMATCH_NONE);
@@ -410,21 +472,76 @@ main(void)
 	a.uiaa_product++;
 	assert(uaicfw_match(0, 0, &a) == UMATCH_NONE);
 	a.uiaa_product--;
-	for (fault = NONE; fault <= POST_ERROR; fault++) {
+	for (fault = NONE; fault <= WRONG_FAMILY; fault++) {
 		opens = allocs = writes = reads = errors = identified = 0;
-		versions = unavailable = 0;
+		versions = unavailable = children = 0;
+		config.bNumInterface = fault == WRONG_FAMILY ? 1 : 3;
 		memset(&device, 0, sizeof(device));
 		uaicfw_attach(0, 0, &a);
-		assert(uaicfw_detach(0, 0) == 0 && !opens && !allocs);
 		bool have_id = fault == NONE || fault == VERSION_TIMEOUT ||
-		    fault == VERSION_SHORT || fault == ON_DATA || fault == EARLY_REPLY;
+		    fault == VERSION_SHORT || fault == ON_DATA || fault == EARLY_REPLY || fault >= WRONG_FAMILY;
 		assert(identified == have_id && errors == !have_id);
-		bool running = fault == NONE || fault == ON_DATA || fault == EARLY_REPLY;
+		bool running = fault == NONE || fault == ON_DATA || fault == EARLY_REPLY || fault >= WRONG_FAMILY;
 		assert(versions == running);
 		assert(unavailable == (have_id && !running));
 		assert(!have_id || (writes == 3 && reads == 3));
 		if (fault == OTHER || fault == EMPTY_RX)
 			assert(reads == 1 && writes == 1);
+		assert((mountroot_hook != NULL) == (running && fault != WRONG_FAMILY));
+		if (mountroot_hook != NULL) {
+			mountroot_hook(0);
+			assert(children == 1);
+			uint8_t packet[512], req[AICWF_STA_SCAN_LEN], mac[4] = { 1 };
+			bool attempted = true;
+			size_t n = aicwf_command_encode(packet, sizeof(packet), 0x1800, mac, 4);
+			assert(radio.write(radio.cookie, packet, n, &attempted) == EOPNOTSUPP);
+			assert(!attempted && writes == 3);
+			packet[2] = 1;
+			assert(radio.write(radio.cookie, packet, n, &attempted) == EOPNOTSUPP);
+			assert(!attempted && writes == 3);
+			n = aicwf_command_encode(packet, sizeof(packet), AICWF_MM_GET_MAC_ADDR_REQ, mac, 4);
+			assert(radio.write(radio.cookie, packet, n, &attempted) == 0 && attempted);
+			uint16_t freqs[] = { 2412, 2437, 2462 };
+			assert(aicwf_sta_scan_build(req, freqs, 3, 2, 0));
+			n = aicwf_command_encode(packet, sizeof(packet), AICWF_SCANU_START_REQ, req, sizeof(req));
+			assert(uaicfw_survey_command(packet, n));
+			packet[16 + 3] = 0; /* Active scan. */
+			assert(!uaicfw_survey_command(packet, n));
+			packet[16 + 3] = 1; packet[16 + 4] = 12;
+			assert(!uaicfw_survey_command(packet, n));
+			packet[16 + 4] = 0; packet[16 + 368] = 1;
+			assert(!uaicfw_survey_command(packet, n));
+			packet[16 + 368] = 0; le16enc(packet + 16 + 12, 2467);
+			assert(!uaicfw_survey_command(packet, n));
+		}
+		if (children && fault == NONE) {
+			radio.listen(radio.cookie, ignore_input, NULL);
+			stall_input(inputs[0]);
+			stall_input(inputs[1]);
+			run_usb_task(&device.sc_recover_task);
+			assert(clears == 2 && inputs[0]->pending && inputs[1]->pending);
+			assert(device.sc_error == USBD_NORMAL_COMPLETION);
+			inputs[0]->pending = false;
+			inputs[0]->actual = 0;
+			inputs[0]->cb(inputs[0], inputs[0]->arg, USBD_NORMAL_COMPLETION);
+			stall_input(inputs[0]);
+			run_usb_task(&device.sc_recover_task);
+			assert(clears == 3 && inputs[0]->pending);
+			stall_input(inputs[1]);
+			assert(!device.sc_recover_task.pending && device.sc_error == USBD_STALLED);
+		} else if (children && fault == EARLY_REPLY) {
+			radio.listen(radio.cookie, ignore_input, NULL);
+			stall_input(inputs[1]);
+			clear_error = true;
+			run_usb_task(&device.sc_recover_task);
+			clear_error = false;
+			assert(device.sc_error == USBD_IOERROR && !inputs[1]->pending);
+		} else if (children && fault == ON_DATA) {
+			radio.listen(radio.cookie, ignore_input, NULL);
+			stall_input(inputs[1]);
+			assert(device.sc_recover_task.pending);
+		}
+		assert(uaicfw_detach(0, 0) == 0 && !opens && !allocs);
 	}
 	writes = errors = 0;
 	iface.eps[2].bEndpointAddress = 1;
@@ -434,6 +551,6 @@ main(void)
 	assert(uaicfw_detach(0, 0) == 0);
 	assert(!writes && errors == 1);
 	puts("PASS: both bulk-IN endpoints, early and late FullMAC replies, "
-	     "firmware errors, timeouts and transfer cleanup");
+	     "bounded endpoint recovery, passive command admission and cleanup");
 	return 0;
 }

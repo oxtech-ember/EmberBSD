@@ -600,6 +600,7 @@ ohci* 		at fdt?			# OHCI
 xhci* 		at fdt?			# XHCI
 usb* 		at usbus?
 uaicfw*		at uhub? port ? configuration ? interface ?	# AIC8800DC WLAN
+aicwf*		at uaicfw?
 
 # Virtio devices
 virtio* 	at fdt?				# Virtio MMIO device

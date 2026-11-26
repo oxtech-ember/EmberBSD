@@ -74,8 +74,8 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #define	AICWF_MM_RESET_CFM		0x0001
 #define	AICWF_MM_START_REQ		0x0002
 #define	AICWF_MM_START_CFM		0x0003
-#define	AICWF_MM_ADD_IF_REQ		0x0006
 #define	AICWF_MM_ADD_IF_CFM		0x0007
+#define	AICWF_MM_REMOVE_IF_CFM		0x0009
 #define	 AICWF_IF_STA			0
 #define	AICWF_MM_SET_RF_CALIB_REQ	0x0069
 #define	AICWF_MM_SET_RF_CALIB_CFM	0x006a
@@ -85,7 +85,6 @@ __KERNEL_RCSID(0, "$NetBSD$");
  * even though the firmware never raised SM_DISCONNECT_IND. */
 #define	AICWF_ALIVE_PERIOD_MS	2000
 #define	AICWF_ALIVE_SILENT_MS	10000
-#define	AICWF_MM_GET_MAC_ADDR_REQ	0x0073
 #define	AICWF_MM_GET_MAC_ADDR_CFM	0x0074
 #define	AICWF_MM_GET_FW_VERSION_REQ	0x0080
 #define	AICWF_MM_GET_FW_VERSION_CFM	0x0081
@@ -103,7 +102,6 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #define	AICWF_MM_CHANNEL_SURVEY_IND	0x004f
 
 /* Scan task. */
-#define	AICWF_SCANU_START_REQ		0x1000
 #define	AICWF_SCANU_START_CFM		0x1001	/* the scan is over */
 #define	AICWF_SCANU_RESULT_IND		0x1004
 #define	AICWF_SCANU_START_ACK		0x1009	/* the scan has begun */
@@ -275,6 +273,7 @@ aicwf_cmd_reply(struct aicwf_softc *sc, uint16_t id, const void *param,
 {
 	uint8_t * const buf = sc->sc_txbuf;
 	size_t len;
+	bool submitted = false;
 	int error;
 
 	KASSERT(param_len <= AICWF_MSG_MAX_PARAM);
@@ -285,6 +284,11 @@ aicwf_cmd_reply(struct aicwf_softc *sc, uint16_t id, const void *param,
 	if (atomic_load_relaxed(&sc->sc_dying)) {
 		mutex_exit(&sc->sc_lock);
 		return ENXIO;
+	}
+	if (sc->sc_lost_cfm != 0 && !(sc->sc_receive_only &&
+	    sc->sc_lost_cfm == AICWF_SCANU_START_ACK && id == AICWF_MM_REMOVE_IF_REQ)) {
+		mutex_exit(&sc->sc_lock);
+		return EAGAIN;
 	}
 	/* The caller may have retired while waiting for another command. */
 	if (epoch != 0 && epoch != sc->sc_sae_epoch) {
@@ -309,14 +313,18 @@ aicwf_cmd_reply(struct aicwf_softc *sc, uint16_t id, const void *param,
 	sc->sc_cfm_id = cfm_id;
 	sc->sc_cfm_done = false;
 
-	error = aicwf_write_attempted(sc, len, 0,
-	    id == AICWF_SCANU_START_REQ ? &sc->sc_scan_published : NULL);
+	error = aicwf_write_attempted(sc, len, 0, &submitted);
+	if (id == AICWF_SCANU_START_REQ)
+		sc->sc_scan_published = submitted;
 	if (strict)
 		explicit_memset(buf + AICWF_TX_MSG_OFFSET +
 		    AICWF_MSG_HDR_LEN, 0, param_len);
+	const unsigned start = getticks();
+	const unsigned limit = mstohz(AICWF_CMD_TIMEOUT_MS);
 	while (error == 0 && !sc->sc_cfm_done && !atomic_load_relaxed(&sc->sc_dying)) {
-		error = cv_timedwait(&sc->sc_cv, &sc->sc_lock,
-		    mstohz(AICWF_CMD_TIMEOUT_MS));
+		const unsigned elapsed = (unsigned)getticks() - start;
+		error = elapsed >= limit ? ETIMEDOUT :
+		    cv_timedwait(&sc->sc_cv, &sc->sc_lock, limit - elapsed);
 	}
 	if (atomic_load_relaxed(&sc->sc_dying))
 		error = ENXIO;
@@ -329,6 +337,9 @@ aicwf_cmd_reply(struct aicwf_softc *sc, uint16_t id, const void *param,
 		memset(cfm, 0, cfm_len);
 		memcpy(cfm, sc->sc_cfm, MIN(cfm_len, sc->sc_cfm_len));
 	}
+	/* USB firmware replies carry a message ID without a sequence number. */
+	if (sc->sc_dc && submitted && !sc->sc_cfm_done && error != 0)
+		sc->sc_lost_cfm = cfm_id;
 	sc->sc_cfm_id = 0;
 	sc->sc_cmd_busy = false;
 	cv_broadcast(&sc->sc_cv);
@@ -358,6 +369,25 @@ aicwf_fw_cmd(struct aicwf_softc *sc, uint16_t id, const void *param,
 }
 
 static void
+aicwf_confirm(struct aicwf_softc *sc, uint16_t id, const void *p, size_t len)
+{
+	mutex_enter(&sc->sc_lock);
+	if (sc->sc_lost_cfm != 0 && id == sc->sc_lost_cfm) {
+		/* Consume the earlier transfer before admitting a new request. */
+		sc->sc_lost_cfm = 0;
+		cv_broadcast(&sc->sc_cv);
+	} else if (sc->sc_cmd_busy && id == sc->sc_cfm_id && !sc->sc_cfm_done) {
+		memcpy(sc->sc_cfm, p, len);
+		sc->sc_cfm_len = len;
+		sc->sc_cfm_done = true;
+		cv_broadcast(&sc->sc_cv);
+	} else {
+		device_printf(sc->sc_dev, "unexpected message 0x%04x\n", id);
+	}
+	mutex_exit(&sc->sc_lock);
+}
+
+static void
 aicwf_rx_msg(struct aicwf_softc *sc, const uint8_t *msg, size_t len)
 {
 	uint16_t id, param_len;
@@ -365,6 +395,14 @@ aicwf_rx_msg(struct aicwf_softc *sc, const uint8_t *msg, size_t len)
 	if (!aicwf_reply_decode(msg, len, &id, &param_len))
 		return;
 
+	if (sc->sc_receive_only && id != AICWF_SCANU_RESULT_IND &&
+	    id != AICWF_SCANU_START_CFM) {
+		if ((id == AICWF_MM_GET_MAC_ADDR_CFM || id == AICWF_MM_ADD_IF_CFM ||
+		    id == AICWF_MM_REMOVE_IF_CFM || id == AICWF_SCANU_START_ACK) &&
+		    param_len <= sizeof(sc->sc_cfm))
+			aicwf_confirm(sc, id, msg + AICWF_RX_MSG_PARAM, param_len);
+		return;
+	}
 	switch (id) {
 	case AICWF_SCANU_RESULT_IND:
 		aicwf_scan_result(sc, msg + AICWF_RX_MSG_PARAM, param_len);
@@ -395,19 +433,8 @@ aicwf_rx_msg(struct aicwf_softc *sc, const uint8_t *msg, size_t len)
 		return;
 	}
 
-	if (param_len > sizeof(sc->sc_cfm))
-		return;
-
-	mutex_enter(&sc->sc_lock);
-	if (id == sc->sc_cfm_id && !sc->sc_cfm_done) {
-		memcpy(sc->sc_cfm, msg + AICWF_RX_MSG_PARAM, param_len);
-		sc->sc_cfm_len = param_len;
-		sc->sc_cfm_done = true;
-		cv_broadcast(&sc->sc_cv);
-	} else {
-		device_printf(sc->sc_dev, "unexpected message 0x%04x\n", id);
-	}
-	mutex_exit(&sc->sc_lock);
+	if (param_len <= sizeof(sc->sc_cfm))
+		aicwf_confirm(sc, id, msg + AICWF_RX_MSG_PARAM, param_len);
 }
 
 /* Split what one read returned into frames. */
@@ -418,6 +445,11 @@ aicwf_rx(struct aicwf_softc *sc, const uint8_t *buf, size_t len, uint64_t serial
 	int step;
 
 	while ((step = aicwf_frame_decode(buf, len, &frame)) > 0) {
+		if (sc->sc_receive_only && frame.type != AICWF_TYPE_MSG) {
+			buf += step;
+			len -= step;
+			continue;
+		}
 		if ((frame.type & AICWF_TYPE_CFG) == 0)
 			aicwf_rx_data(sc, buf, frame.len, serial);
 		else if (frame.type == AICWF_TYPE_TX_CFM)
@@ -491,6 +523,30 @@ aicwf_chan_list(struct aicwf_softc *sc, uint8_t *chan2g, uint8_t *chan5g,
 	return n;
 }
 
+static int
+aicwf_add_vif(struct aicwf_softc *sc)
+{
+	uint8_t req[10], cfm[2];
+	int error;
+
+	memset(req, 0, sizeof(req));
+	req[0] = AICWF_IF_STA;
+	memcpy(req + 2, sc->sc_enaddr, ETHER_ADDR_LEN);
+	error = aicwf_fw_cmd(sc, AICWF_MM_ADD_IF_REQ, req, 10,
+	    AICWF_MM_ADD_IF_CFM, cfm, 2);
+	if (error != 0)
+		return error;
+	if (cfm[0] != 0) {
+		aprint_error_dev(sc->sc_dev, "no interface: status %u\n",
+		    cfm[0]);
+		return EIO;
+	}
+	if ((sc->sc_dc || sc->sc_fw_bip_pending) && cfm[1] > 3)
+		return EPROTO;
+	sc->sc_vif = cfm[1];
+	return 0;
+}
+
 int
 aicwf_station_setup(struct aicwf_softc *sc)
 {
@@ -510,6 +566,8 @@ aicwf_station_setup(struct aicwf_softc *sc)
 	    memcmp(cfm, (uint8_t[ETHER_ADDR_LEN]){ 0 }, ETHER_ADDR_LEN) == 0)
 		return EINVAL;
 	memcpy(sc->sc_enaddr, cfm, ETHER_ADDR_LEN);
+	if (sc->sc_receive_only)
+		return 0;
 	aprint_normal_dev(sc->sc_dev, "Ethernet address %s\n",
 	    ether_sprintf(sc->sc_enaddr));
 
@@ -571,21 +629,9 @@ aicwf_station_setup(struct aicwf_softc *sc)
 	if (error != 0)
 		return error;
 
-	memset(req, 0, sizeof(req));
-	req[0] = AICWF_IF_STA;
-	memcpy(req + 2, sc->sc_enaddr, ETHER_ADDR_LEN);
-	error = aicwf_fw_cmd(sc, AICWF_MM_ADD_IF_REQ, req, 10,
-	    AICWF_MM_ADD_IF_CFM, cfm, 2);
+	error = aicwf_add_vif(sc);
 	if (error != 0)
 		return error;
-	if (cfm[0] != 0) {
-		aprint_error_dev(sc->sc_dev, "no interface: status %u\n",
-		    cfm[0]);
-		return EIO;
-	}
-	if ((sc->sc_dc || sc->sc_fw_bip_pending) && cfm[1] > 3)
-		return EPROTO;
-	sc->sc_vif = cfm[1];
 	if (sc->sc_fw_bip_pending &&
 	    (error = sc->sc_ops->verify(sc)) != 0)
 		return error;
@@ -593,6 +639,74 @@ aicwf_station_setup(struct aicwf_softc *sc)
 	    sc->sc_fw_bip_verified && bip_mfp;
 
 	return 0;
+}
+
+/*
+ * Run in the station workqueue. The separate USB RX worker populates the
+ * net80211 scan cache and wakes this waiter. Only a user scan creates a VIF.
+ */
+static void
+aicwf_passive_scan(struct aicwf_softc *sc)
+{
+	struct ieee80211com * const ic = &sc->sc_ic;
+	uint16_t freqs[11];
+	uint8_t req[AICWF_STA_SCAN_LEN];
+	const unsigned limit = mstohz(4000);
+	size_t n = 0;
+	int error = 0, release;
+
+	for (u_int ch = 1; ch <= __arraycount(freqs); ch++) {
+		const u_int freq = 2407 + ch * 5;
+		if (aicwf_dc_channel(sc, ch, freq))
+			freqs[n++] = freq;
+	}
+	mutex_enter(&sc->sc_lock);
+	const bool available = !sc->sc_survey_failed && !sc->sc_survey_draining;
+	mutex_exit(&sc->sc_lock);
+	if (n == 0 || !available)
+		goto done;
+	error = aicwf_add_vif(sc);
+	if (error != 0)
+		goto done;
+	(void)aicwf_sta_scan_build(req, freqs, n, sc->sc_vif, 0);
+	mutex_enter(&sc->sc_lock);
+	sc->sc_scanning = true;
+	sc->sc_survey_ok = false;
+	mutex_exit(&sc->sc_lock);
+	error = aicwf_cmd(sc, AICWF_SCANU_START_REQ, req, sizeof(req),
+	    AICWF_SCANU_START_ACK, NULL, 0);
+	mutex_enter(&sc->sc_lock);
+	const unsigned start = getticks();
+	while (error == 0 && sc->sc_scanning && !atomic_load_relaxed(&sc->sc_dying)) {
+		const unsigned elapsed = (unsigned)getticks() - start;
+		error = elapsed >= limit ? ETIMEDOUT :
+		    cv_timedwait(&sc->sc_cv, &sc->sc_lock, limit - elapsed);
+	}
+	/* Late scan events have no generation. Do not open a replacement VIF. */
+	if (sc->sc_scanning && sc->sc_scan_published)
+		sc->sc_survey_draining = true;
+	if (error == 0 && !sc->sc_survey_ok)
+		error = EIO;
+	sc->sc_scanning = false;
+	mutex_exit(&sc->sc_lock);
+	release = aicwf_fw_cmd(sc, AICWF_MM_REMOVE_IF_REQ, &sc->sc_vif, 1,
+	    AICWF_MM_REMOVE_IF_CFM, NULL, 0);
+	if (release != 0) {
+		mutex_enter(&sc->sc_lock);
+		sc->sc_survey_failed = true;
+		mutex_exit(&sc->sc_lock);
+	}
+	if (error != 0 || release != 0)
+		aprint_error_dev(sc->sc_dev, "passive scan failed: %d, VIF removal: %d\n",
+		    error, release);
+done:
+	if (!atomic_load_relaxed(&sc->sc_dying)) {
+		int s = splnet();
+		if (error != 0)
+			ieee80211_node_table_reset(&ic->ic_scan);
+		ieee80211_end_scan(ic);
+		splx(s);
+	}
 }
 
 /* Scan every channel; the networks arrive as indications. */
@@ -780,6 +894,15 @@ aicwf_scan_done(struct aicwf_softc *sc, const uint8_t *p, size_t len)
 		return;
 	mutex_enter(&sc->sc_lock);
 	if (!sc->sc_scanning) {
+		if (sc->sc_receive_only)
+			sc->sc_survey_draining = false;
+		mutex_exit(&sc->sc_lock);
+		return;
+	}
+	if (sc->sc_receive_only) {
+		sc->sc_survey_ok = p[1] == 0;
+		sc->sc_scanning = false;
+		cv_broadcast(&sc->sc_cv);
 		mutex_exit(&sc->sc_lock);
 		return;
 	}
@@ -2243,6 +2366,18 @@ aicwf_newstate_cb(struct aicwf_softc *sc, enum ieee80211_state nstate,
 	const enum ieee80211_state ostate = ic->ic_state;
 	int s;
 
+	if (sc->sc_receive_only && nstate == IEEE80211_S_SCAN) {
+		/* begin_scan selects a channel and queues a second SCAN transition. */
+		if (ostate == IEEE80211_S_SCAN)
+			return;
+		s = splnet();
+		sc->sc_newstate(ic, nstate, arg);
+		ic->ic_flags &= ~IEEE80211_F_ASCAN;
+		splx(s);
+		aicwf_passive_scan(sc);
+		return;
+	}
+
 	switch (nstate) {
 	case IEEE80211_S_INIT:
 		aicwf_disconnect(sc);
@@ -2511,6 +2646,9 @@ aicwf_newstate(struct ieee80211com *ic, enum ieee80211_state nstate, int arg)
 
 	if (atomic_load_relaxed(&sc->sc_dying))
 		return ENXIO;
+	if (sc->sc_receive_only && nstate != IEEE80211_S_INIT &&
+	    nstate != IEEE80211_S_SCAN)
+		return EOPNOTSUPP;
 	if (nstate == IEEE80211_S_AUTH &&
 	    (sc->sc_if.if_flags & IFF_RUNNING) == 0)
 		return ENETDOWN;
@@ -2547,7 +2685,7 @@ aicwf_key_task(struct ieee80211com *ic, const struct ieee80211_key *wk,
 	struct ieee80211_rxba_output out = {0};
 	uint64_t serial = 0, epoch;
 
-	if (atomic_load_relaxed(&sc->sc_dying))
+	if (sc->sc_receive_only || atomic_load_relaxed(&sc->sc_dying))
 		return 0;
 
 	/* Pairwise firmware key changes retire the decrypt/reorder lifetime at
@@ -2691,6 +2829,10 @@ aicwf_start(struct ifnet *ifp)
 
 	if (atomic_load_relaxed(&sc->sc_dying))
 		return;
+	if (sc->sc_receive_only) {
+		IFQ_PURGE(&ifp->if_snd);
+		return;
+	}
 	if ((ifp->if_flags & (IFF_RUNNING | IFF_OACTIVE)) != IFF_RUNNING)
 		return;
 	if (atomic_swap_uint(&sc->sc_txqueued, 1) == 0)
@@ -3247,6 +3389,28 @@ aicwf_watchdog(struct ifnet *ifp)
 	ieee80211_watchdog(&sc->sc_ic);
 }
 
+/* State and WPA configuration stay unavailable on a receive-only radio. */
+static int
+aicwf_survey_set(struct aicwf_softc *sc, unsigned type)
+{
+	int error = 0;
+
+	switch (type) {
+	case IEEE80211_IOC_SCAN_REQ:
+		mutex_enter(&sc->sc_lock);
+		if (sc->sc_survey_failed)
+			error = EIO;
+		else if (sc->sc_survey_draining || sc->sc_lost_cfm != 0)
+			error = EBUSY;
+		mutex_exit(&sc->sc_lock);
+		return error;
+	case IEEE80211_IOC_CHANLIST:
+		return 0;
+	default:
+		return EOPNOTSUPP;
+	}
+}
+
 static int
 aicwf_ioctl(struct ifnet *ifp, u_long cmd, void *data)
 {
@@ -3256,6 +3420,17 @@ aicwf_ioctl(struct ifnet *ifp, u_long cmd, void *data)
 
 	if (atomic_load_relaxed(&sc->sc_dying))
 		return ENXIO;
+	if (sc->sc_receive_only) {
+		if (cmd == SIOCS80211) {
+			struct ieee80211req *ireq = data;
+			error = aicwf_survey_set(sc, ireq->i_type);
+			if (error != 0)
+				return error;
+		} else if (cmd == SIOCS80211NWID || cmd == SIOCS80211NWKEY ||
+		    cmd == SIOCS80211AUTH || cmd == SIOCS80211BSSID ||
+		    cmd == SIOCS80211POWER)
+			return EOPNOTSUPP;
+	}
 	if ((cmd == SIOCG80211 || cmd == SIOCS80211) &&
 	    ((struct ieee80211req *)data)->i_type == IEEE80211_IOC_SAE)
 		return aicwf_sae_ioctl(sc, cmd, data);
@@ -3338,7 +3513,7 @@ aicwf_ifattach(struct aicwf_softc *sc)
 	ic->ic_phytype = IEEE80211_T_OFDM;
 	ic->ic_opmode = IEEE80211_M_STA;
 	ic->ic_state = IEEE80211_S_INIT;
-	ic->ic_caps = IEEE80211_C_AES_CCM | IEEE80211_C_SHSLOT |
+	ic->ic_caps = sc->sc_receive_only ? 0 : IEEE80211_C_AES_CCM | IEEE80211_C_SHSLOT |
 	    IEEE80211_C_SHPREAMBLE | IEEE80211_C_WPA;
 	memcpy(ic->ic_myaddr, sc->sc_enaddr, ETHER_ADDR_LEN);
 	ic->ic_ibss_chan = &ic->ic_channels[0];
@@ -3351,6 +3526,8 @@ aicwf_ifattach(struct aicwf_softc *sc)
 		ic->ic_channels[n].ic_flags = IEEE80211_CHAN_CCK |
 		    IEEE80211_CHAN_OFDM | IEEE80211_CHAN_DYN |
 		    IEEE80211_CHAN_2GHZ;
+		if (sc->sc_receive_only)
+			ic->ic_channels[n].ic_flags |= IEEE80211_CHAN_PASSIVE;
 	}
 	if (sc->sc_5ghz) {
 		ic->ic_sup_rates[IEEE80211_MODE_11A] =
@@ -3374,6 +3551,8 @@ aicwf_ifattach(struct aicwf_softc *sc)
 
 	if_initialize(ifp);
 	ieee80211_ifattach(ic);
+	if (sc->sc_receive_only)
+		ic->ic_roaming = IEEE80211_ROAMING_MANUAL;
 	sc->sc_newstate = ic->ic_newstate;
 	ic->ic_newstate = aicwf_newstate;
 	ic->ic_sta_mgmt = aicwf_sta_mgmt;
