@@ -12,7 +12,7 @@ struct pvr_fwbridge {
 	struct pvr_fwservice service;
 	struct pvr_backend backend;
 	kmutex_t *lock;
-	void *health_cookie;
+	void *health_cookie, *irq_cookie;
 	int (*health)(void *);
 	unsigned (*irq_mark)(void *);
 	void (*irq_wait)(void *, unsigned, int);
@@ -32,7 +32,7 @@ int pvr_fwbridge_prepare(struct pvr_fwbridge *,
     const struct pvr_fwprobe_result *, enum pvr_fw_profile,
     int (*)(void *), void *);
 /* Optional; call under the platform lock after prepare and before publish. */
-void pvr_fwbridge_set_irq(struct pvr_fwbridge *, unsigned (*)(void *),
+void pvr_fwbridge_set_irq(struct pvr_fwbridge *, void *, unsigned (*)(void *),
     void (*)(void *, unsigned, int));
 /* Call without the platform lock. The DRM gate always precedes that lock. */
 int pvr_fwbridge_publish(struct pvr_fwbridge *,

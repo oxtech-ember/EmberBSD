@@ -3,7 +3,7 @@
 # Origin: EmberBSD real A133 compute workflow, modelled bus and firmware.
 set -eu
 src=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
-[ "$#" -eq 1 ] || { echo "usage: $0 GE_COMPUTE_IMAGE" >&2; exit 2; }
+[ "$#" -eq 1 ] || { echo "usage: $0 GE_COMPUTE_IMAGE|--drm-only" >&2; exit 2; }
 work=$(mktemp -d "${TMPDIR:-/tmp}/a133-compute.XXXXXXXX")
 trap 'rm -rf "$work"' EXIT HUP INT TERM
 printf 'static int\n' > "$work/consumer.inc"

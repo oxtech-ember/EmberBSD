@@ -30,7 +30,9 @@ struct pvr_fwprobe_observation { bool valid; struct { int fw_faults, hwr_state; 
 struct a133_gpu_diagnostics { int stage; };
 #define PVR_GE8300_DRM 1
 #define A133_GPU_STAGE_COMPLETE 35
+struct pvr_job_irq { int unused; };
 struct a133_gpu_softc {
+ struct { struct pvr_job_irq irq; } job_irq;
  struct a133_gpu_diagnostics diag; void *dev,*dmat,*bst; uintptr_t bsh;
  struct pvr_fwmem *memory; struct pvr_fwboot_result boot_result;
  bool drm_pending; struct { bool attempted, registered; } bridge;
@@ -49,6 +51,13 @@ static struct a133_gpu_softc *active_sc;
 static unsigned checks, calls, probes, sync_calls, kick_calls, vm_calls, postreads;
 static int fault, ticks;
 enum { BAD_FILE=1, BAD_MAP, BAD_SYNC, BAD_KICK, BAD_CANARY, BAD_FINAL, NO_COMPLETE, BAD_IRQ };
+#define KASSERT(x) ((void)0)
+static int pvr_job_irq_probe(struct pvr_job_irq *,unsigned *,unsigned *,bool);
+static bool pvr_job_irq_active(struct pvr_job_irq *irq) { (void)irq; return false; }
+static unsigned pvr_job_irq_mark(void *arg) { (void)arg;return 0; }
+static void pvr_job_irq_wait(void *arg,unsigned mark,int ticks) { (void)arg;(void)mark;(void)ticks; }
+static void pvr_fwbridge_set_irq(void *b,void *c,unsigned (*m)(void *),void (*f)(void *,unsigned,int))
+{ (void)b;(void)c;(void)m;(void)f;abort(); }
 static void mutex_enter(int *x){ (void)x; }
 static void mutex_exit(int *x){ (void)x; }
 static int a133_gpu_live(struct a133_gpu_softc *s,uint64_t *r){ s->diag.stage=99; *r=s->effective_hz; return 0; }
@@ -126,6 +135,8 @@ static int pvr_fwbridge_prepare(void *b,int *l,void *bst,uintptr_t bsh,
 static int pvr_fwbridge_publish(void *b,struct drm_device *dev){
  (void)b;CHECK(dev==&fake_device);drm_publish_calls++;active_sc->bridge.registered=true;return 0; }
 static int a133_gpu_drm_attach(struct a133_gpu_softc *);
+static int pvr_job_irq_probe(struct pvr_job_irq *irq,unsigned *a,unsigned *b,bool finish)
+{ (void)irq;(void)a;(void)b;(void)finish;return active_sc->irq_fault; }
 #include "consumer.inc"
 static void cleanup(struct a133_gpu_softc *s){
  if(s->compute_vm){for(unsigned i=0;i<PVR_FWCOMPUTE_RESOURCES;i++)free(s->compute_vm->resource[i].cpu);free(s->compute_vm);}
@@ -145,9 +156,9 @@ int main(int argc,char **argv){
   sc.owner.retain_resources=true;sc.diag.stage=35;sc.effective_hz=504000000;
   mem.image.info.bvnc=PVR_GE8300_BVNC;active_sc=&sc;
   sc.compute_attempted=1;CHECK(a133_gpu_drm_attach(&sc)==EBUSY);
-  sc.compute_attempted=0;sc.irq_fault=EIO;
-  CHECK(a133_gpu_drm_attach(&sc)==EIO && drm_register_calls==0);
-  sc.irq_fault=0;drm_queue_error=ETIMEDOUT;
+  sc.compute_attempted=0;sc.boot_result.error=EIO;
+  CHECK(a133_gpu_drm_attach(&sc)==ENXIO && drm_register_calls==0);
+  sc.boot_result.error=0;drm_queue_error=ETIMEDOUT;
   CHECK(a133_gpu_drm_attach(&sc)==ETIMEDOUT && drm_register_calls==0);
   drm_queue_error=0;CHECK(a133_gpu_drm_attach(&sc)==EBUSY);
   /* A new fixture instance represents a fresh boot, not an in-place reset. */
@@ -159,6 +170,18 @@ int main(int argc,char **argv){
   CHECK(a133_gpu_compute_run(&sc)==EBUSY);
   CHECK(a133_gpu_drm_attach(&sc)==EBUSY);
   check_drm_race=false;
+
+  /* A completed queue can publish with bounded polling after IRQ retirement. */
+  memset(&sc,0,sizeof(sc));sc.memory=&mem;sc.owner.retain_resources=true;
+  sc.diag.stage=35;sc.effective_hz=504000000;sc.queue_stage=5;
+  sc.irq_fault=EIO;active_sc=&sc;
+  CHECK(a133_gpu_drm_attach(&sc)==0);
+  CHECK(drm_queue_calls==2 && drm_register_calls==2 &&
+      drm_publish_calls==2 && sc.bridge.registered);
+ }
+ if (strcmp(input_path,"--drm-only")==0) {
+  printf("PASS: %u A133 DRM consumer checks\n",checks);
+  return 0;
  }
  for(fault=0;fault<=BAD_IRQ;fault++){
   struct a133_gpu_softc sc={0}; sc.memory=&mem;sc.queue_stage=5;sc.effective_hz=504000000;sc.diag.stage=35;active_sc=&sc;
