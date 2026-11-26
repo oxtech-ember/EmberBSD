@@ -4,7 +4,7 @@
 #include <assert.h>
 #include <stdint.h>
 
-#include <dev/ic/dwc_mmc_clock.h>
+#include "dev/ic/dwc_mmc_clock.h"
 
 int
 main(void)

@@ -7,6 +7,6 @@ work=$(mktemp -d "${TMPDIR:-/tmp}/dwc-mmc-clock.XXXXXXXX")
 trap 'rm -rf "$work"' EXIT
 trap 'exit 1' HUP INT TERM
 "$CC" ${CPPFLAGS:-} ${CFLAGS:-} -std=c99 -Wall -Wextra -Werror \
-    -I"$src/sys" "$src/ember/tools/dwc-mmc-clock-contract.c" \
+    -iquote "$src/sys" "$src/ember/tools/dwc-mmc-clock-contract.c" \
     ${LDFLAGS:-} -o "$work/check"
 "$work/check"
