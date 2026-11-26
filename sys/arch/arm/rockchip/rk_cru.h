@@ -456,6 +456,8 @@ struct rk_cru_softc {
 
 	bus_size_t		sc_grf_soc_status;	/* for PLL lock */
 	bus_size_t		sc_softrst_base;
+	bus_size_t		sc_reg_size;
+	int			(*sc_reset_index)(u_int); /* map FDT ID to register bit */
 };
 
 int	rk_cru_attach(struct rk_cru_softc *);

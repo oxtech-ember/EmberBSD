@@ -41,6 +41,7 @@ __KERNEL_RCSID(0, "$NetBSD: dwc_mmc.c,v 1.31.4.1 2025/12/18 18:26:52 martin Exp 
 #include <dev/sdmmc/sdmmcchip.h>
 #include <dev/sdmmc/sdmmc_ioreg.h>
 
+#include <dev/ic/dwc_mmc_clock.h>
 #include <dev/ic/dwc_mmc_reg.h>
 #include <dev/ic/dwc_mmc_var.h>
 
@@ -388,15 +389,11 @@ dwc_mmc_update_clock(struct dwc_mmc_softc *sc)
 static int
 dwc_mmc_set_clock(struct dwc_mmc_softc *sc, u_int freq)
 {
-	const u_int pll_freq = sc->sc_clock_freq / 1000;
-	u_int clk_div, ciu_div;
+	const int clk_div = dwc_mmc_clock_divider(sc->sc_clock_freq,
+	    sc->sc_ciu_div, freq);
 
-	ciu_div = sc->sc_ciu_div > 0 ? sc->sc_ciu_div : 1;
-
-	if (freq != pll_freq)
-		clk_div = howmany(pll_freq, freq * ciu_div);
-	else
-		clk_div = 0;
+	if (clk_div < 0)
+		return EINVAL;
 
 	MMC_WRITE(sc, DWC_MMC_CLKDIV, clk_div);
 

@@ -422,6 +422,11 @@ ember/tools/drm-syncobj-flatten-contract.sh sys/external/bsd/drm2/dist/drm/
 ember/tools/drm-syncobj-flatten-contract.sh sys/external/bsd/drm2/linux/
 ember/tools/drm-syncobj-wait-contract.sh ember/tools/drm-syncobj-wait-contract.c
 ember/tools/drm-syncobj-wait-contract.sh sys/external/bsd/drm2/dist/drm/
+ember/tools/dwc-mmc-clock-contract.sh ember/tools/dwc-mmc-clock-contract.c
+ember/tools/dwc-mmc-clock-contract.sh sys/dev/acpi/dwcmmc_acpi.c
+ember/tools/dwc-mmc-clock-contract.sh sys/dev/fdt/dwcmmc_fdt.c
+ember/tools/dwc-mmc-clock-contract.sh sys/dev/ic/dwc_mmc.c
+ember/tools/dwc-mmc-clock-contract.sh sys/dev/ic/dwc_mmc_clock.h
 ember/tools/efidrm-commit-tail-contract.py ember/tools/efidrm-commit-tail-contract.c
 ember/tools/efidrm-commit-tail-contract.py sys/external/bsd/drm2/dist/drm/
 ember/tools/efidrm-commit-tail-contract.py sys/external/bsd/drm2/efidrm/

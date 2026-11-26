@@ -23,6 +23,10 @@ ifdef arm
 attach	rkcru at fdt with rk3288_cru
 file	arch/arm/rockchip/rk3288_cru.c		rk3288_cru & soc_rk3288
 
+# RK3506 clock and reset unit
+attach	rkcru at fdt with rk3506_cru
+file	arch/arm/rockchip/rk3506_cru.c		rk3506_cru & soc_rk3506
+
 else
 
 # RK3328 clock and reset unit
@@ -173,6 +177,7 @@ file 	arch/arm/rockchip/rk_tcphy.c		rk_typec | rk_tcphy
 # SOC parameters
 defflag	opt_soc.h			SOC_ROCKCHIP
 defflag	opt_soc.h			SOC_RK3288: SOC_ROCKCHIP
+defflag	opt_soc.h			SOC_RK3506: SOC_ROCKCHIP
 defflag	opt_soc.h			SOC_RK3328: SOC_ROCKCHIP
 defflag	opt_soc.h			SOC_RK3399: SOC_ROCKCHIP
 defflag	opt_soc.h			SOC_RK3588: SOC_ROCKCHIP

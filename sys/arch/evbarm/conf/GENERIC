@@ -21,6 +21,7 @@ options 	SOC_IMX7D
 options 	SOC_MESON8B
 options 	SOC_OMAP3
 options 	SOC_RK3288
+options 	SOC_RK3506
 options 	SOC_SUN4I_A10
 options 	SOC_SUN5I_A13
 options 	SOC_SUN6I_A31

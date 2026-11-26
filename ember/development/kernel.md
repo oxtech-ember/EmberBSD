@@ -152,10 +152,19 @@ For the Lyra Zero W handoff, keep UART0 enabled at 24 MHz and 1500000 8N1.
 Load the `.ub` on a 1 MiB boundary. Its 64-byte header puts the entry point
 at the offset that `arch/arm/arm/armv6_start.S` requires. Use `bootm`
 with the separate DTB. The loader passes the DTB address in register r2.
-The DTB describes the three Cortex-A7 CPUs, PSCI, GIC-400, timer and UART0.
-It reserves the first MiB of RAM for firmware.
-U-Boot reads these files from microSD. The serial handoff does not require
-an SD driver in the kernel. This DTB does not enable a disk root.
+The DTB describes the three Cortex-A7 CPUs, PSCI, GIC-400, timer, UART0
+and the removable four-bit SD slot. It reserves the first MiB for firmware.
+The kernel polls GPIO1_B6 for card detection and uses the fixed 3.3 V rail.
+The RK3506 CRU uses the crystal as the card clock source. The host runs at
+up to 12 MHz with this clock. U-Boot must leave the peripheral bus roots
+enabled. Use the matching DTB with the upstream clock and reset IDs.
+The vendor SDK uses different IDs for the same CRU compatible string.
+The driver uses the upstream binding's required `xin` input to identify it.
+
+The clock and reset IDs come from [Linux commit
+84898f8e9cea](https://github.com/torvalds/linux/commit/84898f8e9cea06f8178fc5ca53f068180f7bfba0).
+The board-level wiring follows the [Zero W schematic and SDK
+references](https://wiki.luckfox.com/Luckfox-Lyra/Download/).
 
 The wrapper explicitly selects DTBs and matched modules for each invocation.
 It also publishes the native YS-M33 A133 DTB; its WLAN node remains disabled.

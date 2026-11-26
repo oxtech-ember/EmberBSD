@@ -84,7 +84,6 @@ struct dwcmmc_fdt_softc {
 	struct clk		*sc_clk_ciu;
 	struct fdtbus_gpio_pin	*sc_pin_cd;
 	const struct dwcmmc_fdt_config *sc_conf;
-	u_int			sc_ciu_div;
 	struct fdtbus_regulator	*sc_vqmmc;
 	struct fdtbus_mmc_pwrseq *sc_pwrseq;
 };
@@ -107,8 +106,9 @@ dwcmmc_fdt_attach(device_t parent, device_t self, void *aux)
 	struct dwc_mmc_softc *sc = &esc->sc;
 	struct fdt_attach_args * const faa = aux;
 	const int phandle = faa->faa_phandle;
+	struct fdtbus_reset *rst;
 	char intrstr[128];
-	u_int fifo_depth;
+	u_int fifo_depth, rst_index;
 	bus_addr_t addr;
 	bus_size_t size;
 	int error;
@@ -134,19 +134,40 @@ dwcmmc_fdt_attach(device_t parent, device_t self, void *aux)
 		return;
 	}
 
+	if (of_hasprop(phandle, "cd-gpios")) {
+		esc->sc_pin_cd = fdtbus_gpio_acquire(phandle, "cd-gpios",
+		    GPIO_PIN_INPUT);
+		if (esc->sc_pin_cd == NULL) {
+			aprint_error(": couldn't get card-detect GPIO\n");
+			return;
+		}
+		sc->sc_card_detect = dwcmmc_fdt_card_detect;
+	}
+
 	error = clk_enable(esc->sc_clk_biu);
 	if (error) {
 		aprint_error(": couldn't enable clock biu: %d\n", error);
-		return;
+		goto fail_cd;
 	}
 	error = clk_enable(esc->sc_clk_ciu);
 	if (error) {
 		aprint_error(": couldn't enable clock ciu: %d\n", error);
-		return;
+		goto fail_biu;
 	}
 
-	esc->sc_vqmmc = fdtbus_regulator_acquire(phandle, "vqmmc-supply");
-	esc->sc_pwrseq = fdtbus_mmc_pwrseq_get(phandle);
+	if (fdtbus_get_index(phandle, "reset-names", "reset", &rst_index) == 0) {
+		rst = fdtbus_reset_get_index(phandle, rst_index);
+		if (rst == NULL) {
+			aprint_error(": couldn't get reset\n");
+			goto fail_ciu;
+		}
+		error = fdtbus_reset_deassert(rst);
+		fdtbus_reset_put(rst);
+		if (error != 0) {
+			aprint_error(": couldn't release reset: %d\n", error);
+			goto fail_ciu;
+		}
+	}
 
 	sc->sc_dev = self;
 	sc->sc_bst = faa->faa_bst;
@@ -155,7 +176,7 @@ dwcmmc_fdt_attach(device_t parent, device_t self, void *aux)
 	if (error) {
 		aprint_error(": couldn't map %#" PRIx64 ": %d\n",
 		    (uint64_t)addr, error);
-		return;
+		goto fail_ciu;
 	}
 	esc->sc_conf = of_compatible_lookup(phandle, compat_data)->data;
 
@@ -179,21 +200,21 @@ dwcmmc_fdt_attach(device_t parent, device_t self, void *aux)
 	sc->sc_bus_clock = dwcmmc_fdt_bus_clock;
 	sc->sc_signal_voltage = dwcmmc_fdt_signal_voltage;
 
-	esc->sc_pin_cd = fdtbus_gpio_acquire(phandle, "cd-gpios",
-	    GPIO_PIN_INPUT);
-	if (esc->sc_pin_cd)
-		sc->sc_card_detect = dwcmmc_fdt_card_detect;
-
 	aprint_naive("\n");
 	aprint_normal(": DesignWare SD/MMC\n");
 
 	if (!fdtbus_intr_str(phandle, 0, intrstr, sizeof(intrstr))) {
 		aprint_error_dev(self, "failed to decode interrupt\n");
-		return;
+		goto fail_map;
 	}
 
-	if (dwc_mmc_init(sc) != 0)
-		return;
+	esc->sc_vqmmc = fdtbus_regulator_acquire(phandle, "vqmmc-supply");
+	esc->sc_pwrseq = fdtbus_mmc_pwrseq_get(phandle);
+	if (dwc_mmc_init(sc) != 0) {
+		if (esc->sc_vqmmc != NULL)
+			fdtbus_regulator_release(esc->sc_vqmmc);
+		goto fail_map;
+	}
 
 	sc->sc_ih = fdtbus_intr_establish_xname(phandle, 0, IPL_BIO, 0,
 	    dwc_mmc_intr, sc, device_xname(self));
@@ -203,6 +224,17 @@ dwcmmc_fdt_attach(device_t parent, device_t self, void *aux)
 		return;
 	}
 	aprint_normal_dev(self, "interrupting on %s\n", intrstr);
+	return;
+
+fail_map:
+	bus_space_unmap(sc->sc_bst, sc->sc_bsh, size);
+fail_ciu:
+	clk_disable(esc->sc_clk_ciu);
+fail_biu:
+	clk_disable(esc->sc_clk_biu);
+fail_cd:
+	if (esc->sc_pin_cd != NULL)
+		fdtbus_gpio_release(esc->sc_pin_cd);
 }
 
 static void

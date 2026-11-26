@@ -46,10 +46,23 @@ __KERNEL_RCSID(0, "$NetBSD: rk_cru.c,v 1.10 2022/09/18 21:33:57 ryo Exp $");
 static void *
 rk_cru_reset_acquire(device_t dev, const void *data, size_t len)
 {
+	struct rk_cru_softc *sc = device_private(dev);
+
 	if (len != 4)
 		return NULL;
 
-	return (void *)(uintptr_t)be32dec(data);
+	u_int id = be32dec(data);
+	if (sc->sc_reset_index != NULL) {
+		const int index = sc->sc_reset_index(id);
+		if (index < 0)
+			return NULL;
+		id = (u_int)index;
+	}
+	/* Reserve a non-NULL cookie for bit zero. */
+	if (id == UINT_MAX || sc->sc_softrst_base > sc->sc_reg_size ||
+	    id / 16 >= (sc->sc_reg_size - sc->sc_softrst_base) / 4)
+		return NULL;
+	return (void *)((uintptr_t)id + 1);
 }
 
 static void
@@ -61,11 +74,11 @@ static int
 rk_cru_reset_assert(device_t dev, void *priv)
 {
 	struct rk_cru_softc * const sc = device_private(dev);
-	const uintptr_t reset_id = (uintptr_t)priv;
+	const uintptr_t reset_id = (uintptr_t)priv - 1;
 	const bus_size_t reg = sc->sc_softrst_base + (reset_id / 16) * 4;
 	const u_int shift = reset_id % 16;
 
-	CRU_WRITE(sc, reg, (1 << (shift + 16)) | (1 << shift));
+	CRU_WRITE(sc, reg, (1U << (shift + 16)) | (1U << shift));
 
 	return 0;
 }
@@ -74,11 +87,11 @@ static int
 rk_cru_reset_deassert(device_t dev, void *priv)
 {
 	struct rk_cru_softc * const sc = device_private(dev);
-	const uintptr_t reset_id = (uintptr_t)priv;
+	const uintptr_t reset_id = (uintptr_t)priv - 1;
 	const bus_size_t reg = sc->sc_softrst_base + (reset_id / 16) * 4;
 	const u_int shift = reset_id % 16;
 
-	CRU_WRITE(sc, reg, (1 << (shift + 16)) | (0 << shift));
+	CRU_WRITE(sc, reg, 1U << (shift + 16));
 
 	return 0;
 }
@@ -317,6 +330,7 @@ rk_cru_attach(struct rk_cru_softc *sc)
 		return ENXIO;
 	}
 
+	sc->sc_reg_size = size;
 	sc->sc_clkdom.name = device_xname(sc->sc_dev);
 	sc->sc_clkdom.funcs = &rk_cru_clock_funcs;
 	sc->sc_clkdom.priv = sc;
