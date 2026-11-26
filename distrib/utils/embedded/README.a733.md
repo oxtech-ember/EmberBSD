@@ -117,9 +117,9 @@ The family image `-h a733` retains its 8 KiB boot0 offset.
 Use the normal board boot bundle, with the two normal DTBs and the four modules under `modules/` in the selected kernel directory.
 
 To enable OS updates, pass `-U ember/image/os-profiles/orangepi-zero3w.json` to mkimage.
-Use the [common image procedure](../../../ember/tools/docs/automatic-system-update.md#build-an-image-with-automatic-updates) for the native package layer, baseline and optional health check.
+Use the [common image procedure](../../../ember/tools/docs/automatic-system-update.md#build-an-image-with-automatic-updates) for the native release, original configuration baseline and optional health check.
 
 ### Enable an already provisioned card
 
-For a card with the two dedicated GPT roots, use the [U-Boot and FFS enrollment procedure](../../../ember/tools/docs/uboot-ffs-slots.md).
+For an installed card, identify the running generation before using the [U-Boot and FFS procedure](../../../ember/tools/docs/uboot-ffs-slots.md).
 The same adapter can repair its selector on the confirmed initial root.

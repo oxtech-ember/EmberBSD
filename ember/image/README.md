@@ -2,44 +2,20 @@
 
 ## Package updates on a running system
 
-Use `package-updates.py` when you assemble a fresh image with binary package
-management and the standard NetBSD rc system. The layer enables the
-`ember_pkg_update` service. A base-only or recovery image can omit the layer.
-
-Use the extracted base of the chosen release, the SDK source and the host
-SDK prefix. The host package tools check required shared libraries against
-that base. The builder reads the signed public channel for the native client,
-Python and the Mozilla CA bundle. It reuses the host package cache.
+Build a single-root policy layer from matching native base and etc sets.
+The host runs the producer. The target uses the base client, pkg_tools and the release trust anchor.
 
 ```sh
 "$HOST_PREFIX/bin/python3.15" ember/image/package-updates.py \
-    --host-prefix "$HOST_PREFIX" --sdk-source "$SDK_SOURCE" \
-    --arch aarch64 --base-root "$BASE_ROOT" --cache-dir "$PACKAGE_CACHE" \
-    --output "$WORK/package-layer"
+    --arch aarch64 --base-root "$BASE_ROOT" --output "$WORK/package-layer"
 ```
 
-Pass the new directory as the overlay for the fresh root filesystem.
-For example, use `--overlay "$WORK/package-layer"` with
-[SDK root personalization](https://github.com/oxtech-ember/EmberBSD-SDK/blob/main/docs/os-release.md#private-root-personalization).
-Start from a base without installed packages. The layer supplies its own
-`/usr/pkg` and package database. The base must provide OpenSSL and pkg_tools
-under `/usr`. Keep the owners and modes from the base and etc set manifests
-when you create a multi-user filesystem. SDK private root personalization
-uses UID and GID zero by default. Reserve free inodes for package files on
-writable FFS images. Set the clock and configure network access for the image.
-
-The service starts the existing client's `auto-update` loop at boot.
-It checks the public channel immediately and updates compatible installed packages.
-The client uses `/usr/local/etc/ember-sdk.json` and the trust root in the
-signed client archive. Use these commands on the device to see the result:
-
-```sh
-/etc/rc.d/ember_pkg_update status
-grep ember_pkg_update /var/log/messages
-```
-
-Set `ember_pkg_update=NO` in `/etc/rc.conf.d/ember_pkg_update` to disable
-the service at boot. Run `/etc/rc.d/ember_pkg_update stop` to stop it now.
+Use the final site rc.conf in the selected root. Apply the resulting overlay to that root before building the image.
+The producer preserves explicit service choices and enables TLS initialization and automatic updates by default.
+Keep the free space and inodes needed by the package set.
+Use `ember-update status` and `ember-update history` after boot.
+For FFS slots, the [common two-slot image procedure](../tools/docs/automatic-system-update.md) sets the policy and profile together.
+[Base client and rc settings](../../usr.sbin/ember-update/README.md)
 
 ## Development toolchain image
 

@@ -64,6 +64,25 @@ def elf_abi(path):
     return head[4:6], head[18:20]
 
 
+# Machine values from the ELF headers of supported FFS image targets.
+TARGET_ELF = {arch: (bytes((2, 1)), machine.to_bytes(2, 'little'))
+              for arch, machine in {'aarch64': 183, 'x86_64': 62}.items()}
+ANCHOR = Path('etc/openssl/emberbsd-release-root.pem')
+
+
+def check_program(root, name, arch):
+    path = (root / name).resolve(strict=True)
+    check(path.is_relative_to(root.resolve()) and os.access(path, os.X_OK)
+          and elf_abi(path) == TARGET_ELF.get(arch), f'incompatible native target program: {name}')
+
+
+def check_anchor(root):
+    path = (root / ANCHOR).resolve(strict=True)
+    check(path.is_relative_to(root.resolve())
+          and path.read_bytes() == (SRC / 'etc/emberbsd-release-root.pem').read_bytes(),
+          'release signing anchor differs from the OS trust input')
+
+
 def check_runtime(root, target, kernel):
     client = root / 'usr/local/libexec/ember-sdk.pyz'
     python = root / 'usr/pkg/bin/python3.15'
@@ -97,3 +116,11 @@ def service_files(root, profile, commit, archive, digest, backend, health):
         STATE / 'release.json': encoded(head),
     }
     return programs, configs
+
+
+def image_policy(original):
+    """Enable boot services when the site has not already set their policy."""
+    for name in (b'certctl_init', b'ember_update'):
+        if not re.search(rb'(?m)^\s*' + name + rb'\s*=', original):
+            original = original.rstrip(b'\n') + b'\n' + name + b'=YES\n'
+    return original

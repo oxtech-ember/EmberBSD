@@ -1,16 +1,15 @@
 # Automatic updates on a system with two boot slots
 
-A provisioned image enables `ember_os_update=YES` in `/etc/rc.conf.d/ember_os_update`.
-It supplies two independently bootable roots, a one-shot loader and an independent reset timer.
-Each slot has its own kernel, modules, base, application prefix and package database.
-Keep shared writable data in a format that both releases can read.
+The native [base service](../../../usr.sbin/ember-update/README.md) selects a signed release for the installed hardware and ABI profile.
+It can prepare OS and package updates in the same inactive root.
+A two-slot profile needs independent bootable roots, one-time selection and a reset provider that survives kernel entry.
 
 ## Build an image with automatic updates
 
-Choose the hardware image and its compatible update profile separately.
-In the embedded GPT/FFS builder, `-h` selects the board and `-U` enables updates with a trusted image description.
-Build the [native package layer](../../image/README.md#package-updates-on-a-running-system) for the target. Supply its network configuration and required device firmware.
-Use the SHA-256 of the original etc archive from its authenticated release. The installer uses those defaults to merge later configuration changes.
+Select the board with `-h` and pass its trusted update profile with `-U`.
+Use a matching signed release for the kernel, modules, base, etc and optional comp sets.
+Use the original etc archive and its authenticated SHA-256 to initialize the three-way merge.
+Provide a site overlay with `-c` if required for networking, supported firmware or local services.
 
 ```sh
 export OS_UPDATE_PYTHON="$HOST_PREFIX/bin/python3.15"
@@ -18,90 +17,34 @@ export OS_UPDATE_OS_COMMIT="$OS_COMMIT"
 export OS_UPDATE_ETC="$SIGNED_ETC_ARCHIVE"
 export OS_UPDATE_ETC_SHA256="$SIGNED_ETC_SHA256"
 sh "$OS_SOURCE/distrib/utils/embedded/mkimage" -h "$BOARD" -U "$UPDATE_PROFILE" \
-    -S "$OS_SOURCE" -D "$DESTDIR" -K "$KERNEL_DIRECTORY" -c "$NATIVE_LAYER" "$IMAGE"
+    -S "$OS_SOURCE" -D "$DESTDIR" -K "$KERNEL_DIRECTORY" "$IMAGE"
 ```
 
-Set `OS_UPDATE_HEALTH` to supply an application-specific health program. The default comes from the image description.
-The builder checks the profile, selected sets and native package target before replacing the output.
-It reserves two equal FFS wedges and disables automatic root resizing. Use `-s MIB` to increase the complete image size.
-With no `-U`, mkimage keeps the board's ordinary layout.
-
-The SDK owns signed release selection. The OS service owns the attempt record, the local health check and confirmation policy.
-The [shared FFS installer](../../image/ember_ffs_slot.py) snapshots the running root, preserves packages, merges settings and prepares the inactive filesystem.
-The boot adapter identifies the device, supplies its boot files and controls the one-shot entry and watchdog.
-The [U-Boot/FFS adapter](uboot-ffs-slots.md) is available for profiles with its boot contract.
-Another loader implements the same service operations and can reuse the FFS installer.
-Boards with the same loader contract supply hardware data and the board boot script.
+The host checks the profile, machine code in the release and target programs, module list and configuration baseline.
+The image includes its hardware profile, local health check, release anchor and initial slot markers.
+Set `OS_UPDATE_HEALTH` to install a site-specific executable check.
+Use a probe that can pass locally after a successful trial, including when S3 is unavailable.
 
 ## Image configuration
 
-Install the native SDK client with `fetch-os-update`, its Python interpreter and its HTTPS and release trust roots.
-Use the [package update layer](../../image/README.md#package-updates-on-a-running-system) for these components.
-
-Install a root-owned `/etc/ember-os-update.json` with these fields:
-
-```json
-{
-  "profile": "example-stock",
-  "backend": "/usr/libexec/ember-os-slot",
-  "health": "/etc/ember-os-health"
-}
-```
-
-Replace the example profile with the exact installed OS profile from the publisher.
-The profile identifies a compatible kernel provider, machine, boot path and userland.
-The backend and health programs must have absolute paths controlled by root.
-The health program runs without arguments after multi-user startup. Return zero when the application can use its saved data.
-Check local services that the image needs. A device must be able to confirm a valid installation while S3 is offline.
-
-Create `/var/db/ember-os-update` with mode 0700 in each installed root.
-Provision the initial `release.json` there with `profile`, integer `generation` and the exact 40-digit `os_commit`.
-Use generation zero for an initial installation outside the published generation sequence.
-The running kernel must report `EmberBSD:<os_commit>` through `sysctl -n kern.buildinfo`.
-On each update the installer writes the complete authenticated `update.json` as the new root's `release.json`.
-
-## One pass
-
-The rc service starts after LOGIN, NETWORKING and syslogd. It checks at startup and once an hour after a successful pass.
-A failed pass retries after 30 seconds. Later failures double the delay up to an hour.
-The service passes the profile and generation floor to the [SDK client](https://github.com/oxtech-ember/EmberBSD-SDK/blob/main/docs/sdk-client.md).
-The client authenticates one release snapshot and verifies every selected archive before exposing the staged directory.
-It returns status 3 when the channel has no newer generation for this installation.
-
-During preparation the controller holds the installed SDK client's package lock.
-It writes the verified sets to the inactive slot. It compares the loader's prepared identity with the SHA-256 of the exact signed descriptor bytes.
-It records the generation and digest in the old root before it requests a one-shot boot.
-A normal shutdown stops package updates before the OS service releases the lock.
-If the candidate starts, the service matches the running slot and its receipt digest to the durable prepared identity.
-It requires a positive generation, the expected running kernel and a successful local health check before confirmation.
-If the candidate hangs, the independent watchdog resets the machine. The consumed one-shot entry leaves the old slot selected.
-That root retains the attempt in `attempt.json` and waits for a higher generation.
-An interrupted download or incomplete preparation leaves the confirmed slot bootable.
-After a power loss between the durable attempt record and the loader write, the previous root can conservatively skip that generation.
-
-Inspect `/etc/rc.d/ember_os_update status` and search `/var/log/messages` for `ember_os_update`.
-To run one pass in the foreground, stop the service and run `/usr/libexec/ember-os-update once` as root.
-A pass can initiate a reboot. A process lock prevents concurrent OS update passes.
-A stop request lets the current operation finish and prevents the next activation step.
-If an attempt is already armed, the pending entry stays in the loader. A later ordinary reboot consumes it.
-The service uses a private token under `/var/run`. System startup clears the token before LOGIN; clock adjustments preserve it.
-On service restart in the same boot, the updater checks the prepared digest against its saved attempt before requesting the reboot.
-If the old root boots again with that entry still armed, the updater cancels it and keeps the running system available.
-An error clearing the entry retries cancellation without requesting another reboot.
+Set `ember_update=YES` in `/etc/rc.conf`. Update images also enable TLS certificate initialization.
+Choose the release channel, package and OS policy and reboot window in that file.
+An explicit `ask` policy leaves a ready slot for the next authorized restart.
+Use `ember-update status` before restart and `ember-update history` after it.
+The installer holds OS upgrades for a locally installed custom kernel.
+[Policy and public state](../../../usr.sbin/ember-update/README.md)
 
 ## Loader and installer interface
 
-The configured executable accepts the operations below. Return zero only after the operation succeeds.
-Return a nonzero status on any validation, storage or firmware error.
+The controller verifies a plan and delegates FFS preparation to `ember-install-slot`.
+This program takes a snapshot, prepares the inactive root, merges defaults, applies packages, validates the result and records a receipt.
+A package-only selection follows the same slot transaction. Each slot has its own package database.
+The adapter supplies `status`, `arm`, `cancel` and `confirm`. Its boot protocol reports the actual running root and trial identity.
+U-Boot reads the one-shot markers on FAT. EFI reads the selected menu and consumes its marker on the ESP.
+Only an image with a qualified reset provider can arm an unattended trial.
+[Command and receipt contracts](../../../usr.sbin/ember-update/README.md) · [U-Boot adapter](uboot-ffs-slots.md)
 
-| Operation | Required behavior |
-| --- | --- |
-| `status` | Print a JSON object with `running`, `confirmed`, `next`, `trial` and `prepared`. Read the actual boot and loader state. Slots are `A` and `B`. Use JSON null for an empty one-shot entry. Set the boolean `trial` when the loader entered this boot from that entry. Return `prepared` as null or as an object with `slot` and `sha256` (the lowercase digest of the exact update.json bytes). |
-| `prepare SLOT DIR` | Require an inactive slot. Install the verified release from DIR. Preserve local configuration and required application data. Copy the exact bytes of DIR/update.json to the new root's release.json. After all writes succeed, persist the slot and its descriptor digest for both roots to read. Exclude the old attempt.json and incoming directory. Leave the boot selection intact. |
-| `arm SLOT` | Verify the selected boot files and root. Make one durable boot attempt that returns to the confirmed slot upon reset. Consume the attempt before candidate code runs. Arm the hardware watchdog before control passes to that code. |
-| `cancel SLOT` | From the confirmed root, clear the pending entry for SLOT and verify its durable removal. Keep the confirmed slot selected. |
-| `confirm SLOT` | Verify the running trial slot, its receipt digest against the durable prepared identity, and its active watchdog within its deadline. Finish the watchdog handoff and persist the working slot. Verify the confirmed selection. |
+## Earlier releases
 
-If a loader write reports an error, the controller reads the slot state before retrying.
-A candidate with an unrecognized root, kernel or loader state cannot pass confirmation.
-Validate actual reset, boot selection and both roots on the supported machine before enabling its image profile.
+Already installed G4 images use the service and receipts shipped with that generation.
+Use the [G4 service procedure](https://github.com/oxtech-ember/EmberBSD/blob/c3bed3cee44/ember/tools/docs/automatic-system-update.md) for recovery of that installation.

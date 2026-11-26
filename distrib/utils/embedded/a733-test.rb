@@ -44,7 +44,14 @@ if ARGV.first == '--tool'
       result, status = Open3.capture2e(ENV.fetch('A733_TEST_MTREE'), '-C', '-k', 'type,mode,uid,gid', '-f', spec)
       abort result unless status.success?
       File.write(ENV.fetch('A733_TEST_SPEC'), result)
-      abort 'overlay was not the last source' unless trees.last == ENV.fetch('A733_TEST_OVERLAY')
+      if ENV['SLOT_TEST_PROFILE']
+        policy = trees.pop
+        abort 'unexpected policy overlay' unless Dir.chdir(policy) { Dir.glob('**/*').sort } == %w[etc etc/rc.conf]
+        site = File.binread(File.join(ENV.fetch('A733_TEST_OVERLAY'), 'etc/rc.conf'))
+        abort 'site rc.conf was lost' unless File.binread(File.join(policy, 'etc/rc.conf')).start_with?(site)
+        abort 'native updater was not enabled' unless File.read(File.join(policy, 'etc/rc.conf')).lines.include?("ember_update=YES\n")
+      end
+      abort 'site overlay lost precedence' unless trees.last == ENV.fetch('A733_TEST_OVERLAY')
       File.open(image, 'a') { |f| f.truncate(300 * 1024 * 1024) }
     else
       image, boot = ARGV[-2..-1]
@@ -219,12 +226,15 @@ Dir.mktmpdir('a733-image-test-') do |work|
     %w[bcm2712btcom bcmexpgpio rp1wmcodec rpi5button].each do |name|
       File.write(File.join(kernel, 'modules', name + '.kmod'), name)
     end
-    %w[usr/local/libexec usr/local/etc usr/pkg/bin].each { |name| FileUtils.mkdir_p(File.join(overlay, name)) }
-    File.write(File.join(overlay, 'usr/local/libexec/ember-sdk.pyz'), "print('fetch-os-update')")
-    File.binwrite(File.join(overlay, 'usr/pkg/bin/python3.15'), "\x7fELF\x02\x01".b + "\0" * 12 + "\xb7\x00".b)
-    target = {arch: 'aarch64', triplet: 'aarch64--netbsd', abi: 'netbsd-11', runtime: 'libc++'}
-    File.write(File.join(overlay, 'usr/local/etc/ember-sdk.json'),
-               JSON.generate({repositories: {native: {install_mode: 'native', target: target}}}))
+    %w[usr/sbin/ember-update usr/libexec/ember-os-slot usr/libexec/ember-install-slot
+       usr/libexec/ember-stage-ffs etc/rc.d/ember_update].each do |name|
+      path = File.join(dest, name)
+      FileUtils.mkdir_p(File.dirname(path))
+      FileUtils.cp(File.join(kernel, 'netbsd'), path)
+      File.chmod(0555, path)
+    end
+    FileUtils.mkdir_p(File.join(dest, 'etc/openssl'))
+    FileUtils.cp(File.join(source, 'etc/emberbsd-release-root.pem'), File.join(dest, 'etc/openssl'))
     archive = File.join(work, 'etc.tar.xz')
     File.write(archive, 'verified etc fixture')
     profile = File.join(source, 'ember/image/os-profiles/orangepi-zero3w.json')
@@ -245,9 +255,8 @@ Dir.mktmpdir('a733-image-test-') do |work|
     check(root_sector.call(a, '-s') == root_sector.call(b, '-s') &&
           root_sector.call(a, '-b') + root_sector.call(a, '-s') == root_sector.call(b, '-b'), 'slots overlap or differ in size')
     meta = File.read(spec)
-    %w[usr/libexec/ember-os-update usr/libexec/ember-os-slot usr/libexec/ember_ffs_slot.py etc/ember-os-health etc/rc.d/ember_os_update
-       etc/rc.conf.d/ember_os_update etc/rc.conf.d/resize_root etc/rc.conf.d/resize_gpt
-       var/db/ember-os-update/release.json var/db/ember-os-update/etc.tar.xz].each do |path|
+    %w[etc/ember-update-profile.json etc/ember-os-health etc/rc.conf.d/resize_root etc/rc.conf.d/resize_gpt
+       var/db/ember-update/os-release.json var/db/ember-update/etc.tar.xz].each do |path|
       check(meta.include?("./#{path} "), "two-slot root omits #{path}")
     end
     # An independent board supplies its own boot script, RAM and hardware data.
@@ -304,6 +313,16 @@ Dir.mktmpdir('a733-image-test-') do |work|
     check(!state.success? && result.include?('overlay overrides profile-owned path') &&
           File.binread(image) == 'previous image', 'untrusted overlay module replaced the selected module')
     File.unlink(conflicting_module)
+    fstab = File.join(overlay, 'etc/fstab')
+    File.write(fstab, "NAME=wrong / ffs rw 1 1\n")
+    result, state = Open3.capture2e(update_env, *update_command)
+    check(!state.success? && result.include?('overrides profile-owned path: etc/fstab'), 'custom root label accepted')
+    File.unlink(fstab)
+    elf = File.join(kernel, 'netbsd')
+    File.open(elf, 'r+b') { |file| file.seek(18); file.write([62].pack('v')) }
+    result, state = Open3.capture2e(update_env, *update_command)
+    check(!state.success? && result.include?('kernel ELF differs'), 'wrong kernel architecture accepted')
+    File.open(elf, 'r+b') { |file| file.seek(18); file.write([183].pack('v')) }
     result, state = Open3.capture2e(update_env.merge('OS_UPDATE_ETC_SHA256' => '0' * 64), *update_command)
     check(!state.success? && result.include?('SHA-256 mismatch'), 'wrong baseline etc accepted')
     File.write(image, 'keep the previous image')

@@ -321,16 +321,16 @@ esac
 if [ -n "$update_profile" ]; then
 	[ -n "$os_update_adapter" ] && $gpt && $root_overlay && [ -z "$bootonly" ] ||
 	    fail "The selected image lacks a two-slot GPT boot adapter"
-	[ -d "$custom" ] && [ -d "$kernel" ] && [ -x "$OS_UPDATE_PYTHON" ] &&
+	[ -d "$kernel" ] && [ -x "$OS_UPDATE_PYTHON" ] &&
 	    [ -r "$OS_UPDATE_ETC" ] && [ -n "$OS_UPDATE_ETC_SHA256" ] && [ -n "$OS_UPDATE_OS_COMMIT" ] ||
-	    fail "Provide the native layer, kernel, host Python and verified OS baseline"
+	    fail "Provide the kernel, host Python and verified OS baseline"
 	case "$size" in
 	''|*[!0-9]*|0[0-9]*) fail "Use a decimal image size in MiB";;
 	esac
-	provisioner="$src/ember/image/provision-${os_update_adapter}.py"
+	provisioner="$src/ember/image/provision-ffs-image.py"
 	cp "$update_profile" "$tmp/update-profile.json"
 	"$OS_UPDATE_PYTHON" -IB "$provisioner" --profile "$tmp/update-profile.json" \
-	    --check-image "$h" --sets $selected_sets > "$tmp/update-layout"
+	    --board "$h" --adapter "$os_update_adapter" --check-image --sets $selected_sets > "$tmp/update-layout"
 	{
 		read -r gpt_label_ffs gpt_peer_label gpt_label_boot
 		read -r boot_trees
@@ -368,8 +368,10 @@ populate
 if [ -n "$update_profile" ]; then
 	set --
 	[ -z "$OS_UPDATE_HEALTH" ] || set -- --health "$OS_UPDATE_HEALTH"
+	[ -z "$custom" ] || set -- "$@" --overlay "$custom"
 	"$OS_UPDATE_PYTHON" -IB "$provisioner" --profile "$tmp/update-profile.json" \
-	    --image-root "$mnt" --kernel "$kernel" --package-layer "$custom" \
+	    --board "$h" --adapter "$os_update_adapter" --image-root "$mnt" --kernel "$kernel" \
+	    --base-root "$release" --policy-layer "$tmp/update-policy" \
 	    --mtree "$tmp/selected_sets" --os-commit "$OS_UPDATE_OS_COMMIT" \
 	    --etc-archive "$OS_UPDATE_ETC" --etc-sha256 "$OS_UPDATE_ETC_SHA256" \
 	    --timestamp "${MKREPRO_TIMESTAMP:-0}" "$@"
@@ -413,6 +415,7 @@ if [ -z "${bootonly}" ]; then
 	echo ${bar} Populating ffs filesystem ${bar}
 	set -- "${release}" "${mnt}"
 	[ -z "${root_overlay_dir}" ] || set -- "$@" "${root_overlay_dir}"
+	[ -z "$update_profile" ] || set -- "$@" "$tmp/update-policy"
 	${MAKEFS} -rx ${endian} -N ${release}/etc -t ffs \
 	    -O ${ffsoffset} ${timestamp_opt} \
 	    -o d=4096,f=${fsize},b=${bsize},v=${ffsversion} -b $((${extra}))m \

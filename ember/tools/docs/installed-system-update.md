@@ -4,10 +4,12 @@ Use this entry for physical machines and VMs. Select the operation first.
 
 | Requested change | Procedure |
 | --- | --- |
-| Update one application or all installed packages | Use the native [SDK client](https://github.com/oxtech-ember/EmberBSD-SDK/blob/main/docs/sdk-client.md#installed-versions-and-updates). |
-| Enable package updates at boot | Use the [package service](../../image/README.md#package-updates-on-a-running-system) on an image that includes it. |
-| Enable unattended OS updates on a provisioned two-slot installation | Use the [automatic OS service](automatic-system-update.md). |
-| Update the running OS manually | Use the signed release and a supported installation path for the installed profile, as described below. |
+| Update installed packages or the OS on an enrolled image | Use `ember-update check` and `ember-update apply`. Read the [native client contract](../../../usr.sbin/ember-update/README.md). |
+| Enable unattended checks and choose a reboot window | Set `ember_update=YES` and the desired policy in `/etc/rc.conf`. Read [automatic updates](automatic-system-update.md). |
+| Update an installation that lacks a supported native slot profile | Use the signed release and the installer for that profile. |
+
+Use `ember-update status` and `ember-update history` to inspect an enrolled installation.
+The following manual route applies to older releases and installer-based upgrades.
 
 ## Select and fetch the release
 
