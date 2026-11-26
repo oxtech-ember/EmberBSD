@@ -22,6 +22,7 @@
 #define	AICWF_VERSION_LEN		28
 #define	AICWF_DBG_MEM_READ_REQ		0x0400
 #define	AICWF_DBG_MEM_READ_CFM		0x0401
+#define	AICWF_DBG_ERROR_IND		0x0408
 
 struct aicwf_rx_frame {
 	size_t len;	/* payload length after the configuration or data header */

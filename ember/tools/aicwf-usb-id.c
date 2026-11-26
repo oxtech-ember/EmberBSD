@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
-/* Test the actual synchronous probe with USB transfer and descriptor doubles.
+/* Test simultaneous bulk transfers, command completion and teardown.
  */
 #include <assert.h>
 #include <errno.h>
@@ -18,7 +18,9 @@ typedef enum {
 	USBD_SHORT_XFER,
 	USBD_TIMEOUT,
 	USBD_NOMEM,
-	USBD_IOERROR
+	USBD_IOERROR,
+	USBD_IN_PROGRESS,
+	USBD_CANCELLED
 } usbd_status;
 
 typedef struct {
@@ -45,7 +47,12 @@ struct usbd_pipe {
 	unsigned addr;
 };
 
+struct usbd_xfer;
+typedef void (*usbd_callback)(struct usbd_xfer *, void *, usbd_status);
 struct usbd_xfer {
+	usbd_callback cb;
+	void *arg;
+	bool pending;
 	uint8_t buf[2048];
 	struct usbd_pipe *pipe;
 	uint32_t len, actual;
@@ -63,6 +70,24 @@ struct usbd_xfer {
 #define UGETW(x) (x)
 #define USBD_EXCLUSIVE_USE 1
 #define USBD_SHORT_XFER_OK 2
+#define USBD_FORCE_SHORT_XFER 4
+#define USBD_NO_TIMEOUT 0
+#define __arraycount(a) (sizeof(a) / sizeof((a)[0]))
+#define MUTEX_DEFAULT 0
+#define IPL_NONE 0
+#define IPL_SOFTUSB 1
+#define mstohz(n) (n)
+typedef int kmutex_t, kcondvar_t;
+static void mutex_init(kmutex_t *m, int kind, int ipl) { assert(!*m); }
+static void mutex_enter(kmutex_t *m) { assert(!*m); *m = 1; }
+static void mutex_exit(kmutex_t *m) { assert(*m); *m = 0; }
+static bool mutex_owned(const kmutex_t *m) { return *m; }
+static void mutex_destroy(kmutex_t *m) { assert(!*m); }
+static void cv_init(kcondvar_t *cv, const char *name) { assert(!*cv); }
+static void cv_destroy(kcondvar_t *cv) { assert(!*cv); }
+static void cv_broadcast(kcondvar_t *cv) { (void)cv; }
+static int cv_timedwait(kcondvar_t *, kmutex_t *, int);
+static void *device_private(device_t);
 #define KASSERT assert
 #define roundup(x, y) (((x) + (y) - 1) / (y) * (y))
 #define CFATTACH_DECL_NEW(...)
@@ -79,10 +104,10 @@ static void
 report(const char *fmt, uint32_t first, uint32_t second)
 {
 	if (strncmp(fmt, "FullMAC", 7) == 0) {
-		assert(first == 0x06010203 && second == 0x12345678);
+		assert(first == 0x06040301 && second == 0xb011fa5f);
 		versions++;
 	} else {
-		assert(first == 0xc3 && second == 2);
+		assert(first == 7 && second == 1);
 		identified++;
 	}
 }
@@ -137,11 +162,20 @@ enum fault {
 	VERSION_SHORT,
 	SHORT_DATA,
 	SHORT_TAIL,
-	DUPLICATE
+	DUPLICATE,
+	OPEN_DATA,
+	ALLOC_DATA,
+	SUBMIT_DATA,
+	SUBMIT_CMD,
+	ON_DATA,
+	EARLY_REPLY,
+	FW_ERROR,
+	POST_ERROR
 };
 static enum fault fault;
 static unsigned opens, allocs, writes, reads, errors;
 static uint32_t requested;
+static struct usbd_xfer *inputs[2];
 
 static usb_interface_descriptor_t *
 usbd_get_interface_descriptor(struct usbd_interface *i)
@@ -160,8 +194,9 @@ static usbd_status
 usbd_open_pipe(
     struct usbd_interface *i, unsigned addr, int flags, struct usbd_pipe **out)
 {
-	assert(flags == USBD_EXCLUSIVE_USE && (addr == 0x82 || addr == 2));
-	if ((addr == 0x82 && fault == OPEN_RX) ||
+	assert(flags == USBD_EXCLUSIVE_USE && (addr == 0x81 || addr == 0x82 || addr == 2));
+	if ((addr == 0x81 && fault == OPEN_DATA) ||
+	    (addr == 0x82 && fault == OPEN_RX) ||
 	    (addr == 2 && fault == OPEN_TX))
 		return USBD_INVAL;
 	*out = calloc(1, sizeof(**out));
@@ -183,7 +218,9 @@ static int
 usbd_create_xfer(struct usbd_pipe *p, size_t n, int flags, int frames,
     struct usbd_xfer **out)
 {
-	if ((p->addr == 2 && fault == ALLOC_TX) ||
+	assert(flags == (p->addr < 0x80 ? USBD_FORCE_SHORT_XFER : USBD_SHORT_XFER_OK));
+	if ((p->addr == 0x81 && fault == ALLOC_DATA) ||
+	    (p->addr == 2 && fault == ALLOC_TX) ||
 	    (p->addr == 0x82 && fault == ALLOC_RX))
 		return ENOMEM;
 	*out = calloc(1, sizeof(**out));
@@ -196,7 +233,9 @@ usbd_create_xfer(struct usbd_pipe *p, size_t n, int flags, int frames,
 static void
 usbd_destroy_xfer(struct usbd_xfer *x)
 {
-	assert(allocs);
+	assert(allocs && !x->pending);
+	if (x->pipe->addr >= 0x81)
+		inputs[x->pipe->addr - 0x81] = NULL;
 	allocs--;
 	free(x);
 }
@@ -209,14 +248,44 @@ usbd_get_buffer(struct usbd_xfer *x)
 
 static void
 usbd_setup_xfer(struct usbd_xfer *x, void *p, void *b, uint32_t size,
-    unsigned flags, unsigned timeout, void *cb)
+    unsigned flags, unsigned timeout, usbd_callback cb)
 {
-	assert(b == x->buf && size <= sizeof(x->buf) && timeout == 500);
+	assert(!x->pending && b == x->buf && size <= sizeof(x->buf));
+	assert(cb ? (flags == USBD_SHORT_XFER_OK && timeout == 0) :
+	    (flags == USBD_FORCE_SHORT_XFER && timeout == 500));
 	x->len = size;
+	x->arg = p;
+	x->cb = cb;
 }
 
 static usbd_status
-usbd_sync_transfer(struct usbd_xfer *x)
+usbd_transfer(struct usbd_xfer *x)
+{
+	assert(!x->pending && x->cb && x->pipe->addr >= 0x81);
+	if ((x->pipe->addr == 0x81 && fault == SUBMIT_DATA) ||
+	    (x->pipe->addr == 0x82 && fault == SUBMIT_CMD) ||
+	    (reads && fault == POST_ERROR))
+		return USBD_IOERROR;
+	inputs[x->pipe->addr - 0x81] = x;
+	x->pending = true;
+	return USBD_IN_PROGRESS;
+}
+
+static void
+usbd_suspend_pipe(struct usbd_pipe *p)
+{
+	if (p->addr < 0x81)
+		return;
+	struct usbd_xfer *x = inputs[p->addr - 0x81];
+	if (x && x->pending) {
+		x->pending = false;
+		x->cb(x, x->arg, USBD_CANCELLED);
+	}
+}
+
+static void deliver(void);
+static usbd_status
+emulate_transfer(struct usbd_xfer *x)
 {
 	uint8_t *b = x->buf;
 	if (x->pipe->addr == 2) {
@@ -232,7 +301,10 @@ usbd_sync_transfer(struct usbd_xfer *x)
 			assert(writes == 2 && x->len == sizeof(version_hdr));
 			assert(memcmp(b, version_hdr, sizeof(version_hdr)) == 0);
 		}
+		assert(inputs[0] && inputs[0]->pending && inputs[1] && inputs[1]->pending);
 		writes++;
+		if (fault == EARLY_REPLY)
+			deliver();
 		if (fault == TX_ERROR)
 			return USBD_INVAL;
 		x->actual = fault == SHORT_TX ? 19 : x->len;
@@ -258,8 +330,8 @@ usbd_sync_transfer(struct usbd_xfer *x)
 			b[2] = 0x11;
 			le16enc(b + 4, 5);
 			le16enc(b + 10, fault == VERSION_SHORT ? 27 : 28);
-			le32enc(b + 16, 0x06010203);
-			le32enc(b + 36, 0x12345678);
+			le32enc(b + 16, 0x06040301);
+			le32enc(b + 36, 0xb011fa5f);
 			x->actual = 64 + 60;
 			return USBD_NORMAL_COMPLETION;
 		}
@@ -268,7 +340,7 @@ usbd_sync_transfer(struct usbd_xfer *x)
 		le16enc(b + 4, fault == OTHER ? 6 : 0x401);
 		le16enc(b + 10, fault == BAD_PARAM_LEN ? 7 : 8);
 		le32enc(b + 16, fault == BAD_ECHO ? 0xdead : requested);
-		le32enc(b + 20, requested == 0x20 ? 2 : 0x00c30000);
+		le32enc(b + 20, requested == 0x20 ? 1 : 0x00070000);
 		x->actual = fault == EMPTY_RX ? 0 : 64 + 40;
 		if (fault == SHORT_TAIL || fault == DUPLICATE) {
 			memcpy(b + 24, b, 24);
@@ -276,6 +348,35 @@ usbd_sync_transfer(struct usbd_xfer *x)
 		}
 	}
 	return USBD_NORMAL_COMPLETION;
+}
+
+static usbd_status
+usbd_sync_transfer(struct usbd_xfer *x)
+{
+	assert(x->pipe->addr == 2 && x->cb == NULL);
+	return emulate_transfer(x);
+}
+
+static void
+deliver(void)
+{
+	struct usbd_xfer *x = inputs[fault != ON_DATA];
+	assert(x != NULL && x->pending);
+	x->pending = false;
+	usbd_status st = emulate_transfer(x);
+	if (fault == FW_ERROR)
+		le16enc(x->buf + 68, 0x0408);
+	x->cb(x, x->arg, st);
+}
+
+static int
+cv_timedwait(kcondvar_t *cv, kmutex_t *m, int ticks)
+{
+	assert(ticks == 500 && *m);
+	mutex_exit(m);
+	deliver();
+	mutex_enter(m);
+	return fault == OTHER || fault == EMPTY_RX ? EWOULDBLOCK : 0;
 }
 
 static void
@@ -286,6 +387,9 @@ usbd_get_xfer_status(
 }
 
 #include "probe.h"
+
+static struct uaicfw_softc device;
+static void *device_private(device_t self) { return &device; }
 
 int
 main(void)
@@ -306,26 +410,30 @@ main(void)
 	a.uiaa_product++;
 	assert(uaicfw_match(0, 0, &a) == UMATCH_NONE);
 	a.uiaa_product--;
-	for (fault = NONE; fault <= DUPLICATE; fault++) {
+	for (fault = NONE; fault <= POST_ERROR; fault++) {
 		opens = allocs = writes = reads = errors = identified = 0;
 		versions = unavailable = 0;
+		memset(&device, 0, sizeof(device));
 		uaicfw_attach(0, 0, &a);
-		assert(!opens && !allocs && uaicfw_detach(0, 0) == 0);
+		assert(uaicfw_detach(0, 0) == 0 && !opens && !allocs);
 		bool have_id = fault == NONE || fault == VERSION_TIMEOUT ||
-		    fault == VERSION_SHORT;
+		    fault == VERSION_SHORT || fault == ON_DATA || fault == EARLY_REPLY;
 		assert(identified == have_id && errors == !have_id);
-		assert(versions == (fault == NONE));
-		assert(unavailable == (have_id && fault != NONE));
+		bool running = fault == NONE || fault == ON_DATA || fault == EARLY_REPLY;
+		assert(versions == running);
+		assert(unavailable == (have_id && !running));
 		assert(!have_id || (writes == 3 && reads == 3));
 		if (fault == OTHER || fault == EMPTY_RX)
-			assert(reads == 4 && writes == 1);
+			assert(reads == 1 && writes == 1);
 	}
 	writes = errors = 0;
 	iface.eps[2].bEndpointAddress = 1;
 	assert(uaicfw_match(0, 0, &a) == UMATCH_NONE);
+	memset(&device, 0, sizeof(device));
 	uaicfw_attach(0, 0, &a);
+	assert(uaicfw_detach(0, 0) == 0);
 	assert(!writes && errors == 1);
-	puts("PASS: silicon and FullMAC queries, interface selection, grouped "
-	     "data and confirmations, malformed transfers, timeouts and cleanup");
+	puts("PASS: both bulk-IN endpoints, early and late FullMAC replies, "
+	     "firmware errors, timeouts and transfer cleanup");
 	return 0;
 }
