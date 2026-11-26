@@ -403,6 +403,7 @@
 ./boot/dtb/rk3288-veyron-speedy.dtb                  dtb-base-boot  dtb
 ./boot/dtb/rk3288-veyron-tiger.dtb                   dtb-base-boot  dtb
 ./boot/dtb/rk3288-vyasa.dtb                          dtb-base-boot  dtb
+./boot/dtb/rk3506b-luckfox-lyra-zero-w.dtb           dtb-base-boot  dtb
 ./boot/dtb/rv1108-elgin-r1.dtb                       dtb-base-boot  dtb
 ./boot/dtb/rv1108-evb.dtb                            dtb-base-boot  dtb
 ./boot/dtb/socfpga_arria10_socdk_nand.dtb            dtb-base-boot  dtb

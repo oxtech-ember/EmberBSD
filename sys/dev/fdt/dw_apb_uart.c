@@ -77,6 +77,20 @@ dw_apb_uart_match(device_t parent, cfdata_t cf, void *aux)
 	return of_compatible_match(faa->faa_phandle, compat_data);
 }
 
+/* A firmware-managed UART can specify its baud clock in Hz. */
+static u_int
+dw_apb_uart_fixed_rate(int phandle)
+{
+	uint32_t freq;
+
+	if (!of_hasprop(phandle, "clocks") &&
+	    of_getprop_uint32(phandle, "clock-frequency", &freq) == 0 &&
+	    freq <= INT_MAX)
+		return freq;
+
+	return 0;
+}
+
 static void
 dw_apb_uart_attach(device_t parent, device_t self, void *aux)
 {
@@ -113,12 +127,15 @@ dw_apb_uart_attach(device_t parent, device_t self, void *aux)
 
 	ssc->ssc_clk = fdtbus_clock_get_index(phandle, 0);
 	if (ssc->ssc_clk == NULL) {
-		if (of_compatible_match(phandle, sunxi_compat) == 0) {
+		sc->sc_frequency = dw_apb_uart_fixed_rate(phandle);
+		/* The A133 boot loader leaves the gate open at 24 MHz. */
+		if (sc->sc_frequency == 0 &&
+		    of_compatible_match(phandle, sunxi_compat) != 0)
+			sc->sc_frequency = 24000000;
+		if (sc->sc_frequency == 0) {
 			aprint_error(": couldn't get clock\n");
 			return;
 		}
-		/* The boot loader left the gate open. */
-		sc->sc_frequency = 24000000;
 	} else if (clk_enable(ssc->ssc_clk) != 0) {
 		aprint_error(": couldn't enable clock\n");
 		return;
@@ -214,6 +231,8 @@ dw_apb_uart_console_consinit(struct fdt_attach_args *faa, u_int uart_freq)
 	memset(&dummy_bsh, 0, sizeof(dummy_bsh));
 	com_init_regs_stride_width(&regs, bst, dummy_bsh, addr, reg_shift, reg_iowidth);
 
+	if (uart_freq == 0)
+		uart_freq = dw_apb_uart_fixed_rate(phandle);
 	if (comcnattach1(&regs, speed, uart_freq, COM_TYPE_DW_APB, flags))
 		panic("Cannot initialize dw-apb-uart console");
 }

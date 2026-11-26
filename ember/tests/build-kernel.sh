@@ -66,7 +66,8 @@ cp "$repo/ember/tools/shared-sources.py" "$work/src/ember/tools/"
 cp "$repo/ember/check-kernel.sh" "$work/src/ember/"
 cp "$repo/ember/tools/kernel-contracts.sh" "$repo/ember/tools/kernel-contracts-select.py" \
     "$repo/ember/tools/kernel-contracts-inputs.txt" "$work/src/ember/tools/"
-cp "$repo/sys/arch/evbarm/conf/EMBER64" "$work/src/sys/arch/evbarm/conf/"
+cp "$repo/sys/arch/evbarm/conf/EMBER64" "$repo/sys/arch/evbarm/conf/GENERIC" \
+    "$work/src/sys/arch/evbarm/conf/"
 for config in GENERIC GENERIC_ARL_TOUCHPAD_HZ1000; do
     printf '# amd64 fixture configuration\n' > "$work/src/sys/arch/amd64/conf/$config"
 done
@@ -270,7 +271,8 @@ if [ ! -f "$version_obj" ]; then
     cp "$TEST_OUT/obj/kernels/$config/vers.c" "$version_obj"
 fi
 cp "$version_obj" "$TEST_OUT/obj/kernels/$config/netbsd"
-# Only evbarm makes a kernel image.
+# evbarm makes a raw image. ARMv7 also makes a legacy U-Boot image.
+case " $* " in *" -a earmv7hf "*) printf uboot > "$TEST_OUT/obj/kernels/$config/netbsd.ub";; esac
 [ "$machine" != evbarm ] || printf image > "$TEST_OUT/obj/kernels/$config/netbsd.img"
 SH
 cat > "$work/bin/nbmake-evbarm" <<'SH'
@@ -906,6 +908,21 @@ check_contract_counts 25 NetBSD
 if EMBER_BUILD_MODE=native sh "$work/src/ember/build-kernel.sh" "$work/wrong-host" > "$work/run.log" 2>&1; then
     echo 'accepted native tools on Darwin' >&2; exit 1
 fi
+# ARMv7 stages the two boot formats and the device tree from this build.
+export TEST_OUT="$work/earmv7hf"
+: > "$TEST_LOG"
+EMBER_KERNEL_TARGET=earmv7hf sh "$work/src/ember/build-kernel.sh" "$TEST_OUT" > "$work/run.log" 2>&1
+grep -q 'build.sh .* -m evbarm -a earmv7hf ' "$TEST_LOG"
+for artifact in netbsd-GENERIC netbsd-GENERIC.img netbsd-GENERIC.ub rk3506b-luckfox-lyra-zero-w.dtb; do
+    test -s "$TEST_OUT/$artifact"
+done
+! grep -q 'a733-boot-modes-contract' "$TEST_LOG"
+if FAIL_AT=dtb EMBER_KERNEL_TARGET=earmv7hf sh "$work/src/ember/build-kernel.sh" "$TEST_OUT" > "$work/run.log" 2>&1; then
+    echo 'accepted a failed ARMv7 DTB build' >&2; exit 1
+fi
+for artifact in netbsd-GENERIC netbsd-GENERIC.img netbsd-GENERIC.ub rk3506b-luckfox-lyra-zero-w.dtb; do
+    test ! -e "$TEST_OUT/$artifact"
+done
 # amd64: the same kernel and module orchestration, without board device trees
 # or a kernel image.
 export TEST_OUT="$work/amd64"
@@ -952,7 +969,7 @@ if EMBER_KERNEL_TARGET=riscv32 sh "$work/src/ember/build-kernel.sh" "$TEST_OUT" 
     > "$work/run.log" 2>&1; then
     echo 'accepted an unsupported kernel target' >&2; exit 1
 fi
-grep -q 'EMBER_KERNEL_TARGET must be aarch64 or amd64' "$work/run.log"
+grep -q 'EMBER_KERNEL_TARGET must be aarch64, amd64 or earmv7hf' "$work/run.log"
 export TEST_OUT="$work/native"
 if EMBER_COMPILER_FAMILY=unknown sh "$work/src/ember/build-kernel.sh" "$work/bad-family" > "$work/run.log" 2>&1; then
     echo 'accepted unknown compiler family' >&2; exit 1
@@ -1168,6 +1185,10 @@ count_contracts 21
 test "$(sh "$work/src/ember/build-kernel.sh" --outputs)" = 'netbsd-EMBER64
 netbsd-EMBER64.img'
 test "$(EMBER_KERNEL_TARGET=amd64 sh "$work/src/ember/build-kernel.sh" --outputs GENERIC_ARL)" = netbsd-GENERIC_ARL
+test "$(EMBER_KERNEL_TARGET=earmv7hf sh "$work/src/ember/build-kernel.sh" --outputs)" = 'netbsd-GENERIC
+netbsd-GENERIC.img
+netbsd-GENERIC.ub
+rk3506b-luckfox-lyra-zero-w.dtb'
 test "$(sh "$work/src/ember/build-kernel.sh" --outputs "$work/trials/EMBER64_TRIAL")" = 'netbsd-EMBER64_TRIAL
 netbsd-EMBER64_TRIAL.img'
 if EMBER_KERNEL_TARGET=riscv32 sh "$work/src/ember/build-kernel.sh" --outputs > "$work/run.log" 2>&1; then
@@ -1176,5 +1197,5 @@ fi
 if sh "$work/src/ember/build-kernel.sh" --outputs 'bad name' > "$work/run.log" 2>&1; then
     echo 'FAIL: --outputs accepted an invalid configuration' >&2; exit 1
 fi
-echo 'PASS: cross/native routing, AArch64 and amd64 targets, --outputs, refreshed kernel identity, retained objects, matched module headers, external tools, base/A733/GPU/Ruby/CEMAC/Wi-Fi contract dispatch and selection, failure cleanup'
+echo 'PASS: cross/native routing, AArch64, ARMv7 and amd64 targets, --outputs, refreshed kernel identity, retained objects, matched module headers, external tools, base/A733/GPU/Ruby/CEMAC/Wi-Fi contract dispatch and selection, failure cleanup'
 echo 'MODEL ONLY: SDK build and check boundaries used controlled fixtures; no production kernel, module, CPP, or DTC build ran.'

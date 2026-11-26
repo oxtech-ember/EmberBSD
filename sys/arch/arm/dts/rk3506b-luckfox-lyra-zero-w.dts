@@ -1,0 +1,44 @@
+// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
+/*
+ * Luckfox Lyra Zero W, U-Boot serial handoff.
+ */
+
+/dts-v1/;
+
+#include "rk3506.dtsi"
+
+/ {
+	model = "Luckfox Lyra Zero W";
+	compatible = "luckfox,lyra-zero-w", "rockchip,rk3506";
+
+	aliases {
+		serial0 = &uart0;
+	};
+
+	chosen {
+		stdout-path = "serial0:1500000n8";
+	};
+
+	memory@0 {
+		device_type = "memory";
+		reg = <0 0x20000000>;
+	};
+
+	reserved-memory {
+		#address-cells = <1>;
+		#size-cells = <1>;
+		ranges;
+
+		/* The RK3506 U-Boot port reserves the first MiB for firmware. */
+		firmware@0 {
+			reg = <0 0x100000>;
+			no-map;
+		};
+	};
+};
+
+&uart0 {
+	/* U-Boot leaves the 24 MHz baud clock and UART0 pins enabled. */
+	clock-frequency = <24000000>;
+	status = "okay";
+};

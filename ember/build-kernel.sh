@@ -1,6 +1,5 @@
 #!/bin/sh
-# Build an AArch64 or amd64 kernel and its matched modules; for AArch64 also
-# the board device trees.
+# Build a target kernel and its matched modules, images and device trees.
 set -eu
 unset EMBER_VERSION
 src=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd -P)
@@ -22,19 +21,23 @@ run_cpp() (
 [ "$#" -ge 1 ] && [ "$#" -le 2 ] ||
     fail 'usage: build-kernel.sh ABSOLUTE_OUTPUT [CONFIG | ABSOLUTE_CONFIG_PATH] | --outputs [CONFIG]'
 out=$1
-# EMBER_KERNEL_TARGET names the SDK target of the kernel: aarch64 or amd64.
+# EMBER_KERNEL_TARGET names the SDK target of the kernel.
 target=${EMBER_KERNEL_TARGET:-aarch64}
+lyra_dtb=rk3506b-luckfox-lyra-zero-w.dtb
 case "$target" in
 aarch64)
     # kernel_image: the build also publishes netbsd-CONFIG.img.
     machine=evbarm arch=aarch64 default_config=EMBER64 kernel_image=yes
     # The board modules built against each kernel.
     modules='bcm2712btcom bcmexpgpio rp1wmcodec rpi5button' ;;
+earmv7hf)
+    machine=evbarm arch=earmv7hf default_config=GENERIC kernel_image=yes
+    modules='' ;;
 amd64)
     machine=amd64 arch=x86_64 default_config=GENERIC kernel_image=no
     # The UEFI display and USB description modules built against each kernel.
     modules='efidrm usbverbose' ;;
-*) fail 'EMBER_KERNEL_TARGET must be aarch64 or amd64' ;;
+*) fail 'EMBER_KERNEL_TARGET must be aarch64, amd64 or earmv7hf' ;;
 esac
 # --outputs [CONFIG]: print the kernel files of a build for this target, one
 # per line, and build nothing. The SDK plan reads them.
@@ -44,6 +47,9 @@ if [ "$out" = --outputs ]; then
     case "$config" in ''|*[!A-Za-z0-9_]*) fail 'invalid kernel configuration' ;; esac
     printf 'netbsd-%s\n' "$config"
     [ "$kernel_image" = no ] || printf 'netbsd-%s.img\n' "$config"
+    if [ "$target" = earmv7hf ]; then
+        printf 'netbsd-%s.ub\n%s\n' "$config" "$lyra_dtb"
+    fi
     exit 0
 fi
 # CONFIG names a configuration of sys/arch/MACHINE/conf. A local trial
@@ -87,6 +93,9 @@ clear_outputs() {
             "$out/sun50i-a133-ys-m33.dtb"
         # Also remove if_cemac_acpi.kmod: EMBER64 has CEMAC built in.
         rm -f "$out/if_cemac_acpi.kmod"
+    fi
+    if [ "$target" = earmv7hf ]; then
+        rm -f "$out/netbsd-$config.ub" "$out/$lyra_dtb"
     fi
     for module in $modules; do
         rm -f "$out/$module.kmod"
@@ -272,9 +281,11 @@ export PATH
 make="$out/tools/bin/nbmake-$machine"
 cp "$kernel_obj/netbsd" "$stage/netbsd-$config"
 [ "$kernel_image" = no ] || cp "$kernel_obj/netbsd.img" "$stage/netbsd-$config.img"
-if [ "$target" = aarch64 ]; then
+if [ "$machine" = evbarm ]; then
     cpp=$(run_make -C "$src" -V '${CPP}')
     dtc=$(run_make -C "$src" -V '${TOOL_DTC}')
+fi
+if [ "$target" = aarch64 ]; then
     cd "$src/sys/external/gpl2/dts/dist"
     run_cpp -P -xassembler-with-cpp -I include -I arch/arm/boot/dts \
         arch/arm/boot/dts/bcm2837-rpi-zero-2-w.dts > "$out/zero-2.dts"
@@ -292,6 +303,12 @@ if [ "$target" = aarch64 ]; then
         "$out/a133-ys-m33.dts" 2> "$out/a133-ys-m33-dtb.log"
     run_artifact_check "$out/dtb-modes.log" \
         "$src/ember/tools/a733-boot-modes-contract.py" "$stage"
+elif [ "$target" = earmv7hf ]; then
+    cp "$kernel_obj/netbsd.ub" "$stage/netbsd-$config.ub"
+    run_cpp -P -xassembler-with-cpp -I "$src/sys/external/gpl2/dts/dist/include" \
+        "$src/sys/arch/arm/dts/${lyra_dtb%.dtb}.dts" > "$out/${lyra_dtb%.dtb}.dts"
+    run_native_os --capture -- "$dtc" -I dts -O dtb -p 1024 -b 0 -@ \
+        -o "$stage/$lyra_dtb" "$out/${lyra_dtb%.dtb}.dts" 2> "$out/lyra-dtb.log"
 fi
 for module in $modules; do
     cd "$src/sys/modules/$module"

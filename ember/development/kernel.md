@@ -31,6 +31,7 @@ task cannot use an existing one, and add its row here.
 
 | Configuration | Task | Contents |
 | --- | --- | --- |
+| `GENERIC` (evbarm) | General ARMv7 system | FDT, PSCI, the architectural timer, GIC and serial console. |
 | `EMBER64` | General AArch64 system; the default | `GENERIC64` with the passive drivers of the supported boards and the boot splash. |
 
 ## Watchdog handoff for a trial boot
@@ -142,6 +143,20 @@ Inspect the selected builder before choosing a configuration.
 `EMBER_KERNEL_TARGET=amd64` selects an amd64 configuration from
 `sys/arch/amd64/conf/` (default `GENERIC`), see the
 [cross-build guide](../../tools/docs/cross-build.md).
+Use `EMBER_KERNEL_TARGET=earmv7hf` for the ARMv7 hard-float target.
+Its default configuration is `sys/arch/evbarm/conf/GENERIC`.
+The wrapper supplies the ELF kernel, the raw `.img`, the legacy U-Boot
+`.ub` and `rk3506b-luckfox-lyra-zero-w.dtb`. Use `--outputs` to list them.
+
+For the Lyra Zero W handoff, keep UART0 enabled at 24 MHz and 1500000 8N1.
+Load the `.ub` on a 1 MiB boundary. Its 64-byte header puts the entry point
+at the offset that `arch/arm/arm/armv6_start.S` requires. Use `bootm`
+with the separate DTB. The loader passes the DTB address in register r2.
+The DTB describes the three Cortex-A7 CPUs, PSCI, GIC-400, timer and UART0.
+It reserves the first MiB of RAM for firmware.
+U-Boot reads these files from microSD. The serial handoff does not require
+an SD driver in the kernel. This DTB does not enable a disk root.
+
 The wrapper explicitly selects DTBs and matched modules for each invocation.
 It also publishes the native YS-M33 A133 DTB; its WLAN node remains disabled.
 This adds a build artifact, not a firmware/loader selection or radio-enable path.
