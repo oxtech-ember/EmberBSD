@@ -1050,6 +1050,8 @@ static const struct {
 /* The pure DISPLAY core and native admission share this provider mutex. */
 static struct {
 	struct sun60i_a733_display_owner core;
+	struct sunxi_ccu_softc *reg_sc;
+	bus_size_t reg_size;
 	int power, fault;
 	bool pck_retained, prepared, memory_claimed, isolation_claimed;
 	bool hdmi_prepared, tv0_prepared;
@@ -1864,7 +1866,29 @@ struct sun60i_a733_display_read_arg {
 	struct sunxi_ccu_softc *sc;
 	int power;
 	const void *owner;
+	bus_size_t reg_size;
 };
+
+static int
+sun60i_a733_display_reg_size(struct sunxi_ccu_softc *sc, const void *owner,
+    bus_size_t minimum, bus_size_t *out)
+{
+	bus_addr_t addr;
+	bus_size_t size;
+
+	KASSERT(mutex_owned(&sun60i_a733_ccu_lock));
+	/* Attach mapped reg0. A successful DISPLAY claim keeps its extent. */
+	if (owner != NULL && sun60i_display_lease.core.owner == owner &&
+	    sun60i_display_lease.reg_sc == sc && sun60i_display_lease.reg_size != 0)
+		size = sun60i_display_lease.reg_size;
+	else if (fdtbus_get_reg(sc->sc_phandle, 0, &addr, &size) != 0)
+		return ENXIO;
+	if (size < minimum)
+		return ENXIO;
+	if (out != NULL)
+		*out = size;
+	return 0;
+}
 
 static int
 sun60i_a733_display_handle(const struct clk *de0, struct sunxi_ccu_softc **out)
@@ -1887,18 +1911,17 @@ sun60i_a733_display_inputs_read(void *arg,
 		PLL_PERIPH0_CTRL_REG + 8, PLL_PERIPH0_CTRL_REG + 12,
 		AHB_CFG_REG, PERI0PLL_GATE_EN_REG, PERI0PLL_GATE_STAT_REG
 	};
-	const struct sun60i_a733_display_read_arg *ctx = arg;
+	struct sun60i_a733_display_read_arg *ctx = arg;
 	struct sunxi_ccu_softc *sc = ctx->sc;
 	struct sun60i_a733_display_inputs in = { 0 };
 	struct sunxi_rtc_dcxo_state dcxo;
-	bus_addr_t addr;
 	bus_size_t size;
 	int node, error;
 
 	KASSERT(mutex_owned(&sun60i_a733_ccu_lock));
-	if (fdtbus_get_reg(sc->sc_phandle, 0, &addr, &size) != 0 ||
-	    size < 0x19ac)
-		return ENXIO;
+	error = sun60i_a733_display_reg_size(sc, ctx->owner, 0x19ac, &size);
+	if (error != 0)
+		return error;
 	if (OF_getproplen(sc->sc_phandle, "netbsd,dcxo-source") != 4)
 		return EINVAL;
 	node = fdtbus_get_phandle(sc->sc_phandle, "netbsd,dcxo-source");
@@ -1926,6 +1949,7 @@ sun60i_a733_display_inputs_read(void *arg,
 	if (error != 0)
 		return error;
 	memcpy(in.dcxo[1], dcxo.sample, sizeof(dcxo.sample));
+	ctx->reg_size = size;
 	*out = in;
 	return 0;
 }
@@ -2002,14 +2026,13 @@ sun60i_a733_display_memory_read(struct sunxi_ccu_softc *sc,
 {
 	struct sun60i_a733_display_power power;
 	uint32_t words[2][A733_DISPLAY_NMEMORY_REGS];
-	bus_addr_t addr;
-	bus_size_t size;
 	int error;
 
 	KASSERT(mutex_owned(&sun60i_a733_ccu_lock));
-	if (fdtbus_get_reg(sc->sc_phandle, 0, &addr, &size) != 0 ||
-	    size < PERI0PLL_GATE_STAT_REG + sizeof(uint32_t))
-		return ENXIO;
+	error = sun60i_a733_display_reg_size(sc, sun60i_display_lease.core.owner,
+	    PERI0PLL_GATE_STAT_REG + sizeof(uint32_t), NULL);
+	if (error != 0)
+		return error;
 	error = sun60i_a733_pck_display_snapshot(sun60i_display_lease.power,
 	    sun60i_display_lease.core.owner, &power);
 	if (error != 0)
@@ -2120,13 +2143,13 @@ sun60i_a733_display_isolation_read(struct sunxi_ccu_softc *sc,
     uint32_t out[2][A733_DISPLAY_NISOLATION_REGS])
 {
 	uint32_t words[2][A733_DISPLAY_NISOLATION_REGS], power[2][3], after[2][3];
-	bus_addr_t addr;
-	bus_size_t size;
 	int error;
 
 	KASSERT(mutex_owned(&sun60i_a733_ccu_lock));
-	if (fdtbus_get_reg(sc->sc_phandle, 0, &addr, &size) != 0 || size < 0xa90)
-		return ENXIO;
+	error = sun60i_a733_display_reg_size(sc, sun60i_display_lease.core.owner,
+	    0xa90, NULL);
+	if (error != 0)
+		return error;
 	error = sun60i_a733_pck_display_isolation_snapshot(
 	    sun60i_display_lease.power, sun60i_display_lease.core.owner, power);
 	if (error != 0)
@@ -2240,7 +2263,9 @@ sun60i_a733_ccu_display_reserve(struct clk *de0, int power, const void *owner)
 	error = sun60i_a733_display_handle(de0, &sc);
 	if (error != 0)
 		return error;
-	arg = (struct sun60i_a733_display_read_arg){ sc, power, owner };
+	arg = (struct sun60i_a733_display_read_arg){
+		.sc = sc, .power = power, .owner = owner
+	};
 	mutex_enter(&sun60i_a733_ccu_lock);
 	error = sun60i_a733_display_reserve(&sun60i_display_lease.core,
 	    owner, sun60i_a733_display_inputs_read, &arg);
@@ -2250,8 +2275,11 @@ sun60i_a733_ccu_display_reserve(struct clk *de0, int power, const void *owner)
 		    &sun60i_display_lease.core.before, &rates);
 		if (error != 0)
 			(void)sun60i_a733_display_release(&sun60i_display_lease.core, owner);
-		else
+		else {
 			sun60i_display_lease.power = power;
+			sun60i_display_lease.reg_sc = sc;
+			sun60i_display_lease.reg_size = arg.reg_size;
+		}
 	}
 	mutex_exit(&sun60i_a733_ccu_lock);
 	return error;
@@ -2288,6 +2316,8 @@ sun60i_a733_ccu_display_release(struct clk *de0, const void *owner)
 		error = sun60i_a733_display_release(&sun60i_display_lease.core, owner);
 		if (error == 0) {
 			sun60i_display_lease.power = 0;
+			sun60i_display_lease.reg_sc = NULL;
+			sun60i_display_lease.reg_size = 0;
 			sun60i_display_lease.prepared = false;
 			sun60i_display_lease.hdmi_prepared = false;
 			sun60i_display_lease.tv0_prepared = false;
@@ -2361,7 +2391,9 @@ sun60i_a733_ccu_display_begin_de0(struct clk *de0, const void *owner,
 		error = EBUSY;
 		goto out;
 	}
-	arg = (struct sun60i_a733_display_read_arg){ sc, sun60i_display_lease.power, owner };
+	arg = (struct sun60i_a733_display_read_arg){
+		.sc = sc, .power = sun60i_display_lease.power, .owner = owner
+	};
 	/* PCK retention precedes even the first faulting CCU write attempt. */
 	error = sun60i_a733_pck_display_retain(arg.power, owner);
 	if (error != 0)
@@ -2431,7 +2463,7 @@ sun60i_a733_display_verify_locked(struct sunxi_ccu_softc *sc,
 	struct sun60i_a733_display_inputs in;
 	uint32_t memory[2][A733_DISPLAY_NMEMORY_REGS];
 	struct sun60i_a733_display_read_arg arg = {
-	    sc, sun60i_display_lease.power, owner
+	    .sc = sc, .power = sun60i_display_lease.power, .owner = owner
 	};
 	int error;
 

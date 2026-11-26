@@ -66,10 +66,33 @@ test_display_native(void)
 	CHECK(reads == 0 && sun60i_display_lease.core.writers == 1);
 	sun60i_a733_gpu_guard_exit(&state);
 	CHECK(sun60i_display_lease.core.writers == 0);
+	unsigned int reg_reads = ccu_reg_reads;
 	CHECK(sun60i_a733_ccu_display_reserve(CLOCK(A733_CLK_DE0), 17, &display_cookie) == 0);
+	CHECK(ccu_reg_reads == reg_reads + 1 &&
+	    sun60i_display_lease.reg_sc == &state &&
+	    sun60i_display_lease.reg_size == ccu_size);
 	CHECK(sun60i_a733_ccu_display_reserve(CLOCK(A733_CLK_DE0), 17, &wrong) == EBUSY);
 	CHECK(sun60i_a733_ccu_display_release(CLOCK(A733_CLK_DE0), &wrong) == EINVAL);
+	CHECK(sun60i_display_lease.reg_size == ccu_size);
+
+	/* Reject a too-large register on the same immutable mapped extent. */
+	mutex_enter(&sun60i_a733_ccu_lock);
+	CHECK(sun60i_a733_display_reg_size(&state, &display_cookie,
+	    ccu_size + 1, NULL) == ENXIO && ccu_reg_reads == reg_reads + 1);
+	struct sunxi_ccu_softc other = state;
+	ccu_reg_error = EIO;
+	CHECK(sun60i_a733_display_reg_size(&other, &display_cookie,
+	    0x19ac, NULL) == ENXIO && ccu_reg_reads == reg_reads + 2);
+	ccu_reg_error = 0;
+	mutex_exit(&sun60i_a733_ccu_lock);
+
 	CHECK(sun60i_a733_ccu_display_release(CLOCK(A733_CLK_DE0), &display_cookie) == 0);
+	CHECK(sun60i_display_lease.reg_size == 0 && sun60i_display_lease.reg_sc == NULL);
+	ccu_reg_error = EIO;
+	CHECK(sun60i_a733_ccu_display_reserve(CLOCK(A733_CLK_DE0), 17,
+	    &display_cookie) == ENXIO);
+	CHECK(sun60i_display_lease.reg_size == 0 && ccu_reg_reads == reg_reads + 3);
+	ccu_reg_error = 0;
 	CHECK(!display_power_retained && writes == 0);
 	/* Retention failure remains clean. A later failure retains both claims. */
 	for (unsigned fault = 0; fault < 3; fault++) {
@@ -116,7 +139,9 @@ test_display_native(void)
 	CHECK(write_regs[1] == DE0_BGR_REG && write_vals[1] == UINT32_C(0x00010080));
 	CHECK(write_regs[2] == DE0_BGR_REG && write_vals[2] == UINT32_C(0x00010081));
 	CHECK(write_regs[3] == DE0_CLK_REG && write_vals[3] == UINT32_C(0xa3000000));
+	reg_reads = ccu_reg_reads;
 	CHECK(sun60i_a733_ccu_display_ready(CLOCK(A733_CLK_DE0), &display_cookie) == 0);
+	CHECK(ccu_reg_reads == reg_reads);
 	CHECK(sun60i_a733_ccu_display_status(CLOCK(A733_CLK_DE0), &display_cookie, &status) == 0);
 	CHECK(status.reserved && status.retained && status.fault == 0 && status.rates.periph400_hz == 400000000);
 	sentinel = status;
