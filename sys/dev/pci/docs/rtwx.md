@@ -168,6 +168,21 @@ moved 308 Mbit/s from the laptop and 187 Mbit/s to it, with about 90 %
 idle CPU time. So a single TCP connection, not the radio link, limits the
 figures in the table above.
 
+A second peer, a Wi-Fi client with 802.11ax at 160 MHz and 2161-2401
+Mbit/s, gave higher figures with the same kernel:
+
+| TCP | Laptop to peer | Peer to laptop |
+| --- | --- | --- |
+| One connection, default socket buffers | 230-256 Mbit/s | 164-167 Mbit/s |
+| One connection, 4 MiB buffers | 314-318 Mbit/s | 193-206 Mbit/s |
+| Four connections, default buffers | 383 Mbit/s | 266 Mbit/s |
+
+The default `kern.sbmax`, `net.inet.tcp.sendbuf_max` and
+`net.inet.tcp.recvbuf_max` are 256 KiB. With a round-trip time of about
+10 ms under load, that window limits one connection to about 200 Mbit/s.
+While the laptop received 167 Mbit/s, the CPU that serves the interrupt
+was about 30 % busy and the other CPUs were idle.
+
 ### 2.4 GHz, 2026-11-26
 
 The same AP on 2.4 GHz channel 1 uses HT protection mode 3. Before
