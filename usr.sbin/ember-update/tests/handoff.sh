@@ -34,6 +34,22 @@ printf 'ember_os_update=YES\n' >"$root/etc/rc.conf.d/ember_os_update"
 printf 'ember_pkg_update=NO\n' >"$root/etc/rc.conf.d/ember_pkg_update"
 printf 'ember_update_reboot=ask\n' >"$root/etc/rc.conf.d/ember_update"
 install -m 0555 "$script" "$root/etc/rc.d/ember_update"
+# The standard set has no former rc scripts. The transition set has an inert one.
+printf '# PROVIDE: LOGIN NETWORKING syslogd certctl_init\n' >"$root/services"
+check_order()
+{
+	/sbin/rcorder "$root/services" "$root"/etc/rc.d/* >"$root/order" 2>"$root/errors" ||
+	    { cat "$root/errors" >&2; exit 1; }
+	[ ! -s "$root/errors" ] || { cat "$root/errors" >&2; exit 1; }
+	awk -v services="$root/services" -v native="$root/etc/rc.d/ember_update" '
+	    $0 == services { ready = 1 }
+	    $0 == native && ready { found = 1 }
+	    END { exit !found }' "$root/order"
+}
+check_order
+printf '#!/bin/sh\nexit 0\n' >"$root/etc/rc.d/ember_os_update"
+chmod 0555 "$root/etc/rc.d/ember_os_update"
+check_order
 cp "$input/control.json" "$root/etc/ember-os-update.json"
 cp "$input/legacy-profile.json" "$root/etc/ember-uboot-slots.json"
 cp "$input/seal.json" "$root/usr/share/ember-update/handoff/$profile.json"
@@ -72,14 +88,18 @@ SH
 printf '#!/bin/sh\n[ ! -f /unhealthy ]\n' >"$root/etc/ember-os-health"
 chmod 0555 "$root/sbin/sysctl" "$root/usr/libexec/ember-os-slot" "$root/etc/ember-os-health"
 sha=$(sha256 -q "$input/release.json")
-step() { /usr/sbin/chroot "$root" /usr/sbin/ember-update handoff; }
+step() { "$@" /usr/sbin/chroot "$root" /usr/sbin/ember-update handoff; }
 refused()
 {
-	if step >"$root/failure" 2>&1; then echo 'Unexpected migration success' >&2; exit 1; fi
-	if ! grep -Fq "$1" "$root/failure"; then cat "$root/failure" >&2; exit 1; fi
+	detail=$1; shift
+	if step "$@" >"$root/failure" 2>&1; then echo 'Unexpected migration success' >&2; exit 1; fi
+	if ! grep -Fq "$detail" "$root/failure"; then cat "$root/failure" >&2; exit 1; fi
 }
 model() { echo "$*" >"$root/model"; }
 model B A null true B "$sha"
+for former in ember_os_update ember_pkg_update; do
+	refused "a legacy update service is active" /usr/bin/flock "$root/var/run/$former.pid"
+done
 printf x >>"$root/var/db/ember-os-update/etc.tar.xz"
 refused "legacy release, defaults, or hardware differs"
 cp "$input/etc.tar.xz" "$root/var/db/ember-os-update/etc.tar.xz"
