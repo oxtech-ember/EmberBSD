@@ -95,7 +95,7 @@ if [ "${1:-}" = --console-selected ]; then
     runtime_prefix=$1 resource=$2 unwinder=$3 compiler_resource=$4 jobs=$5 timestamp=$6 revision=$7
     shift 7
     headers=$1 libraries=$2 programs=$3 python=$4 profile=${5:-console} overlay=${6:-} extra=${7:-} selected_awk=${8:-$host_prefix/bin/nawk}
-    wolfssl_prefix=${9:-} network_interface=${10:-} mdns_source=${11:-} dhcpcd_source=${12:-} install_map=${13:-} wpa_backend=${14:-} crunch_programs=${15:-} device_nodes=${16:-} device_links=${17:-} libpcap_source=${18:-} device_make=${19:-} wpa_source=${20:-} device_block_nodes=${21:-} network_root_device=${22:-} network_root_partition=${23-a} network_root_stage=${24:-} data_components=${25:-} console_root_size=${26:-4194304} network_root_filesystem=${27:-ffs} openssl_source=${28:-} openssh_source=${29:-} libevent_source=${30:-} tcp_wrappers_source=${31:-} zlib_source=${32:-} openssh_crypto=${33:-} display_enabled=${34:-no} dropbear_prefix=${35:-}
+    wolfssl_prefix=${9:-} network_interface=${10:-} mdns_source=${11:-} dhcpcd_source=${12:-} install_map=${13:-} wpa_backend=${14:-} crunch_programs=${15:-} device_nodes=${16:-} device_links=${17:-} libpcap_source=${18:-} device_make=${19:-} wpa_source=${20:-} device_block_nodes=${21:-} network_root_device=${22:-} network_root_partition=${23-a} network_root_stage=${24:-} data_components=${25:-} console_root_size=${26-4194304} network_root_filesystem=${27:-ffs} openssl_source=${28:-} openssh_source=${29:-} libevent_source=${30:-} tcp_wrappers_source=${31:-} zlib_source=${32:-} openssh_crypto=${33:-} display_enabled=${34:-no} dropbear_prefix=${35:-}
     if [ "$profile" = network ]; then
         COPTS="${COPTS:+$COPTS }-Oz -ffunction-sections -fdata-sections"
         network_auth_flags=$("$python" -B "$here/static-profile.py" \
@@ -388,6 +388,7 @@ if [ "${1:-}" = --console-selected ]; then
             echo "Missing or duplicate device: $node" >&2; exit 1
         }
     done
+    [ -n "$console_root_size" ] || exit 0
     "$tools/bin/nbmakefs" -t ffs -B little -s "$console_root_size" -o version=2,bsize=16384,fsize=2048 \
         -F "$out/root.spec" -N "$src/etc" "$out/root.fs" "$out/root"
     exit 0

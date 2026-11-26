@@ -160,14 +160,19 @@ physical shutdown duration.
 
 ## Minimal static bring-up console
 
-The same builder can select a small C-only console profile for `aarch64` or
-`riscv32`. This bring-up profile is a single-user recovery console: `init` starts a root shell on
+The same builder can select a small C-only console profile for `aarch64`,
+`earmv7hf`, or `riscv32`. This bring-up profile is a single-user recovery console: `init` starts a root shell on
 `/dev/console` without a login prompt. It is intended only for a controlled
 local console. It does not enable network services or provide a multi-user
 login. It produces a 4 MiB FFS2 image without writing a device. The profile
 supports the LLVM C foundation with Clang; explicit GCC is rejected.
 `EMBER_USERLAND_PROFILE=cix` (or an unset variable) selects the original CIX
 profile; unknown profile names are rejected.
+
+Set `EMBER_CONSOLE_ROOT_FORMAT=tree` to export `root/` and `root.spec` to a board image builder.
+The manifest includes the target character devices. The default `ffs` format also creates `root.fs`.
+Select a new output directory for each console or console-tools build, including a change of format.
+For ARMv7 select `EMBER_CONSOLE_TARGET=earmv7hf` and a matching ARM EABI5 hard-float C foundation.
 
 Set the common source, native prefix, host BFD and libedit inputs above, plus
 `EMBER_BYACC_SOURCE`. Select a completed SDK `--c-foundation` stage and its

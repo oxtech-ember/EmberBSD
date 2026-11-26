@@ -67,7 +67,7 @@ class ConsoleProfile(unittest.TestCase):
         start = source.index('    if [ "$profile" = console-tools ]; then\n        MACHINE=')
         middle = source.index('    "$tools/bin/nbmtree"', start)
         select = source.index('    for node in $devices; do', middle)
-        end = source.index('    "$tools/bin/nbmakefs"', select)
+        end = source.index('    [ -n "$console_root_size" ]', select)
         block = source[start:middle] + source[select:end]
         with tempfile.TemporaryDirectory() as name:
             out = Path(name)
@@ -266,6 +266,30 @@ class ConsoleProfile(unittest.TestCase):
         self.assertEqual(selected['programs'], ('bin/sh', 'sbin/init'))
         self.assertIn('MKSOFTFLOAT=yes', selected['flags'])
         self.assertEqual(selected['elf_class'], 'ELF32')
+    def test_arm_console_targets_the_hard_float_abi(self):
+        selected = profile.console('earmv7hf')
+        self.assertEqual((selected['machine'], selected['arch'], selected['triplet']),
+                         ('evbarm', 'earmv7hf', 'armv7--netbsdelf-eabihf'))
+        self.assertEqual((selected['elf_class'], selected['elf_machine'], selected['flags']),
+                         ('ELF32', 'ARM', ()))
+        self.assertEqual(selected['programs'], ('bin/sh', 'sbin/init'))
+
+    def test_tree_output_and_existing_network_root_size(self):
+        self.assertEqual(profile.console_output({}, False, False), ('ffs', '4194304'))
+        tree = {'EMBER_CONSOLE_ROOT_FORMAT': 'tree'}
+        self.assertEqual(profile.console_output(tree, False, False), ('tree', ''))
+        with self.assertRaisesRegex(ValueError, 'root size'):
+            profile.console_output(dict(tree, EMBER_CONSOLE_ROOT_SIZE='4m'), False, False)
+        self.assertEqual(profile.console_output({'EMBER_CONSOLE_ROOT_SIZE': '4m'}, False, True),
+                         ('tree', '4194304'))
+
+    def test_tree_console_uses_mtree_without_makefs(self):
+        from types import SimpleNamespace
+        tools = []
+        profile.check_os_tools(Path('/tools'), SimpleNamespace(host={}), '/bin',
+                               lambda _, command, *a, **kw: tools.append(command), root_image=False)
+        self.assertEqual(tools, ['/tools/bin/nbmkdep', '/tools/bin/nbmtree'])
+
     def test_foundation_rejects_abi_and_runtime_mismatch(self):
         record = {'format': 'emberbsd-llvm-os-stage', 'phase': 'base',
                   'signature': {'target': {'arch': 'riscv32', 'triplet': 'riscv32--netbsd'},

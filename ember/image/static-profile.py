@@ -467,9 +467,23 @@ def console_root_size(value, compact):
     return str(size)
 
 
+def console_output(environment, compact, network):
+    root_format = environment.get('EMBER_CONSOLE_ROOT_FORMAT', 'tree' if network else 'ffs')
+    if root_format not in ('tree', 'ffs') or (network and root_format != 'tree'):
+        raise ValueError('select a tree or FFS console root; network requires a tree')
+    if network or root_format == 'ffs':
+        size = console_root_size(environment.get('EMBER_CONSOLE_ROOT_SIZE', '4m'), compact)
+    elif 'EMBER_CONSOLE_ROOT_SIZE' in environment:
+        raise ValueError('a root size requires an FFS console image')
+    else:
+        size = ''
+    return root_format, size
+
+
 def console(target, compact=False, toolsets=()):
     targets = {
         'aarch64': ('evbarm', 'aarch64', 'aarch64--netbsd', 'ELF64', 'AArch64', ()),
+        'earmv7hf': ('evbarm', 'earmv7hf', 'armv7--netbsdelf-eabihf', 'ELF32', 'ARM', ()),
         'riscv32': ('riscv', 'riscv32', 'riscv32--netbsd', 'ELF32', 'RISC-V', ('MKSOFTFLOAT=yes',)),
     }
     if target not in targets:
@@ -1096,8 +1110,12 @@ def check_compiler_family(family):
         raise ValueError('static console supports only the LLVM C foundation (clang)')
 
 
-def check_os_tools(tools, native, search_path, validate, compact=False, network=False):
-    names = ('nbmkdep', 'nbmtree') + (('nbpwd_mkdb', 'nbcap_mkdb') if network else ('nbmakefs',))
+def check_os_tools(tools, native, search_path, validate, compact=False, network=False, root_image=True):
+    names = ('nbmkdep', 'nbmtree')
+    if network:
+        names += ('nbpwd_mkdb', 'nbcap_mkdb')
+    elif root_image:
+        names += ('nbmakefs',)
     if compact or network:
         names += ('nbcrunchgen',)
     for name in names:
@@ -1218,8 +1236,7 @@ def run_console(arguments):
         except ValueError as exc:
             raise SystemExit('static-console: ' + str(exc)) from exc
     try:
-        selected_root_size = console_root_size(
-            os.environ.get('EMBER_CONSOLE_ROOT_SIZE', '4m'), settings['compact'])
+        root_format, selected_root_size = console_output(os.environ, settings['compact'], is_network)
     except ValueError as exc:
         raise SystemExit('static-console: ' + str(exc)) from exc
     sdk = Path(os.environ['EMBERBSD_SDK_SOURCE']).resolve(strict=True)
@@ -1303,7 +1320,7 @@ def run_console(arguments):
         check_foundation(receipt, target, record)
         env = native_os.native_os_environment(native, output / 'routing')
         check_os_tools(tools, native, env['PATH'], host_prefix.validate_host_executable,
-                       compact=settings['compact'], network=is_network)
+                       compact=settings['compact'], network=is_network, root_image=root_format == 'ffs')
         identity = target_toolchain.clang_compiler(str(compiler), settings['triplet'],
                                                     host=dict(native.host), env=env)
         check_compiler_identity(identity, receipt['signature']['compiler'])
@@ -1415,13 +1432,13 @@ def run_console(arguments):
             if not Path(overlay).is_dir() or not re.fullmatch(r'/[A-Za-z0-9_./-]+', overlay):
                 raise SDKError('console overlay must be an absolute plain-path directory')
             overlay_state = inventory.snapshot_tree(overlay)
+        elf_abi = dict(arm_eabihf=True) if target == 'earmv7hf' else dict(riscv32_soft_float=target == 'riscv32')
         if extra:
             extra = paths.canonical_existing(extra)
             paths.reject_overlap(str(output), extra)
             if not Path(extra).is_file() or not re.fullmatch(r'/[A-Za-z0-9_./-]+', extra):
                 raise SDKError('console program must be an absolute plain-path file')
-            if elf.read_elf_header(extra, receipt['signature']['target']['elf'], 2,
-                                   riscv32_soft_float=target == 'riscv32') is None:
+            if elf.read_elf_header(extra, receipt['signature']['target']['elf'], 2, **elf_abi) is None:
                 raise SDKError('console program has incompatible target ABI')
             segments = process.capture([str(compiler / 'bin/llvm-readelf'), '-l', extra], env=env).stdout.decode()
             if re.search(r'^\s*(?:INTERP|DYNAMIC)\s', segments, re.M):
@@ -1570,11 +1587,9 @@ def run_console(arguments):
             raise SDKError('network root staging did not produce a tree and device specification')
         readelf = str(compiler / 'bin/llvm-readelf')
         for name in output_programs(settings, extra):
-            binary = ((candidate_root if is_network else output / 'root')
-                      if settings['compact'] or is_network else output / 'dest') / name
-            header = elf.read_elf_header(binary, receipt['signature']['target']['elf'], 2,
-                                         riscv32_soft_float=target == 'riscv32')
-            if header is None or header['class'] != (32 if target == 'riscv32' else 64):
+            binary = (candidate_root if is_network else output / 'root') / name
+            header = elf.read_elf_header(binary, receipt['signature']['target']['elf'], 2, **elf_abi)
+            if header is None or 'ELF' + str(header['class']) != settings['elf_class']:
                 raise SDKError('invalid console executable: ' + name)
             segments = process.capture([readelf, '-l', str(binary)], env=env).stdout.decode()
             if re.search(r'^\s*(?:INTERP|DYNAMIC)\s', segments, re.M):
@@ -1596,8 +1611,9 @@ def run_console(arguments):
             ('overlay-sha256=' + hashlib.sha256(json.dumps(overlay_state, sort_keys=True).encode()).hexdigest() + '\n'
              if overlay_state is not None else '') +
             ('program-sha256=' + extra_digest + '\n' if extra_digest else '') +
-            ('console-toolsets=' + ' '.join(selected_toolsets) + '\n' +
-             'console-root-size=' + selected_root_size + '\n' if settings['compact'] else '') +
+            ('console-root-format=' + root_format + '\n' if not is_network else '') +
+            ('console-toolsets=' + ' '.join(selected_toolsets) + '\n' if settings['compact'] else '') +
+            ('console-root-size=' + selected_root_size + '\n' if settings['compact'] and selected_root_size else '') +
             (f'network-interface={network_interface}\nwpa-crypto-backend={wpa_backend or "default"}\n' +
              f'root-filesystem={settings["root_filesystem"]}\n' +
              'network-toolsets=' + ' '.join(selected_toolsets) + '\n' +
@@ -1627,6 +1643,8 @@ def run_console(arguments):
             (output / 'BUILD-INPUTS.txt').write_text(receipt_text)
         if is_network:
             print('Staged the static network root tree; no filesystem image was built.')
+        elif root_format == 'tree':
+            print('Staged the static console root and its mtree specification.')
         else:
             image = output / 'root.fs'
             digest = hashlib.sha256(image.read_bytes()).hexdigest()
