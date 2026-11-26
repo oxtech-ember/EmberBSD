@@ -6,7 +6,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "pvr_ge8300.h"
-#include "sun60i_a733_gpu_fwinfo.h"
+#include "pvr_fwinfo.h"
 
 #define CHECK(x) do { if (!(x)) { \
 	fprintf(stderr, "line %d: %s\n", __LINE__, #x); exit(1); \
@@ -32,7 +32,7 @@ main(int argc, char **argv)
 	CHECK((image = malloc(size)) != NULL);
 	CHECK(fread(image, 1, size, f) == size);
 	CHECK(fclose(f) == 0);
-	CHECK(sun60i_a733_gpu_fwinfo_parse(image, size, PVR_GE8300_BVNC,
+	CHECK(pvr_fwinfo_parse(image, size, PVR_GE8300_BVNC,
 	    &info) == EOPNOTSUPP);
 	CHECK(pvr_ge8300_fwinfo_parse(image, size, PVR_GE8300_BVNC, &info) == 0);
 	CHECK(info.layout_count == 6 && info.array[PVR_FW_FEATURE_PARAMS].count == 22);

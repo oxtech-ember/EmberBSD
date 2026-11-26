@@ -9,7 +9,7 @@
 #include <string.h>
 
 #include "sun60i_a733_gpu_mmu.h"
-#include "sun60i_a733_gpu_fwinfo.h"
+#include "pvr_fwinfo.h"
 #ifdef MMU_UPSTREAM_ORACLE
 #include "upstream.h"
 #endif
@@ -162,7 +162,7 @@ boundaries(void)
 static void
 firmware_profile(const char *path)
 {
-	struct sun60i_a733_gpu_fwinfo info;
+	struct pvr_fwinfo info;
 	uint8_t bytes[131072];
 	uint64_t value = 0;
 	FILE *input = fopen(path, "rb");
@@ -171,12 +171,12 @@ firmware_profile(const char *path)
 	CHECK(fread(bytes, 1, sizeof(bytes), input) == sizeof(bytes));
 	CHECK(fgetc(input) == EOF && !ferror(input));
 	CHECK(fclose(input) == 0);
-	CHECK(sun60i_a733_gpu_fwinfo_parse(bytes, sizeof(bytes),
+	CHECK(pvr_fwinfo_parse(bytes, sizeof(bytes),
 	    UINT64_C(0x00240038006800b7), &info) == 0);
-	CHECK(sun60i_a733_gpu_fwinfo_feature(&info,
-	    A733_GPU_FW_FEATURE_PHYS_BUS_WIDTH, &value) == 0 && value == 36);
-	CHECK(sun60i_a733_gpu_fwinfo_feature(&info,
-	    A733_GPU_FW_FEATURE_VIRTUAL_ADDRESS_SPACE_BITS, &value) == 0 && value == 40);
+	CHECK(pvr_fwinfo_feature(&info,
+	    PVR_FW_FEATURE_PHYS_BUS_WIDTH, &value) == 0 && value == 36);
+	CHECK(pvr_fwinfo_feature(&info,
+	    PVR_FW_FEATURE_VIRTUAL_ADDRESS_SPACE_BITS, &value) == 0 && value == 40);
 	CHECK(info.page_size == 4096);
 }
 

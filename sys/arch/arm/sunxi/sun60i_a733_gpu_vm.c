@@ -148,7 +148,7 @@ vm_put64(uint8_t *out, uint64_t value)
 
 int
 sun60i_a733_gpu_vm_prepare(bus_dma_tag_t tag,
-    const struct sun60i_a733_gpu_fwinfo *info, uint64_t scratch_va,
+    const struct pvr_fwinfo *info, uint64_t scratch_va,
     struct sun60i_a733_gpu_vm **out)
 {
 	struct sun60i_a733_gpu_vm *vm;
@@ -160,7 +160,7 @@ sun60i_a733_gpu_vm_prepare(bus_dma_tag_t tag,
 
 	if (tag == NULL || out == NULL || info == NULL ||
 	    !vm_span(out, sizeof(*out), _Alignof(struct sun60i_a733_gpu_vm *)) ||
-	    !vm_span(info, sizeof(*info), _Alignof(struct sun60i_a733_gpu_fwinfo)) ||
+	    !vm_span(info, sizeof(*info), _Alignof(struct pvr_fwinfo)) ||
 	    vm_overlap(out, sizeof(*out), info, sizeof(*info)) ||
 	    scratch_va < A733_GPU_VM_GENERAL_BASE ||
 	    scratch_va > A733_GPU_VM_GENERAL_END - VM_PAGE_SIZE ||
@@ -169,10 +169,10 @@ sun60i_a733_gpu_vm_prepare(bus_dma_tag_t tag,
 	if (*out != NULL)
 		return EBUSY;
 	if (info->bvnc != VM_BVNC || info->page_size != VM_PAGE_SIZE ||
-	    sun60i_a733_gpu_fwinfo_feature(info,
-	    A733_GPU_FW_FEATURE_PHYS_BUS_WIDTH, &pa_bits) != 0 || pa_bits != 36 ||
-	    sun60i_a733_gpu_fwinfo_feature(info,
-	    A733_GPU_FW_FEATURE_VIRTUAL_ADDRESS_SPACE_BITS, &va_bits) != 0 ||
+	    pvr_fwinfo_feature(info,
+	    PVR_FW_FEATURE_PHYS_BUS_WIDTH, &pa_bits) != 0 || pa_bits != 36 ||
+	    pvr_fwinfo_feature(info,
+	    PVR_FW_FEATURE_VIRTUAL_ADDRESS_SPACE_BITS, &va_bits) != 0 ||
 	    va_bits != 40)
 		return EOPNOTSUPP;
 	error = sun60i_a733_gpu_mmu_indices(scratch_va, &indices);

@@ -31,7 +31,8 @@
 
 #include <sys/types.h>
 #include <sys/bus.h>
-#include <arm/sunxi/sun60i_a733_gpu_fwboot.h>
+#include <arm/sunxi/sun60i_a733_gpu_fwmem.h>
+#include <dev/powervr/pvr_fwboot.h>
 #include <dev/powervr/fwif/pvr_rogue_fwif.h>
 #include <dev/powervr/pvr_fwprobe.h>
 
@@ -61,7 +62,7 @@
  * valid, retain the snapshot even on a runtime error, and return that error.
  */
 int sun60i_a733_gpu_fwprobe_observe(struct sun60i_a733_gpu_fwmem *,
-    const struct sun60i_a733_gpu_fwboot_result *, unsigned int, uint32_t, uint32_t,
+    const struct pvr_fwboot_result *, unsigned int, uint32_t, uint32_t,
     struct sun60i_a733_gpu_fwprobe_observation *);
 
 /*
@@ -70,7 +71,7 @@ int sun60i_a733_gpu_fwprobe_observe(struct sun60i_a733_gpu_fwmem *,
  * Supply the unchanged prepared owner and its successful fwboot result.
  * Work/config mappings must already be verified coherent and not bouncing.
  * The caller holds an adaptive mutex at IPL_NONE, keeps power/clocks on,
- * maps all A733_GPU_FWSTART_REG_SIZE registers, and excludes other queue,
+ * maps all PVR_FWSTART_REG_SIZE registers, and excludes other queue,
  * DMA, IRQ, reset, suspend, and reclamation users for the whole operation.
  *
  * Zero result once and keep it with this boot's owner. Never reset it or
@@ -89,7 +90,7 @@ int sun60i_a733_gpu_fwprobe_observe(struct sun60i_a733_gpu_fwmem *,
  * Return positive errno and cache attempted-operation errors in result.
  */
 int sun60i_a733_gpu_fwprobe(bus_space_tag_t, bus_space_handle_t,
-    struct sun60i_a733_gpu_fwmem *, const struct sun60i_a733_gpu_fwboot_result *,
+    struct sun60i_a733_gpu_fwmem *, const struct pvr_fwboot_result *,
     struct sun60i_a733_gpu_fwprobe_result *);
 
 /*
@@ -104,7 +105,7 @@ int sun60i_a733_gpu_fwprobe(bus_space_tag_t, bus_space_handle_t,
  * command and payload fields identify the operation in the cached result.
  */
 int sun60i_a733_gpu_fwprobe_mmucache(bus_space_tag_t, bus_space_handle_t,
-    struct sun60i_a733_gpu_fwmem *, const struct sun60i_a733_gpu_fwboot_result *,
+    struct sun60i_a733_gpu_fwmem *, const struct pvr_fwboot_result *,
     const struct sun60i_a733_gpu_fwprobe_result *,
     struct sun60i_a733_gpu_fwprobe_result *);
 
@@ -122,7 +123,7 @@ int sun60i_a733_gpu_fwprobe_mmucache(bus_space_tag_t, bus_space_handle_t,
  * require a return word. CCCB, UFO, and fresh fault checks remain separate.
  */
 int sun60i_a733_gpu_fwprobe_cmd(bus_space_tag_t, bus_space_handle_t,
-    struct sun60i_a733_gpu_fwmem *, const struct sun60i_a733_gpu_fwboot_result *,
+    struct sun60i_a733_gpu_fwmem *, const struct pvr_fwboot_result *,
     const struct sun60i_a733_gpu_fwprobe_result *,
     const struct rogue_fwif_kccb_cmd *, unsigned int, uint32_t,
     struct sun60i_a733_gpu_fwprobe_result *);
@@ -143,7 +144,7 @@ int sun60i_a733_gpu_fwprobe_cmd(bus_space_tag_t, bus_space_handle_t,
  * There is no detach or retry after a failed attach in this API.
  */
 int sun60i_a733_gpu_fwqueue_attach(struct sun60i_a733_gpu_fwmem *,
-    const struct sun60i_a733_gpu_fwboot_result *,
+    const struct pvr_fwboot_result *,
     const struct sun60i_a733_gpu_fwprobe_result *,
     struct sun60i_a733_gpu_fwqueue *);
 
@@ -162,7 +163,7 @@ int sun60i_a733_gpu_fwqueue_attach(struct sun60i_a733_gpu_fwmem *,
  * Outputs, commands and service state must be separate from all live DMA.
  */
 int sun60i_a733_gpu_fwqueue_cmd(bus_space_tag_t, bus_space_handle_t,
-    struct sun60i_a733_gpu_fwmem *, const struct sun60i_a733_gpu_fwboot_result *,
+    struct sun60i_a733_gpu_fwmem *, const struct pvr_fwboot_result *,
     struct sun60i_a733_gpu_fwqueue *, const struct rogue_fwif_kccb_cmd *,
     uint32_t, struct sun60i_a733_gpu_fwprobe_result *);
 
@@ -172,7 +173,7 @@ int sun60i_a733_gpu_fwqueue_cmd(bus_space_tag_t, bus_space_handle_t,
  * be drained by the service before job acceptance. Unknown events failstop.
  */
 int sun60i_a733_gpu_fwqueue_observe(struct sun60i_a733_gpu_fwmem *,
-    const struct sun60i_a733_gpu_fwboot_result *,
+    const struct pvr_fwboot_result *,
     struct sun60i_a733_gpu_fwqueue *,
     struct sun60i_a733_gpu_fwprobe_observation *);
 
@@ -185,7 +186,7 @@ int sun60i_a733_gpu_fwqueue_observe(struct sun60i_a733_gpu_fwmem *,
  * Use the same gates, boot identity and retention rules as command().
  */
 int sun60i_a733_gpu_fwqueue_event(struct sun60i_a733_gpu_fwmem *,
-    const struct sun60i_a733_gpu_fwboot_result *,
+    const struct pvr_fwboot_result *,
     struct sun60i_a733_gpu_fwqueue *, uint32_t *);
 
 #endif /* _SUN60I_A733_GPU_FWPROBE_H */

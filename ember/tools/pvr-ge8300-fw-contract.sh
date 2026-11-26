@@ -8,13 +8,12 @@ src=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
 work=$(mktemp -d "${TMPDIR:-/tmp}/pvr-ge8300.XXXXXXXX")
 trap 'rm -rf "$work"' EXIT HUP INT TERM
 "$PVR_HOST_PREFIX/bin/clang" -std=c11 -Wall -Wextra -Werror \
-    -I"$src/sys/dev/powervr" -I"$src/sys/arch/arm/sunxi" \
+    -I"$src/sys/dev/powervr" -I"$src/sys/arch/arm/sunxi" -I"$src/sys/dev/powervr" \
     -I"$PVR_HOST_PREFIX/include" \
     "$src/sys/dev/powervr/pvr_fwinfo.c" \
     "$src/sys/dev/powervr/pvr_fwimage.c" \
     "$src/sys/dev/powervr/pvr_mips.c" \
     "$src/sys/dev/powervr/pvr_ge8300.c" \
-    "$src/sys/arch/arm/sunxi/sun60i_a733_gpu_fwinfo.c" \
     "$src/ember/tools/pvr-ge8300-fw-contract.c" \
     -L"$PVR_HOST_PREFIX/lib" -Wl,-rpath,"$PVR_HOST_PREFIX/lib" -lcrypto \
     -o "$work/contract"

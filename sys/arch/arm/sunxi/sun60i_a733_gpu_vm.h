@@ -31,7 +31,7 @@
 
 #include <sys/types.h>
 #include <sys/bus.h>
-#include <arm/sunxi/sun60i_a733_gpu_fwinfo.h>
+#include <dev/powervr/pvr_fwinfo.h>
 #include <arm/sunxi/sun60i_a733_gpu_mmu.h>
 
 #define A733_GPU_VM_GENERAL_BASE	UINT64_C(0x8000000000)
@@ -76,7 +76,7 @@ struct sun60i_a733_gpu_vm {
  * EINVAL: malformed arguments or DMA backend result. Propagate DMA errors.
  */
 int sun60i_a733_gpu_vm_prepare(bus_dma_tag_t,
-    const struct sun60i_a733_gpu_fwinfo *, uint64_t,
+    const struct pvr_fwinfo *, uint64_t,
     struct sun60i_a733_gpu_vm **);
 
 /*

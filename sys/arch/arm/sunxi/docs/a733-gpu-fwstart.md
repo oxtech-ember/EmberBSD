@@ -1,8 +1,6 @@
 # A733 PowerVR MIPS reset-release contract
 
-The A733 interface forwards to the [common PowerVR owner](../../../../dev/powervr/pvr_fwstart.c).
-
-The native [startup function](../sun60i_a733_gpu_fwstart.c)
+The native [startup function](../../../../dev/powervr/pvr_fwstart.c)
 implements the PowerVR MIPS register sequence for BVNC **36.56.104.183**.
 It uses fault-aware `bus_space_peek` and `bus_space_poke` accesses.
 It does not allocate memory, prepare firmware, verify boot completion, or submit GPU work.
@@ -10,15 +8,15 @@ The software tests below do not establish physical firmware execution or acceler
 
 ## Caller contract
 
-Include [sun60i_a733_gpu_fwstart.h](../sun60i_a733_gpu_fwstart.h).
-Call `sun60i_a733_gpu_fwstart(bst, bsh, info, boot_code, boot_data, exception_code, result)`.
+Include [pvr_fwstart.h](../../../../dev/powervr/pvr_fwstart.h).
+Call `pvr_fwstart(PVR_FW_PROFILE_A733, bst, bsh, info, boot_code, boot_data, exception_code, result)`.
 The three addresses are physical DMA addresses, in that order.
 They refer to separate 4096-byte boot-code, boot-data, and exception-code regions.
 
 The caller must:
 
 1. Own powered hardware and serialize access to it.
-2. Map `A733_GPU_FWSTART_REG_SIZE` bytes at the GPU register base.
+2. Map `PVR_FWSTART_REG_SIZE` bytes at the GPU register base.
 3. Supply validated metadata for the GPU identified on that device.
 4. Keep that metadata stable for the whole call.
 5. Prepare firmware code, data, page tables, and all required FWIF structures.

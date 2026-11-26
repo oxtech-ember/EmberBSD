@@ -7,8 +7,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include "sun60i_a733_gpu_fwimage.h"
-#include "sun60i_a733_gpu_fwinit.h"
+#include "pvr_fwimage.h"
+#include "pvr_fwinit.h"
 #include "dev/powervr/fwif/pvr_rogue_fwif.h"
 
 typedef unsigned int u_int;
@@ -77,7 +77,7 @@ static struct sun60i_gpu_softc {
 	uint64_t sc_bvnc;
 	bus_space_tag_t sc_bst;
 	struct sun60i_a733_gpu_fwmem *sc_fw_memory;
-	struct sun60i_a733_gpu_fwboot_result sc_boot_result;
+	struct pvr_fwboot_result sc_boot_result;
 	struct sun60i_a733_gpu_fwprobe_result sc_cache_result, sc_kick_result;
 	char sc_clock_state[160];
 } sc;
@@ -121,11 +121,11 @@ static void clk_put(struct clk *c) { CHECK(c == &clock_object); }
 static int sun60i_a733_ccu_gpu_inspect(struct clk *c, struct sun60i_a733_gpu_state *s)
 { CHECK(c == &clock_object); memset(s, 0, sizeof(*s)); return stage_effect(); }
 static int fdtbus_get_reg(int phandle, int index, bus_addr_t *addr, bus_size_t *size)
-{ CHECK(phandle == 1 && index == 0); *addr = A733_GPU_BASE; *size = A733_GPU_FWSTART_REG_SIZE; return 0; }
+{ CHECK(phandle == 1 && index == 0); *addr = A733_GPU_BASE; *size = PVR_FWSTART_REG_SIZE; return 0; }
 static int bus_space_map(bus_space_tag_t tag, bus_addr_t addr, bus_size_t size,
     int flags, bus_space_handle_t *handle)
 {
-	CHECK(tag == &sc && addr == A733_GPU_BASE && size == A733_GPU_FWSTART_REG_SIZE && flags == 0);
+	CHECK(tag == &sc && addr == A733_GPU_BASE && size == PVR_FWSTART_REG_SIZE && flags == 0);
 	CHECK(mutex_owned(&sc.sc_run_lock)); map_calls++;
 	*handle = 0x1234;
 	return map_error;
@@ -176,7 +176,7 @@ pvr_job_irq_stop(struct pvr_job_irq *irq)
 int
 pvr_fwservice_attach(struct sun60i_a733_gpu_fwservice *s,
     bus_space_tag_t bst, bus_space_handle_t bsh, struct sun60i_a733_gpu_fwmem *m,
-    const struct sun60i_a733_gpu_fwboot_result *b,
+    const struct pvr_fwboot_result *b,
     const struct sun60i_a733_gpu_fwprobe_result *previous)
 {
 	CHECK(mutex_owned(&sc.sc_run_lock));

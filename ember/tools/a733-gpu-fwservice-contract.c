@@ -8,8 +8,8 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "sun60i_a733_gpu_fwimage.h"
-#include "sun60i_a733_gpu_fwinit.h"
+#include "pvr_fwimage.h"
+#include "pvr_fwinit.h"
 #include "sun60i_a733_gpu_mips.h"
 #include "dev/powervr/fwif/pvr_rogue_fwif.h"
 
@@ -52,7 +52,7 @@ static unsigned int checks;
 
 static struct sun60i_a733_gpu_fwservice service;
 static struct sun60i_a733_gpu_fwmem memory;
-static struct sun60i_a733_gpu_fwboot_result boot;
+static struct pvr_fwboot_result boot;
 static struct sun60i_a733_gpu_fwprobe_result predecessor;
 static struct fake_map table_map;
 static uint8_t table[16384], saved_table[16384];
@@ -316,7 +316,7 @@ bus_dmamap_sync(bus_dma_tag_t tag, bus_dmamap_t map, size_t offset,
 
 int
 pvr_fwqueue_attach(struct sun60i_a733_gpu_fwmem *mem,
-    const struct sun60i_a733_gpu_fwboot_result *b,
+    const struct pvr_fwboot_result *b,
     const struct sun60i_a733_gpu_fwprobe_result *prev,
     struct sun60i_a733_gpu_fwqueue *q)
 {
@@ -331,7 +331,7 @@ pvr_fwqueue_attach(struct sun60i_a733_gpu_fwmem *mem,
 
 int
 pvr_fwqueue_cmd(bus_space_tag_t tag, bus_space_handle_t handle,
-    struct sun60i_a733_gpu_fwmem *mem, const struct sun60i_a733_gpu_fwboot_result *b,
+    struct sun60i_a733_gpu_fwmem *mem, const struct pvr_fwboot_result *b,
     struct sun60i_a733_gpu_fwqueue *q, const struct rogue_fwif_kccb_cmd *cmd,
     uint32_t log_type, struct sun60i_a733_gpu_fwprobe_result *out)
 {
@@ -381,7 +381,7 @@ pvr_fwqueue_cmd(bus_space_tag_t tag, bus_space_handle_t handle,
 
 int
 pvr_fwqueue_observe(struct sun60i_a733_gpu_fwmem *mem,
-    const struct sun60i_a733_gpu_fwboot_result *b,
+    const struct pvr_fwboot_result *b,
     struct sun60i_a733_gpu_fwqueue *q,
     struct sun60i_a733_gpu_fwprobe_observation *out)
 {
@@ -407,7 +407,7 @@ pvr_fwqueue_observe(struct sun60i_a733_gpu_fwmem *mem,
 
 int
 pvr_fwqueue_next(struct sun60i_a733_gpu_fwmem *mem,
-    const struct sun60i_a733_gpu_fwboot_result *b,
+    const struct pvr_fwboot_result *b,
     struct sun60i_a733_gpu_fwqueue *q, struct pvr_fwqueue_event *event)
 {
 	CHECK(mem == &memory && b == &boot && q == &service.queue);
@@ -485,7 +485,7 @@ reset(void)
 	memory.table.map = &table_map;
 	memory.table.size = sizeof(table);
 	table_map.dm_mapsize = sizeof(table);
-	memory.interface_layout.object[A733_GPU_FWINIT_MMUCACHE_SYNC].fw_addr = 0xc0104400;
+	memory.interface_layout.object[PVR_FWINIT_MMUCACHE_SYNC].fw_addr = 0xc0104400;
 	allocated = released = map_creates = map_destroys = 0;
 	heap_allocs = heap_frees = syncs = publications = acknowledgements = 0;
 	commands = failure_step = allocation_step = 0;

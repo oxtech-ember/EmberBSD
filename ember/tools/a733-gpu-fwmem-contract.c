@@ -6,8 +6,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include "sun60i_a733_gpu_fwimage.h"
-#include "sun60i_a733_gpu_fwinit.h"
+#include "pvr_fwimage.h"
+#include "pvr_fwinit.h"
 #include "dev/powervr/fwif/pvr_rogue_fwif.h"
 #include "sun60i_a733_gpu_mips.h"
 #include "pvr_ge8300.h"
@@ -629,7 +629,7 @@ interface_success(struct sun60i_a733_gpu_fwmem *mem)
 	const struct rogue_fwif_ccb_ctl *kccb;
 	const struct rogue_fwif_osinit *osinit;
 	const struct rogue_fwif_sysinit *sysinit;
-	const struct sun60i_a733_gpu_fwinit_region *region;
+	const struct pvr_fwinit_region *region;
 	uint8_t expected[16384];
 	unsigned int previous_operations;
 
@@ -656,7 +656,7 @@ interface_success(struct sun60i_a733_gpu_fwmem *mem)
 	CHECK(osinit->kernel_ccbctl_fw_addr == UINT32_C(0xc0100000));
 	sysinit = (const void *)((const uint8_t *)mem->config.cpu + 8192);
 	CHECK(sysinit->initial_core_clock_speed == 600000000);
-	region = &mem->interface_layout.object[A733_GPU_FWINIT_FAULT];
+	region = &mem->interface_layout.object[PVR_FWINIT_FAULT];
 	CHECK(sysinit->fault_phys_addr == mem->work.address + region->offset);
 	CHECK(region->offset == 24576 && region->size == 4096);
 	previous_operations = operations;
@@ -668,8 +668,8 @@ static void
 interface_tests(void)
 {
 	static const uint32_t occupied_va[] = {
-		A733_GPU_FWINIT_WORK_VA, A733_GPU_FWINIT_CONNECTION_VA,
-		A733_GPU_FWINIT_OSINIT_VA, A733_GPU_FWINIT_SYSINIT_VA
+		PVR_FWINIT_WORK_VA, PVR_FWINIT_CONNECTION_VA,
+		PVR_FWINIT_OSINIT_VA, PVR_FWINIT_SYSINIT_VA
 	};
 	struct sun60i_a733_gpu_fwmem empty = { 0 };
 	struct sun60i_a733_gpu_fwmem *mem;

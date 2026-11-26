@@ -1,17 +1,15 @@
 # A733 PowerVR firmware bootstrap
 
-The A733 interface forwards to the [common PowerVR owner](../../../../dev/powervr/pvr_fwboot.c).
-
-The [bootstrap helper](../sun60i_a733_gpu_fwboot.c)
+The [bootstrap helper](../../../../dev/powervr/pvr_fwboot.c)
 hands prepared native DMA buffers to the GPU. It then observes the firmware
 boot flag for a bounded interval. The helper does not submit GPU commands.
 A successful firmware boot does not establish rendering or DRM support.
 
 ## Inputs and lifetime
 
-Call `sun60i_a733_gpu_fwboot()` with the register tag, register handle,
+Call `pvr_fwboot()` with `PVR_FW_PROFILE_A733`, the register tag, register handle,
 prepared memory owner, and persistent result. See the
-[public contract](../sun60i_a733_gpu_fwboot.h).
+[public contract](../../../../dev/powervr/pvr_fwboot.h).
 The memory owner must contain the unchanged successful outputs of
 [`fwmem_prepare` and `fwmem_interface`](a733-gpu-fwmem.md).
 The interface must use the [native FWIF initializer](a733-gpu-fwinit.md).
@@ -46,7 +44,7 @@ The helper uses these initial full-buffer sync operations:
 | Data, work, and config | `BUS_DMASYNC_PREWRITE \| BUS_DMASYNC_PREREAD` |
 
 All five sync operations finish before
-[`sun60i_a733_gpu_fwstart()`](a733-gpu-fwstart.md) performs MMIO.
+[`pvr_fwstart()`](a733-gpu-fwstart.md) performs MMIO.
 The helper never frees or unmaps DMA memory.
 It never writes firmware buffers after handoff.
 

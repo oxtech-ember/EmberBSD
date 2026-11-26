@@ -7,7 +7,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include "sun60i_a733_gpu_fwinfo.h"
+#include "pvr_fwinfo.h"
 #include "sun60i_a733_gpu_mmu.h"
 #include "dev/powervr/fwif/pvr_rogue_fwif.h"
 
@@ -41,7 +41,7 @@ static unsigned int checks, operations, fail_at, current, live_kmem;
 static unsigned int allocs, mappings, maps, loads;
 static int test_dma_tag;
 static uint64_t address_base;
-static struct sun60i_a733_gpu_fwinfo *profile;
+static struct pvr_fwinfo *profile;
 static struct allocation {
 	void *memory, *mapped_cpu;
 	bool allocated, mapped, created, loaded;
@@ -343,7 +343,7 @@ check_tables(const struct sun60i_a733_gpu_vm *vm)
 static void
 error_case(int expected)
 {
-	struct sun60i_a733_gpu_fwinfo saved = *profile;
+	struct pvr_fwinfo saved = *profile;
 	struct sun60i_a733_gpu_vm *vm = NULL;
 
 	CHECK(sun60i_a733_gpu_vm_prepare(&test_dma_tag, profile,
@@ -437,7 +437,7 @@ lifetime_tests(void)
 static void
 argument_tests(void)
 {
-	struct sun60i_a733_gpu_fwinfo saved = *profile;
+	struct pvr_fwinfo saved = *profile;
 	struct sun60i_a733_gpu_vm *vm = NULL;
 	static const uint64_t bad_va[] = {
 		0, UINT64_C(0x7fffffffff), UINT64_C(0x8000000001),
@@ -463,10 +463,10 @@ argument_tests(void)
 	profile->page_size = 16384;
 	error_case(EOPNOTSUPP);
 	*profile = saved;
-	profile->feature_value[A733_GPU_FW_FEATURE_PHYS_BUS_WIDTH] = 40;
+	profile->feature_value[PVR_FW_FEATURE_PHYS_BUS_WIDTH] = 40;
 	error_case(EOPNOTSUPP);
 	*profile = saved;
-	profile->feature_value[A733_GPU_FW_FEATURE_VIRTUAL_ADDRESS_SPACE_BITS] = 39;
+	profile->feature_value[PVR_FW_FEATURE_VIRTUAL_ADDRESS_SPACE_BITS] = 39;
 	error_case(EOPNOTSUPP);
 	*profile = saved;
 	profile->feature_mask[0] = profile->feature_mask[1] = 0;
@@ -487,15 +487,15 @@ main(int argc, char **argv)
 	profile->bvnc = BVNC;
 	profile->page_size = PAGE;
 	profile->feature_mask[0] = UINT64_C(1) << 36 | UINT64_C(1) << 60;
-	profile->feature_value[A733_GPU_FW_FEATURE_PHYS_BUS_WIDTH] = 36;
-	profile->feature_value[A733_GPU_FW_FEATURE_VIRTUAL_ADDRESS_SPACE_BITS] = 40;
+	profile->feature_value[PVR_FW_FEATURE_PHYS_BUS_WIDTH] = 36;
+	profile->feature_value[PVR_FW_FEATURE_VIRTUAL_ADDRESS_SPACE_BITS] = 40;
 	if (argc == 2) {
 		uint8_t bytes[131072];
 		FILE *input = fopen(argv[1], "rb");
 
 		CHECK(input != NULL && fread(bytes, 1, sizeof(bytes), input) == sizeof(bytes));
 		CHECK(fgetc(input) == EOF && !ferror(input) && fclose(input) == 0);
-		CHECK(sun60i_a733_gpu_fwinfo_parse(bytes, sizeof(bytes), BVNC, profile) == 0);
+		CHECK(pvr_fwinfo_parse(bytes, sizeof(bytes), BVNC, profile) == 0);
 	}
 	argument_tests();
 	allocation_tests();

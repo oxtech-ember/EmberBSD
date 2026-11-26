@@ -5,17 +5,17 @@
 #ifndef _SUN60I_A733_GPU_FWMEM_H
 #define _SUN60I_A733_GPU_FWMEM_H
 
-#include "sun60i_a733_gpu_fwimage.h"
-#include "sun60i_a733_gpu_fwinit.h"
-#include "sun60i_a733_gpu_fwstart.h"
+#include <dev/powervr/pvr_fwimage.h>
+#include <dev/powervr/pvr_fwinit.h>
+#include <dev/powervr/pvr_fwstart.h>
 #include "../../../dev/powervr/pvr_fwmem.h"
 
 #define sun60i_a733_gpu_dma pvr_dma
 #define sun60i_a733_gpu_fwmem pvr_fwmem
 
-int sun60i_a733_gpu_dma_alloc_coherent(bus_dma_tag_t, size_t,
+int pvr_heap_dma_alloc_coherent(bus_dma_tag_t, size_t,
     struct sun60i_a733_gpu_dma *);
-void sun60i_a733_gpu_dma_free(bus_dma_tag_t, struct sun60i_a733_gpu_dma *);
+void pvr_heap_dma_free(bus_dma_tag_t, struct sun60i_a733_gpu_dma *);
 
 
 /*

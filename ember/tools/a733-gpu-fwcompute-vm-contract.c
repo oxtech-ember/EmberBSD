@@ -6,18 +6,18 @@
 #include <stdio.h>
 #include <string.h>
 
-#include "sun60i_a733_gpu_fwcompute_vm.h"
+#include "pvr_fwcompute_vm.h"
 
 struct fixture {
 	uint8_t catalog[4096];
-	uint8_t directories[A733_GPU_FWCOMPUTE_VM_WINDOWS][4096];
-	uint8_t tables[A733_GPU_FWCOMPUTE_VM_WINDOWS][4096];
-	void *directory[A733_GPU_FWCOMPUTE_VM_WINDOWS];
-	void *table[A733_GPU_FWCOMPUTE_VM_WINDOWS];
-	uint64_t directory_pa[A733_GPU_FWCOMPUTE_VM_WINDOWS];
-	uint64_t table_pa[A733_GPU_FWCOMPUTE_VM_WINDOWS];
-	struct a733_gpu_fwcompute_vm_region region;
-	struct a733_gpu_fwcompute_vm_summary summary;
+	uint8_t directories[PVR_FWCOMPUTE_VM_WINDOWS][4096];
+	uint8_t tables[PVR_FWCOMPUTE_VM_WINDOWS][4096];
+	void *directory[PVR_FWCOMPUTE_VM_WINDOWS];
+	void *table[PVR_FWCOMPUTE_VM_WINDOWS];
+	uint64_t directory_pa[PVR_FWCOMPUTE_VM_WINDOWS];
+	uint64_t table_pa[PVR_FWCOMPUTE_VM_WINDOWS];
+	struct pvr_fwcompute_vm_region region;
+	struct pvr_fwcompute_vm_summary summary;
 	struct {
 		uint8_t before[16];
 		uint8_t bytes[32];
@@ -55,7 +55,7 @@ prepare(struct fixture *f, uint8_t poison)
 	unsigned int i;
 
 	memset(f, 0, sizeof(*f));
-	for (i = 0; i < A733_GPU_FWCOMPUTE_VM_WINDOWS; i++) {
+	for (i = 0; i < PVR_FWCOMPUTE_VM_WINDOWS; i++) {
 		f->directory[i] = f->directories[i];
 		f->table[i] = f->tables[i];
 		f->directory_pa[i] = UINT64_C(0x40166000) + i * 4096;
@@ -64,15 +64,15 @@ prepare(struct fixture *f, uint8_t poison)
 	f->region.va = UINT64_C(0x8000000000);
 	f->region.pa = UINT64_C(0x123450000);
 	f->region.pages = 1;
-	f->region.flags = A733_GPU_FWCOMPUTE_VM_RO |
-	    A733_GPU_FWCOMPUTE_VM_BYPASS;
+	f->region.flags = PVR_FWCOMPUTE_VM_RO |
+	    PVR_FWCOMPUTE_VM_BYPASS;
 	memset(&f->context, poison, sizeof(f->context));
 }
 
 static int
 encode(struct fixture *f, uint64_t catalog_pa)
 {
-	return sun60i_a733_gpu_fwcompute_vm_encode(&f->region, 1,
+	return pvr_fwcompute_vm_encode(&f->region, 1,
 	    f->catalog, f->directory, f->table, f->directory_pa,
 	    f->table_pa, catalog_pa, f->context.bytes, &f->summary);
 }
@@ -167,7 +167,7 @@ static void
 ownership_rejected(void)
 {
 	struct fixture f;
-	struct a733_gpu_fwcompute_vm_region region[2];
+	struct pvr_fwcompute_vm_region region[2];
 	int error;
 
 	prepare(&f, 0x71);
@@ -183,8 +183,8 @@ ownership_rejected(void)
 	region[0] = f.region;
 	region[1] = f.region;
 	region[1].va += 4096;
-	region[1].flags ^= A733_GPU_FWCOMPUTE_VM_BYPASS;
-	error = sun60i_a733_gpu_fwcompute_vm_encode(region, 2, f.catalog,
+	region[1].flags ^= PVR_FWCOMPUTE_VM_BYPASS;
+	error = pvr_fwcompute_vm_encode(region, 2, f.catalog,
 	    f.directory, f.table, f.directory_pa, f.table_pa,
 	    UINT64_C(0x40165000), f.context.bytes, &f.summary);
 	check(error == EINVAL, "same backing with different cache policy rejected");
@@ -192,7 +192,7 @@ ownership_rejected(void)
 	region[0] = f.region;
 	region[1] = f.region;
 	region[1].va += 4096;
-	error = sun60i_a733_gpu_fwcompute_vm_encode(region, 2, f.catalog,
+	error = pvr_fwcompute_vm_encode(region, 2, f.catalog,
 	    f.directory, f.table, f.directory_pa, f.table_pa,
 	    UINT64_C(0x40165000), f.context.bytes, &f.summary);
 	check(error == 0, "identical policy allows whole backing alias");
@@ -204,7 +204,7 @@ ownership_rejected(void)
 	check(encode(&f, UINT64_C(0x1000000000)) == EINVAL,
 	    "catalog PA outside 36-bit space rejected");
 	prepare(&f, 0x71);
-	error = sun60i_a733_gpu_fwcompute_vm_encode(&f.region, 1, f.catalog,
+	error = pvr_fwcompute_vm_encode(&f.region, 1, f.catalog,
 	    NULL, f.table, f.directory_pa, f.table_pa,
 	    UINT64_C(0x40165000), f.context.bytes, &f.summary);
 	check(error == EINVAL, "null directory vector rejected");

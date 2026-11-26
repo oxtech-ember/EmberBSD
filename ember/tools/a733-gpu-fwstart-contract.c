@@ -7,7 +7,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include "sun60i_a733_gpu_fwinfo.h"
+#include "pvr_fwinfo.h"
 #include "pvr_ge8300.h"
 
 #define CHECK(c) do { \
@@ -38,7 +38,7 @@ static unsigned checks, ntrace, fail_at, ndelay, release_delay;
 static bool fail_after_write, write_barrier_due, read_barrier_ready;
 static uint32_t barrier_reg;
 static unsigned barrier_width, nwrite, secure_prefix, reset2_extra;
-static struct sun60i_a733_gpu_fwstart_result observed;
+static struct pvr_fwstart_result observed;
 
 static int
 access_register(bool write, unsigned width, uint32_t reg, uint64_t *value)
@@ -145,14 +145,14 @@ delay(unsigned us)
 #include "driver.h"
 
 static void
-feature(struct sun60i_a733_gpu_fwinfo *info, unsigned id, uint64_t value)
+feature(struct pvr_fwinfo *info, unsigned id, uint64_t value)
 {
 	info->feature_mask[id / 64] |= UINT64_C(1) << (id % 64);
 	info->feature_value[id] = value;
 }
 
 /* Exact metadata from the pinned 36.56.104.183 image; no firmware payload. */
-static const struct sun60i_a733_gpu_fwinfo pinned_profile = {
+static const struct pvr_fwinfo pinned_profile = {
 	.bvnc = UINT64_C(0x00240038006800b7),
 	.brn_mask = UINT64_C(0x201),
 	.ern_mask = UINT64_C(0xf5),
@@ -169,12 +169,12 @@ static const struct sun60i_a733_gpu_fwinfo pinned_profile = {
 };
 
 static void
-reset(struct sun60i_a733_gpu_fwinfo *info)
+reset(struct pvr_fwinfo *info)
 {
 	*info = pinned_profile;
 	memset(registers, 0, sizeof(registers));
 	memset(trace, 0, sizeof(trace));
-	observed = (struct sun60i_a733_gpu_fwstart_result){ UINT32_MAX, UINT32_MAX, true, true };
+	observed = (struct pvr_fwstart_result){ UINT32_MAX, UINT32_MAX, true, true };
 	ntrace = fail_at = ndelay = release_delay = nwrite = 0;
 	secure_prefix = 2;
 	reset2_extra = 6;
@@ -183,9 +183,9 @@ reset(struct sun60i_a733_gpu_fwinfo *info)
 }
 
 static int
-run(const struct sun60i_a733_gpu_fwinfo *info)
+run(const struct pvr_fwinfo *info)
 {
-	return sun60i_a733_gpu_fwstart(&trace, 0, info, 0x40018000,
+	return pvr_fwstart(PVR_FW_PROFILE_A733, &trace, 0, info, 0x40018000,
 	    0x4001c000, 0x40017000, &observed);
 }
 
@@ -228,7 +228,7 @@ static const struct operation upstream_default[] = {
 };
 
 static void
-clear_feature(struct sun60i_a733_gpu_fwinfo *info, unsigned id)
+clear_feature(struct pvr_fwinfo *info, unsigned id)
 {
 	info->feature_mask[id / 64] &= ~(UINT64_C(1) << (id % 64));
 	info->feature_value[id] = 0;
@@ -236,7 +236,7 @@ clear_feature(struct sun60i_a733_gpu_fwinfo *info, unsigned id)
 
 /* Bits: secure reset, BRN71242, XE_TPU2, GPU multicore. */
 static unsigned
-prepare(struct sun60i_a733_gpu_fwinfo *info, struct operation *golden,
+prepare(struct pvr_fwinfo *info, struct operation *golden,
     unsigned variant)
 {
 	unsigned count = 0;
@@ -245,13 +245,13 @@ prepare(struct sun60i_a733_gpu_fwinfo *info, struct operation *golden,
 	secure_prefix = variant & 1 ? 2 : 0;
 	reset2_extra = variant & 4 ? 6 : 0;
 	if ((variant & 1) == 0)
-		clear_feature(info, A733_GPU_FW_FEATURE_SYS_BUS_SECURE_RESET);
+		clear_feature(info, PVR_FW_FEATURE_SYS_BUS_SECURE_RESET);
 	if (variant & 2)
 		info->brn_mask |= UINT64_C(1) << 11;
 	if ((variant & 4) == 0)
-		clear_feature(info, A733_GPU_FW_FEATURE_XE_TPU2);
+		clear_feature(info, PVR_FW_FEATURE_XE_TPU2);
 	if ((variant & 8) == 0)
-		clear_feature(info, A733_GPU_FW_FEATURE_GPU_MULTICORE_SUPPORT);
+		clear_feature(info, PVR_FW_FEATURE_GPU_MULTICORE_SUPPORT);
 	for (unsigned i = 0; i < __arraycount(upstream_default); i++) {
 		struct operation op = upstream_default[i];
 		if ((op.reg == 0xa100 && (variant & 1) == 0) ||
@@ -281,7 +281,7 @@ check_trace(const struct operation *golden, unsigned count)
 static void
 test_sequence(void)
 {
-	struct sun60i_a733_gpu_fwinfo info;
+	struct pvr_fwinfo info;
 	struct operation golden[30];
 	for (unsigned variant = 0; variant < 16; variant++) {
 		unsigned count = prepare(&info, golden, variant);
@@ -321,7 +321,7 @@ test_sequence(void)
 static void
 test_preflight(void)
 {
-	struct sun60i_a733_gpu_fwinfo info;
+	struct pvr_fwinfo info;
 	const uint64_t invalid[] = {
 		1, UINT64_C(1) << 36, UINT64_MAX,
 		0x1fc00000, 0x1fc01000, 0x1fc02000, 0x1fc03000
@@ -333,12 +333,12 @@ test_preflight(void)
 		switch (bad) {
 		case 0: info.bvnc++; break;
 		case 1: info.brn_mask = 0; break;
-		case 2: feature(&info, A733_GPU_FW_FEATURE_PHYS_BUS_WIDTH, 32); break;
-		case 3: feature(&info, A733_GPU_FW_FEATURE_SLC_CACHE_LINE_SIZE_BITS, 1024); break;
-		case 4: info.feature_mask[0] &= ~(UINT64_C(1) << A733_GPU_FW_FEATURE_MIPS); break;
-		case 5: info.feature_mask[0] &= ~(UINT64_C(1) << A733_GPU_FW_FEATURE_PBE2_IN_XE); break;
-		case 6: info.feature_mask[0] &= ~(UINT64_C(1) << A733_GPU_FW_FEATURE_PHYS_BUS_WIDTH); break;
-		case 7: info.feature_mask[0] &= ~(UINT64_C(1) << A733_GPU_FW_FEATURE_SLC_CACHE_LINE_SIZE_BITS); break;
+		case 2: feature(&info, PVR_FW_FEATURE_PHYS_BUS_WIDTH, 32); break;
+		case 3: feature(&info, PVR_FW_FEATURE_SLC_CACHE_LINE_SIZE_BITS, 1024); break;
+		case 4: info.feature_mask[0] &= ~(UINT64_C(1) << PVR_FW_FEATURE_MIPS); break;
+		case 5: info.feature_mask[0] &= ~(UINT64_C(1) << PVR_FW_FEATURE_PBE2_IN_XE); break;
+		case 6: info.feature_mask[0] &= ~(UINT64_C(1) << PVR_FW_FEATURE_PHYS_BUS_WIDTH); break;
+		case 7: info.feature_mask[0] &= ~(UINT64_C(1) << PVR_FW_FEATURE_SLC_CACHE_LINE_SIZE_BITS); break;
 		}
 		CHECK(run(&info) == EOPNOTSUPP && ntrace == 0 && !observed.touched);
 		CHECK(!observed.released && observed.writes == 0 && ndelay == 0);
@@ -350,7 +350,7 @@ test_preflight(void)
 			addresses[1] = 0x4001c000;
 			addresses[2] = 0x40017000;
 			addresses[slot] = invalid[i];
-			CHECK(sun60i_a733_gpu_fwstart(&trace, 0, &info,
+			CHECK(pvr_fwstart(PVR_FW_PROFILE_A733, &trace, 0, &info,
 			    addresses[0], addresses[1], addresses[2], &observed) == EINVAL);
 			CHECK(ntrace == 0 && !observed.touched && !observed.released);
 		}
@@ -363,29 +363,29 @@ test_preflight(void)
 		if (pair == 0) addresses[1] = addresses[0];
 		if (pair == 1) addresses[2] = addresses[0];
 		if (pair == 2) addresses[2] = addresses[1];
-		CHECK(sun60i_a733_gpu_fwstart(&trace, 0, &info,
+		CHECK(pvr_fwstart(PVR_FW_PROFILE_A733, &trace, 0, &info,
 		    addresses[0], addresses[1], addresses[2], &observed) == EINVAL);
 		CHECK(ntrace == 0 && !observed.touched);
 	}
 	/* Full 36-bit output addresses and the excluded range's upper boundary. */
 	reset(&info);
-	CHECK(sun60i_a733_gpu_fwstart(&trace, 0, &info, UINT64_C(0xffffff000),
+	CHECK(pvr_fwstart(PVR_FW_PROFILE_A733, &trace, 0, &info, UINT64_C(0xffffff000),
 	    UINT64_C(0xfffffe000), 0x1fc04000, &observed) == 0);
 	CHECK(registers[0x820 / 8] == UINT64_C(0xffffff00c));
 	CHECK(registers[0x830 / 8] == UINT64_C(0xfffffe00c));
 	CHECK(registers[0x840 / 8] == 0x1fc0400c);
 	reset(&info);
-	CHECK(sun60i_a733_gpu_fwstart(&trace, 0, NULL, 0, 0, 0, &observed) == EINVAL);
+	CHECK(pvr_fwstart(PVR_FW_PROFILE_A733, &trace, 0, NULL, 0, 0, 0, &observed) == EINVAL);
 	CHECK(!observed.touched && !observed.released && observed.writes == 0);
 	CHECK(ntrace == 0);
-	CHECK(sun60i_a733_gpu_fwstart(&trace, 0, &info, 0, 0, 0, NULL) == EINVAL);
+	CHECK(pvr_fwstart(PVR_FW_PROFILE_A733, &trace, 0, &info, 0, 0, 0, NULL) == EINVAL);
 	CHECK(ntrace == 0);
 }
 
 static void
 test_firmware(const char *path)
 {
-	struct sun60i_a733_gpu_fwinfo parsed, info;
+	struct pvr_fwinfo parsed, info;
 	uint8_t *bytes = malloc(131072);
 	FILE *file = fopen(path, "rb");
 	const unsigned count = __arraycount(upstream_default);
@@ -394,7 +394,7 @@ test_firmware(const char *path)
 	CHECK(fread(bytes, 1, 131072, file) == 131072);
 	CHECK(fgetc(file) == EOF && !ferror(file));
 	CHECK(fclose(file) == 0);
-	CHECK(sun60i_a733_gpu_fwinfo_parse(bytes, 131072,
+	CHECK(pvr_fwinfo_parse(bytes, 131072,
 	    pinned_profile.bvnc, &parsed) == 0);
 	free(bytes);
 	CHECK(parsed.bvnc == pinned_profile.bvnc);
@@ -425,7 +425,7 @@ test_firmware(const char *path)
 static void
 test_ge8300(const char *path)
 {
-	struct sun60i_a733_gpu_fwinfo info;
+	struct pvr_fwinfo info;
 	struct operation golden[64];
 	unsigned count = prepare(&info, golden, 1);
 
@@ -452,7 +452,7 @@ test_ge8300(const char *path)
 		    PVR_GE8300_BVNC, &info) == 0);
 		free(bytes);
 	}
-	struct sun60i_a733_gpu_fwinfo verified = info;
+	struct pvr_fwinfo verified = info;
 	CHECK(count == 24);
 	CHECK(run(&info) == EOPNOTSUPP);
 	CHECK(pvr_fwstart(PVR_FW_PROFILE_GE8300, &trace, 0, &info,

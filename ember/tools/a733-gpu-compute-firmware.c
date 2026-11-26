@@ -23,7 +23,7 @@
 #include "a733-sha256.h"
 #include "sun60i_a733_gpu_fwcompute.h"
 #include "sun60i_a733_gpu_fwcompute_file.h"
-#include "sun60i_a733_gpu_fwcompute_vm.h"
+#include "pvr_fwcompute_vm.h"
 
 /* The pinned manifest: artifact area, byte range, GPU address, policy. */
 struct pack_resource {
@@ -121,8 +121,8 @@ main(int argc, char **argv)
 	struct a733_gpu_fwcompute_file_header header;
 	struct sun60i_a733_gpu_fwcompute_inputs inputs;
 	struct sun60i_a733_gpu_fwcompute_image *image;
-	struct a733_gpu_fwcompute_vm_region regions[A733_GPU_FWCOMPUTE_VM_REGIONS];
-	struct a733_gpu_fwcompute_vm_summary summary;
+	struct pvr_fwcompute_vm_region regions[A733_GPU_FWCOMPUTE_VM_REGIONS];
+	struct pvr_fwcompute_vm_summary summary;
 	struct a733_gpu_fwcompute_file parsed;
 	struct sha256_ctx ctx;
 	uint8_t digest[32], *payload, *whole, state_bytes[56], *command;
@@ -317,9 +317,9 @@ main(int argc, char **argv)
 		expected_leaves += regions[i].pages;
 		regions[i].flags =
 		    ((table[i].flags & A733_GPU_FWCOMPUTE_FLAG_RO) != 0 ?
-		    A733_GPU_FWCOMPUTE_VM_RO : 0) |
+		    PVR_FWCOMPUTE_VM_RO : 0) |
 		    ((table[i].flags & A733_GPU_FWCOMPUTE_FLAG_BYPASS) != 0 ?
-		    A733_GPU_FWCOMPUTE_VM_BYPASS : 0);
+		    PVR_FWCOMPUTE_VM_BYPASS : 0);
 	}
 	region_count = A733_GPU_FWCOMPUTE_RESOURCES;
 	if (profile == PVR_FW_PROFILE_A733) {
@@ -343,7 +343,7 @@ main(int argc, char **argv)
 	memset(vm_pd, 0, sizeof(vm_pd));
 	memset(vm_pt, 0, sizeof(vm_pt));
 	memset(vm_fwc, 0, sizeof(vm_fwc));
-	if (sun60i_a733_gpu_fwcompute_vm_encode(regions,
+	if (pvr_fwcompute_vm_encode(regions,
 	    region_count, vm_pc, vm_pdv,
 	    vm_ptv, vm_pdpa, vm_ptpa, 0x4ff000, vm_fwc, &summary) != 0 ||
 	    summary.windows != (profile == PVR_FW_PROFILE_A733 ? 5U : 3U) ||

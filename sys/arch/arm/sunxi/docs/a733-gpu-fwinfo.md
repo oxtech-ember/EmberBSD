@@ -1,6 +1,6 @@
 # A733 PowerVR firmware metadata validation
 
-The native [parser](../sun60i_a733_gpu_fwinfo.c) wraps the [common mechanism](../../../../dev/powervr/pvr_fwinfo.c) and
+The native [parser](../../../../dev/powervr/pvr_fwinfo.c) directly
 checks PowerVR firmware metadata before a future MIPS loader uses it.
 It performs no allocation, file access, MMIO, DMA, or firmware execution.
 It does not validate ELF contents, executable instructions, signatures, or
@@ -8,8 +8,8 @@ firmware authenticity. Successful metadata validation is not a GPU driver.
 
 ## Interface and limits
 
-Include [sun60i_a733_gpu_fwinfo.h](../sun60i_a733_gpu_fwinfo.h).
-Call `sun60i_a733_gpu_fwinfo_parse(bytes, size, expected_bvnc, &info)`.
+Include [pvr_fwinfo.h](../../../../dev/powervr/pvr_fwinfo.h).
+Call `pvr_fwinfo_parse(bytes, size, expected_bvnc, &info)`.
 Supply a stable byte buffer and the packed BVNC observed on the target GPU.
 The caller must limit file allocation before calling the parser.
 The parser reads little-endian fields explicitly and accepts unaligned buffers.
@@ -54,7 +54,7 @@ This acceptance does not mean that firmware is ready to load or execute.
 The result contains decoded layouts, per-type allocation sizes, version fields,
 BRN/ERN masks, feature masks, and feature values. Boolean features have value 1.
 Parameter features use the upstream ascending-feature-ID order.
-`sun60i_a733_gpu_fwinfo_feature()` returns `ENOENT` for an absent capability;
+`pvr_fwinfo_feature()` returns `ENOENT` for an absent capability;
 a present parameter with value zero still succeeds.
 The result owns no input pointers. Array offsets and counts identify bounded
 spans in the original buffer, which the caller must keep unchanged when using them.

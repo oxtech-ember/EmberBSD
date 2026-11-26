@@ -6,7 +6,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "sun60i_a733_gpu_fwinit.h"
+#include "pvr_fwinit.h"
 #include "dev/powervr/fwif/pvr_rogue_fwif.h"
 
 static unsigned int checks;
@@ -37,7 +37,7 @@ static uint8_t work_before[WORK_BYTES], config_before[sizeof(config_store)];
 static uint8_t golden_work[REQUIRED], golden_config[CONFIG_SIZE];
 static uint8_t *const work = work_store + 4096;
 static uint8_t *const config = config_store + 4096;
-static struct sun60i_a733_gpu_fwinit_layout result, result_before;
+static struct pvr_fwinit_layout result, result_before;
 
 static uint32_t
 get32(const uint8_t *p)
@@ -137,16 +137,16 @@ success(size_t capacity, uint64_t phys, uint32_t hz, uint32_t clusters,
 	size_t i, j;
 
 	reset();
-	CHECK(sun60i_a733_gpu_fwinit(work, capacity, config, CONFIG_SIZE,
+	CHECK(pvr_fwinit(work, capacity, config, CONFIG_SIZE,
 	    phys, hz, clusters, slc, &result) == 0);
 	golden(phys, hz, clusters, slc);
 	CHECK(memcmp(work, golden_work, REQUIRED) == 0);
 	CHECK(memcmp(config, golden_config, CONFIG_SIZE) == 0);
 	CHECK(result.total_work_size == REQUIRED);
 	CHECK(sizeof(expected) / sizeof(expected[0]) ==
-	    A733_GPU_FWINIT_OBJECT_COUNT);
+	    PVR_FWINIT_OBJECT_COUNT);
 	for (i = 0; i < 19; i++) {
-		const struct sun60i_a733_gpu_fwinit_region *r = &result.object[i];
+		const struct pvr_fwinit_region *r = &result.object[i];
 
 		CHECK(r->offset == expected[i].offset);
 		CHECK(r->size == expected[i].size);
@@ -155,7 +155,7 @@ success(size_t capacity, uint64_t phys, uint32_t hz, uint32_t clusters,
 		CHECK(r->offset % (i == 9 ? 4096 : 64) == 0);
 		CHECK(r->offset + r->size <= (i < 16 ? REQUIRED : CONFIG_SIZE));
 		for (j = 0; j < i; j++) {
-			const struct sun60i_a733_gpu_fwinit_region *s = &result.object[j];
+			const struct pvr_fwinit_region *s = &result.object[j];
 
 			if (r->buffer == s->buffer)
 				CHECK(s->offset + s->size <= r->offset ||
@@ -194,13 +194,13 @@ success(size_t capacity, uint64_t phys, uint32_t hz, uint32_t clusters,
 
 static void
 failure(void *w, size_t ws, void *c, size_t cs, uint64_t phys, uint64_t hz,
-    uint32_t clusters, uint32_t slc, struct sun60i_a733_gpu_fwinit_layout *out,
+    uint32_t clusters, uint32_t slc, struct pvr_fwinit_layout *out,
     int error)
 {
 	memcpy(work_before, work_store, sizeof(work_store));
 	memcpy(config_before, config_store, sizeof(config_store));
 	memcpy(&result_before, &result, sizeof(result));
-	CHECK(sun60i_a733_gpu_fwinit(w, ws, c, cs, phys, hz, clusters, slc, out)
+	CHECK(pvr_fwinit(w, ws, c, cs, phys, hz, clusters, slc, out)
 	    == error);
 	CHECK(memcmp(work_before, work_store, sizeof(work_store)) == 0);
 	CHECK(memcmp(config_before, config_store, sizeof(config_store)) == 0);
@@ -302,9 +302,9 @@ failure_tests(void)
 int
 main(void)
 {
-	CHECK(sun60i_a733_gpu_fwinit_work_size() == REQUIRED);
-	CHECK(A733_GPU_FWINIT_KCCB_COUNT == 128);
-	CHECK(A733_GPU_FWINIT_FWCCB_COUNT == 32);
+	CHECK(pvr_fwinit_work_size() == REQUIRED);
+	CHECK(PVR_FWINIT_KCCB_COUNT == 128);
+	CHECK(PVR_FWINIT_FWCCB_COUNT == 32);
 	CHECK(sizeof(struct rogue_fwif_kccb_cmd) == 88);
 	CHECK(sizeof(struct rogue_fwif_fwccb_cmd) == 88);
 	success(REQUIRED, DEFAULT_PA, 600000000, 2, 16);
@@ -317,7 +317,7 @@ main(void)
 	failure_tests();
 	reset();
 	/* Exactly adjacent CPU spans are permitted. */
-	CHECK(sun60i_a733_gpu_fwinit(work, REQUIRED, work + REQUIRED,
+	CHECK(pvr_fwinit(work, REQUIRED, work + REQUIRED,
 	    CONFIG_SIZE, DEFAULT_PA, 600000000, 2, 16, &result) == 0);
 	golden(DEFAULT_PA, 600000000, 2, 16);
 	CHECK(memcmp(work, golden_work, REQUIRED) == 0);

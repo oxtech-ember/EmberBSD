@@ -23,7 +23,7 @@
  */
 int sun60i_a733_gpu_fwservice_attach(struct sun60i_a733_gpu_fwservice *,
     bus_space_tag_t, bus_space_handle_t, struct sun60i_a733_gpu_fwmem *,
-    const struct sun60i_a733_gpu_fwboot_result *,
+    const struct pvr_fwboot_result *,
     const struct sun60i_a733_gpu_fwprobe_result *);
 /*
  * Install once under both device and platform gates. Keep cookie alive until
