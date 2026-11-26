@@ -325,6 +325,12 @@ FILES+=		sysinstmsgs.${LANG}
 FILESDIR_sysinstmsgs.${LANG}=	${CATALOGDIR}
 .endfor
 
+.if defined(CRUNCHEDPROG)
+# crunchgen builds only depend and the program object. Install media
+# copy the translated catalogs from this object directory.
+${PROG}.ro: ${LANGUAGES:N${SYSINSTLANG}:S/^/sysinstmsgs./}
+.endif
+
 .PHONY:	check-lang
 check-lang:	msg.def msg_defs.h
 	${_MKTARGET_CREATE}

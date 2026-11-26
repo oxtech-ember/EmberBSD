@@ -14,7 +14,10 @@ ${V}=		${${V}DIR}/${F}.fs
 
 MDSETTARGETS=		INSTALL		${RAMDISK}	-
 MDSETTARGETS+=		GENERIC		${RAMDISK}	-
+# A reduced release that sets BUILD_KERNELS builds only those kernels.
+.if !defined(BUILD_KERNELS) || !empty(BUILD_KERNELS:MINSTALL_XEN3_DOMU)
 MDSETTARGETS+=INSTALL_XEN3_DOMU		${RAMDISK}	-
+.endif
 
 MDSET_RELEASEDIR=	binary/kernel
 

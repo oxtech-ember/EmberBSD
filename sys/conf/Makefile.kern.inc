@@ -99,6 +99,10 @@ CWARNFLAGS+=	-Wold-style-definition
 CWARNFLAGS+=	-Wswitch -Wshadow
 CWARNFLAGS+=	-Wcast-qual -Wwrite-strings
 CWARNFLAGS+=	-Wno-unreachable-code
+# Clang 23 adds -Wunused-but-set-global and -Wuninitialized-const-pointer.
+# They stay visible, but do not stop the build until the code is fixed.
+CWARNFLAGS+=	${${ACTIVE_CC} == "clang":? -Wno-error=unused-but-set-global \
+		-Wno-error=uninitialized-const-pointer :}
 #CWARNFLAGS+=	-Wc++-compat -Wno-error=c++-compat
 CWARNFLAGS+=	-Wno-pointer-sign -Wno-attributes
 CWARNFLAGS+=	-Wno-type-limits

@@ -22,9 +22,9 @@ PROGS+=		h_spawn
 PROGS+=		h_spawnattr
 SCRIPTS=	h_nonexec h_zero
 
+# The build has the tools awk, not dd. SCRIPTS installs h_zero with its mode.
 h_zero:
-	dd if=/dev/zero of=h_zero bs=1k count=2
-	chmod a+x h_zero
+	${TOOL_AWK} 'BEGIN { for (i = 0; i < 2048; i++) printf "%c", 0 }' > ${.TARGET}
 
 CLEANFILES+=	h_nonexec h_zero
 

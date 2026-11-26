@@ -27,6 +27,9 @@ LDADD+=	-larchive -lexpat -lbz2 -llzma -lz -lcrypto -lpthread
 SRCS.h_cpio= \
 test_main.c \
 test_utils.c \
+test_extract_cpio_absolute_paths.c \
+test_option_o_rejected_entry.c \
+test_option_uuencode.c \
 cmdline.c \
 lafe_err.c \
 test_0.c \

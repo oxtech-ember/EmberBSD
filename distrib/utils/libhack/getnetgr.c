@@ -24,28 +24,23 @@ __weak_alias(setnetgrent,_setnetgrent)
  */
 
 void
-endnetgrent()
+endnetgrent(void)
 {
 }
 
 void
-setnetgrent(ng)
-	const char	*ng;
+setnetgrent(const char *ng)
 {
 }
 
 int
-getnetgrent(host, user, domain)
-	const char	**host;
-	const char	**user;
-	const char	**domain;
+getnetgrent(const char **host, const char **user, const char **domain)
 {
 	return 0;
 }
 
 int
-innetgr(grp, host, user, domain)
-	const char	*grp, *host, *user, *domain;
+innetgr(const char *grp, const char *host, const char *user, const char *domain)
 {
 	return 0;
 }

@@ -8,4 +8,7 @@ KMOD=   swsensor
 
 SRCS=	swsensor.c
 
+# The sysctl node numbers are set for the sysctl tree only.
+CPPFLAGS+=	${${ACTIVE_CC} == "clang" :? -Wno-unused-but-set-global :}
+
 .include <bsd.kmodule.mk>

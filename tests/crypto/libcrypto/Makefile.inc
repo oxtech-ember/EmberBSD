@@ -28,9 +28,9 @@ CRYPTODIST=	${NETBSDSRCDIR}/crypto
 .else
 .PATH: ${OPENSSLSRC}/crypto/${HELPER_DIR}
 .endif
-PROGDPLIBS+=	cryptotest ${OPENSSLSRC}/../lib/libcryptotest
+PROGDPLIBS+=	cryptotest ${NETBSDSRCDIR}/crypto/external/apache2/openssl/lib/libcryptotest
 .if ${HELPER_NAME} != "threadstest"
-PROGDPLIBS+=	crypto ${OPENSSLSRC}/../lib/libcrypto
+PROGDPLIBS+=	crypto ${NETBSDSRCDIR}/crypto/external/apache2/openssl/lib/libcrypto
 .endif
 DPADD+=		${LIBCRYPT}
 LDADD+=		-lcrypt

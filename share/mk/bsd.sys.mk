@@ -256,6 +256,11 @@ LIBCSANITIZERFLAGS+=	-fno-sanitize=vptr	# Unsupported in micro-UBSan
 LIBCSANITIZERFLAGS=	# empty
 .endif
 
+# Clang 23 adds -Wunused-but-set-global and -Wuninitialized-const-pointer.
+# They stay visible, but do not stop the build until the code is fixed.
+CWARNFLAGS.clang+=	-Wno-error=unused-but-set-global \
+			-Wno-error=uninitialized-const-pointer
+
 CWARNFLAGS+=	${CWARNFLAGS.${ACTIVE_CC}}
 
 CPPFLAGS+=	${AUDIT:D-D__AUDIT__}

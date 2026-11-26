@@ -15,6 +15,7 @@ TESTS_SH+=	t_tar
 CPPFLAGS+=-I${LIBARCHIVE}/test_utils -I${LIBARCHIVE}/tar -I.
 CPPFLAGS+=-I${LIBARCHIVE}/tar/test -I${NETBSDSRCDIR}/external/bsd/libarchive/include
 CPPFLAGS+=-I${LIBARCHIVE}/libarchive
+CPPFLAGS+=-DPLATFORM_CONFIG_H='"config_netbsd.h"'
 
 .PATH: ${LIBARCHIVE}/tar/test ${LIBARCHIVE}/test_utils
 
@@ -25,6 +26,18 @@ LDADD+=	-larchive -lexpat -lbz2 -llzma -lz -lcrypto -lpthread
 SRCS.h_tar= \
 test_main.c \
 test_utils.c \
+test_option_P_upper.c \
+test_option_ignore_zeros.c \
+test_copy_data_warning.c \
+test_crlf_mtree.c \
+test_edit_pathname_hardlink.c \
+test_list_item.c \
+test_option_group.c \
+test_option_mode.c \
+test_option_mtime.c \
+test_option_owner.c \
+test_option_safe_writes.c \
+test_option_stdout_size_exceeds_declared.c \
 test_0.c \
 test_basic.c \
 test_copy.c \

@@ -1646,7 +1646,10 @@
 ./usr/libdata/debug/usr/tests/crypto/libcrypto/h_ecdsatest.debug	tests-crypto-debug	debug,atf,compattestfile,openssl=11
 ./usr/libdata/debug/usr/tests/crypto/libcrypto/h_ecdsatest.debug	tests-obsolete		obsolete,openssl=30
 ./usr/libdata/debug/usr/tests/crypto/libcrypto/h_ectest.debug		tests-crypto-debug	debug,atf,compattestfile
-./usr/libdata/debug/usr/tests/crypto/libcrypto/h_enginetest.debug	tests-crypto-debug	debug,atf,compattestfile
+./usr/libdata/debug/usr/tests/crypto/libcrypto/h_enginetest.debug		tests-crypto-debug		debug,atf,compattestfile,openssl=11
+./usr/libdata/debug/usr/tests/crypto/libcrypto/h_enginetest.debug		tests-crypto-debug		debug,atf,compattestfile,openssl=30
+./usr/libdata/debug/usr/tests/crypto/libcrypto/h_enginetest.debug		tests-crypto-debug		debug,atf,compattestfile,openssl=35
+./usr/libdata/debug/usr/tests/crypto/libcrypto/h_enginetest.debug		tests-obsolete		debug,obsolete,openssl=41
 ./usr/libdata/debug/usr/tests/crypto/libcrypto/h_evp_test.debug		tests-crypto-debug	debug,atf,compattestfile
 ./usr/libdata/debug/usr/tests/crypto/libcrypto/h_exptest.debug		tests-crypto-debug	debug,atf,compattestfile
 ./usr/libdata/debug/usr/tests/crypto/libcrypto/h_hmactest.debug		tests-crypto-debug	debug,atf,compattestfile
@@ -2362,6 +2365,7 @@
 ./usr/libdata/debug/usr/tests/lib/libm/t_casinh.debug			tests-lib-debug		debug,atf,compattestfile
 ./usr/libdata/debug/usr/tests/lib/libm/t_cbrt.debug			tests-lib-debug		debug,atf,compattestfile
 ./usr/libdata/debug/usr/tests/lib/libm/t_ceil.debug			tests-lib-debug		debug,atf,compattestfile
+./usr/libdata/debug/usr/tests/lib/libm/t_complex_helpers.debug		tests-lib-debug		debug,atf,compattestfile
 ./usr/libdata/debug/usr/tests/lib/libm/t_cos.debug			tests-lib-debug		debug,atf,compattestfile
 ./usr/libdata/debug/usr/tests/lib/libm/t_cosh.debug			tests-lib-debug		debug,atf,compattestfile
 ./usr/libdata/debug/usr/tests/lib/libm/t_erf.debug			tests-lib-debug		debug,atf,compattestfile

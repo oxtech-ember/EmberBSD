@@ -67,16 +67,13 @@ __weak_alias(getnetbyname,_getnetbyname)
 #endif
 
 struct netent *
-getnetbyaddr(net, net_type)
-	uint32_t net;
-	int net_type;
+getnetbyaddr(uint32_t net, int net_type)
 {
 	return (NULL);
 }
 
 struct netent *
-getnetbyname(net)
-	register const char *net;
+getnetbyname(const char *net)
 {
 	return (NULL);
 }

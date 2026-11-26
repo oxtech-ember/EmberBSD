@@ -28,5 +28,8 @@ LDADD+=		-levent_pthreads -levent -lz -lpthread
 
 COPTS.regress_rpc.c+=	${CC_WNO_CAST_FUNCTION_TYPE}
 COPTS.regress_dns.c+=	${CC_WNO_MAYBE_UNINITIALIZED}
+# The common libevent regression tests do not build with these warnings.
+CWARNFLAGS.clang+=	-Wno-cast-qual -Wno-shadow -Wno-unused-but-set-global \
+			-Wno-missing-format-attribute -Wno-format-nonliteral
 
 .include <bsd.test.mk>

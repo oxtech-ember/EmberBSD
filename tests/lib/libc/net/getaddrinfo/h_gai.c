@@ -53,7 +53,7 @@ static void print1(const char *, const struct addrinfo *, char *, char *);
 int main(int, char *[]);
 
 static void
-usage()
+usage(void)
 {
 	fprintf(stderr, "usage: test [-f family] [-s socktype] [-p proto] [-DPRSv46] host serv\n");
 }

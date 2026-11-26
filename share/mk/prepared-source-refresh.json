@@ -552,6 +552,9 @@
     "external/gpl2/rcs/gnu/gnu-build": "external/gpl2/rcs/gnu",
     "external/gpl2/diffutils/gnu/gnu-build": "external/gpl2/diffutils/gnu",
     "external/gpl2/texinfo/bin/gnu-build": "external/gpl2/texinfo/bin",
+    "distrib/amd64/ramdisks/ramdisk/*": "distrib/amd64/ramdisks/ramdisk",
+    "distrib/amd64/ramdisks/ramdisk-cgdroot/*": "distrib/amd64/ramdisks/ramdisk-cgdroot",
+    "distrib/amd64/ramdisks/ramdisk-zfsroot/*": "distrib/amd64/ramdisks/ramdisk-zfsroot",
     "rescue/*": "rescue"
   }
 }

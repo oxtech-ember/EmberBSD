@@ -39,8 +39,7 @@
  */
 
 void
-perror(s)
-	const char *s;
+perror(const char *s)
 {
 	const char *separator;
 

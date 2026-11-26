@@ -3,4 +3,7 @@
 LIB=		h_helper_dso1
 SRCS=		h_helper_dso1.c
 
+# The TLS callback only sets its variable.
+COPTS.h_helper_dso1.c+=	${${ACTIVE_CC} == "clang":? -Wno-unused-but-set-global :}
+
 .include "../helper.mk"

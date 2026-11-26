@@ -27,6 +27,8 @@
 __RCSID("$NetBSD: h_thread_local_dtor.cpp,v 1.1 2017/07/11 15:21:36 joerg Exp $");
 
 #include <cstdlib>
+#include <cstdio>
+#include <cstdlib>
 #include <thread>
 
 static int seq;

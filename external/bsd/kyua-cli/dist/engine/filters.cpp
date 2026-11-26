@@ -29,6 +29,7 @@
 #include "engine/filters.hpp"
 
 #include <algorithm>
+#include <iterator>
 #include <stdexcept>
 
 #include "engine/test_case.hpp"

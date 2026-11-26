@@ -69,4 +69,7 @@ EXPORT_SYMS=	dtrace_register \
 
 WARNS=		3
 
+# Clang 23 warnings in the CDDL DTrace code.
+CPPFLAGS+=	${${ACTIVE_CC} == "clang" :? -Wno-strict-prototypes -Wno-unused-but-set-variable -Wno-cast-function-type-mismatch :}
+
 .include <bsd.kmodule.mk>
