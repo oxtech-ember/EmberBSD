@@ -1,0 +1,70 @@
+#!/bin/sh
+# SPDX-License-Identifier: BSD-2-Clause
+# Private mount lifecycle for ember-install-slot. The caller checks both wedges.
+set -eu
+PATH=/sbin:/usr/sbin:/bin:/usr/bin
+export PATH
+umask 077
+work=$1
+device=$2
+shift 2
+root=$work/root
+snap=$work/snapshot
+fst=
+target_mounted=
+snap_mounted=
+writer=
+finish()
+{
+	result=$?
+	trap - EXIT HUP INT TERM
+	if [ -n "$writer" ]; then kill "$writer" 2>/dev/null || :; wait "$writer" || :; fi
+	if [ -n "$snap_mounted" ]; then umount "$snap" || exit 1; fi
+	if [ -n "$fst" ]; then fssconfig -u "$fst" || exit 1; fi
+	if [ -n "$target_mounted" ]; then umount "$root" || exit 1; fi
+	rm -rf "$work"
+	exit "$result"
+}
+trap finish EXIT
+trap 'exit 1' HUP INT TERM
+mkdir "$root" "$snap"
+fstdev=$(fssconfig -l | awk '/^fss[0-9]+: not in use$/ { sub(/:$/, "", $1); print $1; exit }')
+[ -n "$fstdev" ] || { echo 'No free FFS snapshot device' >&2; exit 1; }
+fssconfig -x "$fstdev" / "$work/backing"
+fst=$fstdev
+mount -r -t ffs "/dev/$fst" "$snap"
+snap_mounted=yes
+newfs -O 1 "/dev/r${device##*/}"
+mount -t ffs -o async "$device" "$root"
+target_mounted=yes
+mkfifo "$work/tree"
+(cd "$snap" && exec tar --one-file-system -cpf - \
+    --exclude './boot/?*' --exclude './tmp/?*' --exclude './proc/?*' \
+    --exclude './dev/pts/?*' --exclude './var/tmp/?*' --exclude './var/run/?*' \
+    --exclude './var/cache/?*' --exclude './var/shm/?*' \
+    --exclude './var/db/ember-update/incoming' --exclude './var/db/ember-os-update/incoming' \
+    --exclude './var/db/ember-os-update/attempt.json' --exclude './var/db/ember-update/attempt.json' \
+    --exclude './var/db/emberbsd-sdk/client.lock' .) >"$work/tree" &
+writer=$!
+tar -xpf "$work/tree" -C "$root"
+wait "$writer"
+writer=
+umount "$snap"
+snap_mounted=
+fssconfig -u "$fst"
+fst=
+/usr/libexec/ember-install-slot populate "$root" "$@"
+chroot "$root" /bin/sh -ec '
+    for dir in /boot /tmp /var/run /var/tmp; do test -d "$dir"; done
+    test -x /usr/sbin/ember-update
+    test -x /etc/rc.d/ember_update
+    /usr/sbin/ember-update --help >/dev/null
+    . /etc/rc.subr
+    load_rc_config resize_root
+    ! checkyesno resize_root || exit 1
+    load_rc_config resize_gpt
+    ! checkyesno resize_gpt || exit 1
+'
+sync
+umount "$root"
+target_mounted=

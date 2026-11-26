@@ -114,6 +114,7 @@
 ./etc/nsswitch.conf				etc-net-etc
 ./etc/ntp.conf					etc-ntp-etc
 ./etc/openssl/certs.conf			etc-net-etc
+./etc/openssl/emberbsd-release-root.pem		etc-net-etc
 ./etc/obsolete/base				etc-obsolete		obsolete
 ./etc/obsolete/comp				etc-obsolete		obsolete
 ./etc/obsolete/etc				etc-obsolete		obsolete

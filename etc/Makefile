@@ -241,6 +241,11 @@ CONFIGFILES+=		${file}
 FILESMODE_${file:T}=	600
 .endfor
 
+# Public CMS and package trust anchor from EmberBSD-SDK/trust.
+CONFIGFILES+=		emberbsd-release-root.pem
+FILESDIR_emberbsd-release-root.pem=	/etc/openssl
+FILESMODE_emberbsd-release-root.pem=	444
+
 .if (${MKPOSTFIX} != "no")
 CONFIGFILES+=		aliases
 FILESDIR_aliases=	/etc/mail
