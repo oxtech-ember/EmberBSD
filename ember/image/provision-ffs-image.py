@@ -27,6 +27,34 @@ def word(value, pattern):
     check(isinstance(value, str) and re.fullmatch(pattern, value), f'invalid profile value: {value!r}')
 
 
+def unique_fields(pairs):
+    value = dict(pairs)
+    check(len(value) == len(pairs), 'duplicate OS descriptor field')
+    return value
+
+
+def installed_release(args, profile):
+    if args.release is None and args.release_sha256 is None:
+        return encoded(dict(profile=profile['profile'], generation=0, os_commit=args.os_commit))
+    check(args.release and args.release_sha256, 'supply the verified descriptor and its release SHA-256 together')
+    with args.release.open('rb') as stream:
+        data = stream.read(32769)
+    check(len(data) <= 32768 and hashlib.sha256(data).hexdigest() == args.release_sha256,
+          'OS descriptor size or SHA-256 mismatch')
+    head = json.loads(data.decode('utf-8'), object_pairs_hook=unique_fields)
+    check(isinstance(head, dict) and set(head) == {'schema', 'profile', 'os_commit', 'generation', 'target', 'sets'}
+          and head['schema'] == 'emberbsd.os-update.v1' and head['profile'] == profile['profile']
+          and head['target'] == profile['target'] and head['os_commit'] == args.os_commit,
+          'OS descriptor differs from the image profile or kernel')
+    check(type(head['generation']) is int and 1 <= head['generation'] < 2**63, 'invalid OS generation')
+    sets = head['sets']
+    check(isinstance(sets, dict) and set(sets) == set(profile['sets']), 'OS descriptor differs from image sets')
+    for artifact in sets.values():
+        word(artifact, r'[a-z0-9][a-z0-9._-]*')
+    check(len(set(sets.values())) == len(sets), 'OS descriptor repeats a set')
+    return data
+
+
 def validate(description, board, adapter, sets=None):
     p = description['slots']
     check(description['image'] == board, 'release profile does not match the image board')
@@ -118,8 +146,7 @@ def provision(args, description, p):
     verified_kernel(root / 'netbsd', args.os_commit, p['kernel'])
     archive = args.etc_archive.read_bytes()
     check(hashlib.sha256(archive).hexdigest() == args.etc_sha256, 'initial etc archive SHA-256 mismatch')
-    head = dict(profile=p['profile'], generation=0, os_commit=args.os_commit)
-    files = {PROFILE: (encoded(p), 0o644), DB / 'os-release.json': (encoded(head), 0o600),
+    files = {PROFILE: (encoded(p), 0o644), DB / 'os-release.json': (installed_release(args, p), 0o600),
              DB / 'etc.tar.xz': (archive, 0o600),
              Path('etc/ember-os-health'): ((args.health or SRC / description['health']).read_bytes(), 0o555),
              Path('etc/rc.conf.d/resize_root'): (b'resize_root=NO\n', 0o644),
@@ -167,6 +194,8 @@ def main():
     for opt in ('kernel', 'base-root', 'overlay', 'policy-layer', 'etc-archive', 'mtree', 'health'):
         parser.add_argument('--' + opt, type=Path)
     parser.add_argument('--os-commit')
+    parser.add_argument('--release', type=Path)
+    parser.add_argument('--release-sha256')
     parser.add_argument('--etc-sha256')
     parser.add_argument('--timestamp', type=int, default=0)
     parser.add_argument('--mkubootimage', default=os.environ.get('TOOL_MKUBOOTIMAGE', 'mkubootimage'))

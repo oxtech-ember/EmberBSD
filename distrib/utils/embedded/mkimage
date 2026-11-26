@@ -369,6 +369,8 @@ if [ -n "$update_profile" ]; then
 	set --
 	[ -z "$OS_UPDATE_HEALTH" ] || set -- --health "$OS_UPDATE_HEALTH"
 	[ -z "$custom" ] || set -- "$@" --overlay "$custom"
+	[ -z "$OS_UPDATE_RELEASE" ] || set -- "$@" --release "$OS_UPDATE_RELEASE"
+	[ -z "$OS_UPDATE_RELEASE_SHA256" ] || set -- "$@" --release-sha256 "$OS_UPDATE_RELEASE_SHA256"
 	"$OS_UPDATE_PYTHON" -IB "$provisioner" --profile "$tmp/update-profile.json" \
 	    --board "$h" --adapter "$os_update_adapter" --image-root "$mnt" --kernel "$kernel" \
 	    --base-root "$release" --policy-layer "$tmp/update-policy" \

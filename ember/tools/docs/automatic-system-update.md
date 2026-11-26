@@ -16,12 +16,19 @@ export OS_UPDATE_PYTHON="$HOST_PREFIX/bin/python3.15"
 export OS_UPDATE_OS_COMMIT="$OS_COMMIT"
 export OS_UPDATE_ETC="$SIGNED_ETC_ARCHIVE"
 export OS_UPDATE_ETC_SHA256="$SIGNED_ETC_SHA256"
+export OS_UPDATE_RELEASE="$VERIFIED_GENERATION/update.json"
+export OS_UPDATE_RELEASE_SHA256="$SIGNED_DESCRIPTOR_SHA256"
 sh "$OS_SOURCE/distrib/utils/embedded/mkimage" -h "$BOARD" -U "$UPDATE_PROFILE" \
     -S "$OS_SOURCE" -D "$DESTDIR" -K "$KERNEL_DIRECTORY" "$IMAGE"
 ```
 
 The host checks the profile, machine code in the release and target programs, module list and configuration baseline.
 The image includes its hardware profile, local health check, release anchor and initial slot markers.
+Use the verified `update.json`, kernel, modules and input sets from a single SDK `fetch-os-update` directory.
+Each archive must match the artifact ID for its role in that descriptor.
+Take the descriptor SHA-256 and the etc archive SHA-256 from their records in the authenticated release.
+The image retains the descriptor bytes so the client recognizes the installed generation on its first check.
+For an initial build before the profile has a published release, omit both descriptor inputs to start at generation zero.
 Set `OS_UPDATE_HEALTH` to install a site-specific executable check.
 Use a probe that can pass locally after a successful trial, including when S3 is unavailable.
 

@@ -62,6 +62,12 @@ if ARGV.first == '--tool'
         names = ['netbsd.img', 'boot.scr'] + slots.fetch('trees').map { |dtb| File.join(slots.fetch('tree_directory'), dtb) }
         root = File.dirname(boot)
         abort 'wrong installed adapter profile' unless JSON.parse(File.read(File.join(root, 'etc/ember-update-profile.json'))) == slots
+        receipt = File.binread(File.join(root, 'var/db/ember-update/os-release.json'))
+        if ENV['OS_UPDATE_RELEASE']
+          abort 'installed OS descriptor bytes changed' unless receipt == File.binread(ENV.fetch('OS_UPDATE_RELEASE'))
+        else
+          abort 'initial build has a published generation' unless JSON.parse(receipt).fetch('generation') == 0
+        end
         fstab = File.read(File.join(root, 'etc/fstab'))
         abort 'wrong root label' unless fstab.match?(/^NAME=#{Regexp.escape(slots.fetch('roots').fetch('A'))}\s+\/\s/)
         abort 'wrong boot label' unless fstab.match?(/^NAME=#{Regexp.escape(slots.fetch('esp'))}\s+\/boot\s/)
@@ -300,6 +306,26 @@ Dir.mktmpdir('a733-image-test-') do |work|
                    '-D', dest, '-K', kernel, '-c', overlay, '-U', second, File.join(fixture, 'test.img')]
     result, state = Open3.capture2e(update_env.merge('SLOT_TEST_PROFILE' => second, 'FIXTURE_BOOT' => boot_script), *alt_command)
     check(state.success?, "independent board failed: #{result}")
+    slots = alternate.fetch('slots')
+    descriptor = {'schema' => 'emberbsd.os-update.v1', 'generation' => 7, 'os_commit' => revision,
+                  'profile' => slots.fetch('profile'), 'target' => slots.fetch('target'),
+                  'sets' => slots.fetch('sets').to_h { |role| [role, "test-#{role}"] }}
+    head = File.join(work, 'update.json')
+    File.write(head, JSON.generate(descriptor) + "\n\n")
+    enrolled = update_env.merge('SLOT_TEST_PROFILE' => second, 'FIXTURE_BOOT' => boot_script, 'OS_UPDATE_RELEASE' => head,
+                                'OS_UPDATE_RELEASE_SHA256' => Digest::SHA256.file(head).hexdigest)
+    result, state = Open3.capture2e(enrolled, *alt_command)
+    check(state.success?, "published baseline failed: #{result}")
+    File.write(alt_command.last, 'existing image')
+    result, state = Open3.capture2e(enrolled.merge('OS_UPDATE_RELEASE_SHA256' => '0' * 64), *alt_command)
+    check(!state.success? && result.include?('SHA-256 mismatch'), 'unverified OS generation accepted')
+    File.write(head, JSON.generate(descriptor.merge('os_commit' => '2' * 40)))
+    result, state = Open3.capture2e(enrolled.merge('OS_UPDATE_RELEASE_SHA256' => Digest::SHA256.file(head).hexdigest), *alt_command)
+    check(!state.success? && result.include?('differs from the image profile or kernel'), 'wrong generation installed')
+    File.write(head, JSON.generate(descriptor).sub('"generation":7', '"generation":1,"generation":7'))
+    result, state = Open3.capture2e(enrolled.merge('OS_UPDATE_RELEASE_SHA256' => Digest::SHA256.file(head).hexdigest), *alt_command)
+    check(!state.success? && result.include?('duplicate OS descriptor field'), 'duplicate generation accepted')
+    check(File.read(alt_command.last) == 'existing image', 'wrong generation changed the published image')
     File.write(image, 'previous image')
     wrong = update_command.map { |arg| arg == profile ? second : arg }
     result, state = Open3.capture2e(update_env, *wrong)
