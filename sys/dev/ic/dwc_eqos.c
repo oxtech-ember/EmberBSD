@@ -1860,6 +1860,7 @@ eqos_attach(struct eqos_softc *sc)
 		}
 		aprint_verbose_dev(sc->sc_dev, "using 32-bit DMA\n");
 		sc->sc_dmat = ntag;
+		sc->sc_dma_32bit_tag = true;
 	}
 
 	mutex_init(&sc->sc_lock, MUTEX_DEFAULT, IPL_NET);
@@ -2015,6 +2016,26 @@ eqos_init_sysctls(struct eqos_softc *sc)
 	    0, CTLTYPE_NODE, dvname,
 	    SYSCTL_DESCR("eqos information and settings"),
 	    NULL, 0, NULL, 0, CTL_HW, CTL_CREATE, CTL_EOL);
+	if (rv != 0)
+		goto err;
+
+	static const char * const feature_names[] = {
+		"hw_feature0", "hw_feature1", "hw_feature2", "hw_feature3"
+	};
+
+	for (i = 0; i < __arraycount(feature_names); i++) {
+		rv = sysctl_createv(log, 0, &rnode, NULL,
+		    CTLFLAG_READONLY | CTLFLAG_IMMEDIATE | CTLFLAG_HEX,
+		    CTLTYPE_QUAD, feature_names[i],
+		    SYSCTL_DESCR("Raw MAC hardware feature register"),
+		    NULL, sc->sc_hw_feature[i], NULL, 0, CTL_CREATE, CTL_EOL);
+		if (rv != 0)
+			goto err;
+	}
+	rv = sysctl_createv(log, 0, &rnode, NULL, CTLFLAG_READONLY,
+	    CTLTYPE_BOOL, "dma_32bit_tag",
+	    SYSCTL_DESCR("A 32-bit DMA subregion was applied"),
+	    NULL, 0, &sc->sc_dma_32bit_tag, 0, CTL_CREATE, CTL_EOL);
 	if (rv != 0)
 		goto err;
 

@@ -62,6 +62,7 @@ struct eqos_softc {
 	uint32_t		sc_csr_clock;
 	uint32_t		sc_clock_range;
 	uint32_t		sc_hw_feature[4];
+	bool			sc_dma_32bit_tag;
 	uint32_t		sc_dma_txpbl;
 	uint32_t		sc_dma_rxpbl;
 
