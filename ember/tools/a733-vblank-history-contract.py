@@ -16,9 +16,10 @@ scanout = (source / "sun60i_a733_de352_scanout.h").read_text()
 begin = scanout.index("struct sun60i_a733_de352_completion {")
 end = scanout.index("};", begin) + 2
 completion = scanout[begin:end]
-begin = atomic.index("static void\na733_commit_event")
-end = atomic.index("static int\na733_explicit_fence", begin)
-emit = atomic[begin:end]
+flip = (root / "sys/external/bsd/drm2/drm/ember_drm_flip.c").read_text()
+begin = flip.index("void\nember_drm_flip_finish")
+end = flip.index("int\nember_drm_flip_wait_producer", begin)
+emit = flip[begin:end]
 begin = atomic.index("static int\na733_presented_stamp")
 end = atomic.index("static int\na733_submit_frame", begin)
 resolve = atomic[begin:end]
@@ -43,10 +44,11 @@ struct drm_pending_vblank_event {
 };
 struct drm_crtc_state { struct drm_pending_vblank_event *event; };
 struct drm_device { unsigned event_lock; };
+struct drm_crtc { struct drm_device *dev; unsigned index; };
 struct a733_drm {
  struct a733_vblank_history history;
  struct drm_device *dev;
- int crtc;
+ struct drm_crtc crtc;
  struct a733_drm *client;
 };
 #define spin_lock_irqsave(lock, flags) do { assert(!(*lock)++); (flags)=0; } while (0)
@@ -55,7 +57,7 @@ static unsigned sent, canceled;
 static unsigned fallback_calls;
 static uint64_t observed[2], recorded[2];
 static int fallback_error;
-static int drm_crtc_index(int *crtc) { return *crtc; }
+static int drm_crtc_index(struct drm_crtc *crtc) { return crtc->index; }
 static void drm_send_event_locked(struct drm_device *dev, struct drm_pending_event *p)
 { assert(dev->event_lock != 0 && p != NULL); sent++; }
 static void drm_event_cancel_free(struct drm_device *dev, struct drm_pending_event *p)
@@ -134,8 +136,8 @@ static void history_tests(void)
 static void event_tests(void)
 {
  struct drm_device dev = {0};
- struct a733_drm sc = { .dev = &dev, .crtc = 3 };
- struct drm_pending_vblank_event ev = {0};
+ struct a733_drm sc = { .dev = &dev, .crtc = {&dev, 3} };
+ struct drm_pending_vblank_event ev = {0}, *event = &ev;
  struct sun60i_a733_de352_completion done = { .observed_sequence=20,
      .observed_time_ns=100, .shadow_fast=true };
  struct a733_vblank_stamp stamp;
@@ -146,10 +148,10 @@ static void event_tests(void)
  record(&sc.history, 20, UINT64_C(0x100000009), 3000123456);
  record(&sc.history, 21, UINT64_C(0x10000000a), 3017000000);
  assert(a733_presented_stamp(&sc,&done,&stamp)==0 && fallback_calls==0);
- a733_commit_event(&sc,&ev,stamp.sequence,stamp.time_ns,0);
+ ember_drm_flip_finish(&sc.crtc,&event,stamp.sequence,stamp.time_ns,0);
  assert(sent==1 && canceled==0 && ev.pipe==3);
  assert(ev.event.vbl.sequence==9 && ev.event.vbl.tv_sec==3 && ev.event.vbl.tv_usec==123);
- a733_commit_event(&sc,NULL,stamp.sequence,stamp.time_ns,0);
+ ember_drm_flip_finish(&sc.crtc,&event,stamp.sequence,stamp.time_ns,0);
  assert(sent==1);
 
  a733_history_reset(&sc.history,true);
@@ -162,9 +164,10 @@ static void event_tests(void)
  fallback_calls=0;
  recorded[1]=0;
  assert(a733_presented_stamp(&sc,&done,&stamp)==ETIMEDOUT && fallback_calls==2);
+ event = &ev;
  ev.base.fence=&fence;
  ev.base.completion=&completion;
- a733_commit_event(&sc,&ev,stamp.sequence,stamp.time_ns,ETIMEDOUT);
+ ember_drm_flip_finish(&sc.crtc,&event,stamp.sequence,stamp.time_ns,ETIMEDOUT);
  assert(sent==1 && canceled==1 && fence==-ETIMEDOUT && completion==1);
  fallback_calls=0;
  observed[0]=20;

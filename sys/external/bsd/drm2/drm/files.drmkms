@@ -57,6 +57,7 @@ makeoptions	drmkms	"CWARNFLAGS.drmkms"+="-Wno-missing-field-initializers"
 # NetBSD additions.
 file	external/bsd/drm2/drm/drm_agp_hook.c		drmkms
 file	external/bsd/drm2/drm/drm_cdevsw.c		drmkms
+file	external/bsd/drm2/drm/ember_drm_flip.c		drmkms
 file	external/bsd/drm2/drm/drm_gem_vm.c		drmkms
 file	external/bsd/drm2/drm/drm_module.c		drmkms
 # A kernel with the 6.18 core (files.drmkms618) or the module of it has no

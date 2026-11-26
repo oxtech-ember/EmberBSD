@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
-/* Origin: EmberBSD, AI-assisted. Actual atomic event completion controls. */
+/* Origin: EmberBSD, AI-assisted. Production shared event and producer fence contract. */
 #include <errno.h>
 #include <stdbool.h>
 #include <stddef.h>
@@ -14,6 +14,7 @@ struct completion {
 struct dma_fence {
 	int status;
 	unsigned refs;
+	long waited;
 };
 struct drm_pending_event {
 	bool linked;
@@ -31,6 +32,7 @@ struct drm_pending_vblank_event {
 	}     event;
 };
 struct drm_crtc {
+	struct drm_device *dev;
 	unsigned index;
 };
 struct drm_crtc_state {
@@ -38,13 +40,6 @@ struct drm_crtc_state {
 };
 struct drm_device {
 	bool event_lock;
-};
-struct a733_drm {
-	struct drm_device *dev;
-	struct drm_crtc crtc;
-};
-struct sun60i_a733_de352_completion {
-	uint64_t observed_sequence, observed_time_ns;
 };
 static struct drm_pending_vblank_event observed;
 static unsigned delivered;
@@ -107,19 +102,51 @@ drm_event_cancel_free(struct drm_device *dev, struct drm_pending_event *event)
 	}
 	free(event);
 }
+static unsigned
+msecs_to_jiffies(unsigned delay)
+{
+	CHECK(delay == 1000);
+	return 100;
+}
+
+static long
+dma_fence_wait_timeout(struct dma_fence *fence, bool interruptible,
+    unsigned timeout)
+{
+	CHECK(!interruptible && timeout == 100);
+	return fence->waited;
+}
+
+static int
+dma_fence_get_status(struct dma_fence *fence)
+{
+	return fence->status;
+}
+
 #include "event.c"
 int
 main(void)
 {
 	struct drm_device dev = {0};
-	struct a733_drm sc = {.dev = &dev,.crtc = {3}};
+	struct drm_crtc crtc = {&dev, 3};
+	struct dma_fence producer = {.status = 1, .waited = 1};
+	CHECK(ember_drm_flip_wait_producer(NULL) == 0);
+	CHECK(ember_drm_flip_wait_producer(&producer) == 0);
+	producer.status = 0;
+	CHECK(ember_drm_flip_wait_producer(&producer) == EIO);
+	producer.status = -EIO;
+	CHECK(ember_drm_flip_wait_producer(&producer) == EIO);
+	producer.waited = 0;
+	CHECK(ember_drm_flip_wait_producer(&producer) == ETIMEDOUT);
+	producer.waited = -ECANCELED;
+	CHECK(ember_drm_flip_wait_producer(&producer) == ECANCELED);
 	/* The low 32 bits go to the 32-bit uapi sequence. */
 	const uint64_t sequence = UINT64_C(0x1000004d2), time_ns = UINT64_C(555123456789);
 	const int errors[] = {0, EIO, ETIMEDOUT, ENOMEM, ENXIO, EBUSY};
 	for (unsigned e = 0; e < sizeof(errors) / sizeof(errors[0]); e++)
 		for (unsigned flags = 0; flags < 8; flags++) {
 			struct completion completion = {false};
-			struct dma_fence fence = {0, 1};
+			struct dma_fence fence = {.refs = 1};
 			struct drm_crtc_state state = {calloc(1, sizeof(*state.event))};
 			CHECK(state.event);
 			state.event->base.linked = !(flags & 4);
@@ -132,9 +159,15 @@ main(void)
 			unsigned oldsent = sent, oldcancelled = cancelled,
 			         oldcompleted = completed, oldreleased = released,
 			         oldsignal = signalled, olddelivered = delivered;
-			struct drm_pending_vblank_event *event = state.event;
-			state.event = NULL;
-			a733_commit_event(&sc, event, sequence, time_ns, errors[e]);
+			/* Both the CRTC slot and a detached worker slot are owned. */
+			struct drm_pending_vblank_event *event = NULL;
+			if ((flags & 1) != 0) {
+				event = state.event;
+				state.event = NULL;
+				ember_drm_flip_finish(&crtc, &event, sequence, time_ns, errors[e]);
+				CHECK(event == NULL);
+			} else
+				ember_drm_flip_finish(&crtc, &state.event, sequence, time_ns, errors[e]);
 			CHECK(state.event == NULL && !dev.event_lock);
 			CHECK(completed == oldcompleted + ((flags & 1) != 0) && released == oldreleased + ((flags & 1) != 0));
 			CHECK(signalled == oldsignal + ((flags & 2) != 0));
@@ -152,7 +185,8 @@ main(void)
 			}
 		}
 	unsigned oldsent = sent, oldcancelled = cancelled;
-	a733_commit_event(&sc, NULL, sequence, time_ns, EIO);
+	struct drm_pending_vblank_event *empty = NULL;
+	ember_drm_flip_finish(&crtc, &empty, sequence, time_ns, EIO);
 	CHECK(sent == oldsent && cancelled == oldcancelled && !dev.event_lock);
 	printf("PASS %u output event checks\n", checks);
 	return 0;

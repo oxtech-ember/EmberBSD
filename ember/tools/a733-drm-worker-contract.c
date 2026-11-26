@@ -255,8 +255,12 @@ static struct drm_pending_vblank_event pending_output_event;
 #define spin_lock_irqsave(lock, flags) do { (flags)=0; CHECK(!*(lock)); *(lock)=true; } while (0)
 #define spin_unlock_irqrestore(lock, flags) do { (void)(flags); CHECK(*(lock)); *(lock)=false; } while (0)
 static void
-a733_commit_event(struct a733_drm *sc, struct drm_pending_vblank_event *event, uint64_t sequence, uint64_t time_ns, int error)
+ember_drm_flip_finish(struct drm_crtc *crtc, struct drm_pending_vblank_event **slot, uint64_t sequence, uint64_t time_ns, int error)
 {
+	struct a733_drm *sc = current;
+	CHECK(crtc == &sc->crtc);
+	struct drm_pending_vblank_event *event = *slot;
+	*slot = NULL;
 	CHECK(sc == current && !sc->lock && !modeset_lock);
 	CHECK(vblank_puts == vblank_gets && !sc->busy && cleanup_done == 1 && state_puts == 1);
 	CHECK(event == &pending_output_event || event == NULL);
