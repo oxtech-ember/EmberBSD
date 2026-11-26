@@ -74,8 +74,6 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #define	AICWF_MM_RESET_CFM		0x0001
 #define	AICWF_MM_START_REQ		0x0002
 #define	AICWF_MM_START_CFM		0x0003
-#define	AICWF_MM_ADD_IF_CFM		0x0007
-#define	AICWF_MM_REMOVE_IF_CFM		0x0009
 #define	 AICWF_IF_STA			0
 #define	AICWF_MM_SET_RF_CALIB_REQ	0x0069
 #define	AICWF_MM_SET_RF_CALIB_CFM	0x006a
@@ -85,7 +83,6 @@ __KERNEL_RCSID(0, "$NetBSD$");
  * even though the firmware never raised SM_DISCONNECT_IND. */
 #define	AICWF_ALIVE_PERIOD_MS	2000
 #define	AICWF_ALIVE_SILENT_MS	10000
-#define	AICWF_MM_GET_MAC_ADDR_CFM	0x0074
 #define	AICWF_MM_GET_FW_VERSION_REQ	0x0080
 #define	AICWF_MM_GET_FW_VERSION_CFM	0x0081
 
@@ -102,9 +99,6 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #define	AICWF_MM_CHANNEL_SURVEY_IND	0x004f
 
 /* Scan task. */
-#define	AICWF_SCANU_START_CFM		0x1001	/* the scan is over */
-#define	AICWF_SCANU_RESULT_IND		0x1004
-#define	AICWF_SCANU_START_ACK		0x1009	/* the scan has begun */
 #define	AICWF_SCANU_CANCEL_REQ		0x100a
 #define	AICWF_SCANU_CANCEL_CFM		0x100b
 
@@ -672,6 +666,7 @@ aicwf_passive_scan(struct aicwf_softc *sc)
 	mutex_enter(&sc->sc_lock);
 	sc->sc_scanning = true;
 	sc->sc_survey_ok = false;
+	sc->sc_scan_published = false;
 	mutex_exit(&sc->sc_lock);
 	error = aicwf_cmd(sc, AICWF_SCANU_START_REQ, req, sizeof(req),
 	    AICWF_SCANU_START_ACK, NULL, 0);

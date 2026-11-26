@@ -47,6 +47,36 @@ aicwf_usb_write(struct aicwf_softc *sc, size_t len, u_int reserve,
 	return usc->bus.write(usc->bus.cookie, sc->sc_txbuf, len, attempted);
 }
 
+/* Reserve queue space for the command or scan completion in either pipe. */
+static unsigned
+aicwf_usb_queue_limit(const uint8_t *p, size_t len)
+{
+	struct aicwf_rx_frame frame;
+	unsigned limit = 0;
+	int step;
+
+	while ((step = aicwf_frame_decode(p, len, &frame)) > 0) {
+		uint16_t id, plen;
+		if (frame.type == AICWF_TYPE_MSG &&
+		    aicwf_reply_decode(p + AICWF_HDR_LEN, frame.len, &id, &plen)) {
+			switch (id) {
+			case AICWF_MM_GET_MAC_ADDR_CFM:
+			case AICWF_MM_ADD_IF_CFM:
+			case AICWF_MM_REMOVE_IF_CFM:
+			case AICWF_SCANU_START_ACK:
+			case AICWF_SCANU_START_CFM:
+				return 32;
+			case AICWF_SCANU_RESULT_IND:
+				limit = 24;
+				break;
+			}
+		}
+		p += step;
+		len -= step;
+	}
+	return limit;
+}
+
 /* The USB callback cannot take net80211's sleep locks. */
 static void
 aicwf_usb_input(void *cookie, const uint8_t *p, size_t len)
@@ -56,8 +86,7 @@ aicwf_usb_input(void *cookie, const uint8_t *p, size_t len)
 	struct aicwf_usb_packet *packet;
 
 	mutex_enter(&usc->lock);
-	/* Keep eight of the 32 slots available for control traffic. */
-	if (usc->count >= 32 || (usc->count >= 24 && (p[2] & AICWF_TYPE_CFG) == 0)) {
+	if (usc->count >= aicwf_usb_queue_limit(p, len)) {
 		mutex_exit(&usc->lock);
 		return;
 	}

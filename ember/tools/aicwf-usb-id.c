@@ -166,6 +166,7 @@ le32enc(void *p, uint32_t v)
 #include "aicwf_command.h"
 #include "uaicfwvar.h"
 #include "aicwf_sta.h"
+#include "survey-rx.h"
 
 enum fault {
 	NONE,
@@ -453,9 +454,30 @@ run_usb_task(struct usb_task *t)
 	t->fn(t->arg);
 }
 
+static void
+survey_queue_checks(void)
+{
+	uint8_t agg[96] = { 0 };
+	/* A raw data frame can precede both kinds of scan message. */
+	le16enc(agg, 4);
+	assert(aicwf_usb_queue_limit(agg, 64) == 0);
+	le16enc(agg + 64, 12);
+	agg[66] = AICWF_TYPE_MSG;
+	le16enc(agg + 68, AICWF_SCANU_RESULT_IND);
+	assert(aicwf_usb_queue_limit(agg, 80) == 24);
+	memcpy(agg + 80, agg + 64, 16);
+	le16enc(agg + 84, AICWF_SCANU_START_CFM);
+	assert(aicwf_usb_queue_limit(agg, 96) == 32);
+	le16enc(agg + 68, 0xffff);
+	le16enc(agg + 84, AICWF_MM_REMOVE_IF_CFM);
+	assert(aicwf_usb_queue_limit(agg, 80) == 0);
+	assert(aicwf_usb_queue_limit(agg, 96) == 32);
+}
+
 int
 main(void)
 {
+	survey_queue_checks();
 	struct usbd_interface iface = {
 	    {0, 4}, {{1, 2, 512}, {0x81, 2, 512}, {2, 2, 512}, {0x82, 2, 512}}};
 	struct usbif_attach_arg a = {

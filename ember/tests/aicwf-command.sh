@@ -27,8 +27,6 @@ cat > "$work/check.c" <<'C'
 #define AICWF_MSG_MAX_PARAM 1032
 #define AICWF_TX_MAX 2048
 #define AICWF_CMD_TIMEOUT_MS 2000
-#define AICWF_SCANU_START_REQ 0x1000
-#define AICWF_SCANU_START_ACK 0x1009
 #define AICWF_SCANU_CANCEL_REQ 0x100a
 #define MIN(a,b) ((a) < (b) ? (a) : (b))
 #define explicit_memset memset
