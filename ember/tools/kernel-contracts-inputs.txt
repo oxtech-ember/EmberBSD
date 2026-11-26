@@ -432,6 +432,9 @@ ember/tools/drm-syncobj-flatten-contract.sh sys/external/bsd/drm2/dist/drm/
 ember/tools/drm-syncobj-flatten-contract.sh sys/external/bsd/drm2/linux/
 ember/tools/drm-syncobj-wait-contract.sh ember/tools/drm-syncobj-wait-contract.c
 ember/tools/drm-syncobj-wait-contract.sh sys/external/bsd/drm2/dist/drm/
+ember/tests/dwc2-port-reset.sh ember/tests/dwc2-port-reset.c
+ember/tests/dwc2-port-reset.sh sys/external/bsd/dwc2/dist/dwc2_hcdintr.c
+ember/tests/dwc2-port-reset.sh sys/external/bsd/dwc2/dist/dwc2_hw.h
 ember/tools/dwc-mmc-clock-contract.sh ember/tools/dwc-mmc-clock-contract.c
 ember/tools/dwc-mmc-clock-contract.sh sys/dev/acpi/dwcmmc_acpi.c
 ember/tools/dwc-mmc-clock-contract.sh sys/dev/fdt/dwcmmc_fdt.c
