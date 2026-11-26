@@ -22,8 +22,8 @@ struct pvr_fwcompute_file;
 #define BUS_DMASYNC_PREREAD 1
 static unsigned syncs, checks;
 static bool delayed;
-static uint32_t storage[A733_GPU_FWHEAP_BYTES / 4];
-static uint8_t saved[A733_GPU_FWHEAP_BYTES];
+static uint32_t storage[PVR_FWHEAP_BYTES / 4];
+static uint8_t saved[PVR_FWHEAP_BYTES];
 #define CHECK(e) do { checks++; assert(e); } while (0)
 
 void
@@ -51,7 +51,7 @@ bus_dmamap_sync(void *tag, void *map, size_t offset, size_t size, int op)
 int
 main(void)
 {
-	struct sun60i_a733_gpu_fwheap heap = { 0 };
+	struct pvr_fwheap heap = { 0 };
 	uint32_t read, write, timeline;
 
 	heap.dmat = storage;
@@ -66,14 +66,14 @@ main(void)
 		if (delayed)
 			storage[232 / 4] = storage[236 / 4] = storage[33040 / 4] = 0;
 		memcpy(saved, storage, sizeof(saved));
-		sun60i_a733_gpu_fwheap_observe(&heap, &read, &write, &timeline);
+		pvr_fwheap_observe(&heap, &read, &write, &timeline);
 		CHECK(read == UINT32_C(0x11223344));
 		CHECK(write == UINT32_C(0x12345678));
 		CHECK(timeline == UINT32_C(0xabcdef01));
 		CHECK(syncs == 4 && memcmp(saved, storage, sizeof(saved)) == 0);
 	}
 	syncs = 0;
-	sun60i_a733_gpu_fwheap_observe(&heap, NULL, NULL, NULL);
+	pvr_fwheap_observe(&heap, NULL, NULL, NULL);
 	CHECK(syncs == 4);
 	printf("PASS: %u real CCCB observer checks\n", checks);
 	return 0;

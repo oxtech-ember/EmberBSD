@@ -19,7 +19,7 @@
 int sun60i_a733_gpu_fwbridge_prepare(struct sun60i_a733_gpu_fwbridge *,
     kmutex_t *, bus_space_tag_t, bus_space_handle_t,
     struct sun60i_a733_gpu_fwmem *,
-    const struct sun60i_a733_gpu_fwboot_result *,
+    const struct pvr_fwboot_result *,
     const struct sun60i_a733_gpu_fwprobe_result *);
 /* Call without the platform lock. The DRM gate always precedes that lock. */
 int sun60i_a733_gpu_fwbridge_publish(struct sun60i_a733_gpu_fwbridge *,

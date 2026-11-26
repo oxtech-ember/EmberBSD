@@ -1,6 +1,6 @@
 # A733 compute VM context
 
-The [VM encoder](../sun60i_a733_gpu_fwcompute_vm.c)
+The [VM encoder](../../../../dev/powervr/pvr_fwcompute_vm.c)
 builds the GPU page tables and a 32-byte firmware memory context.
 It initializes every context byte on success.
 The context contains the page-catalog physical address and the invalid PCSET
@@ -9,7 +9,7 @@ marker. Unused breakpoint fields, context flags, and padding are zero.
 The layout follows the MIT-licensed Linux PowerVR
 [`rogue_fwif_fwmemcontext`](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/drivers/gpu/drm/imagination/pvr_rogue_fwif.h?id=7b63ef2d55f24519e7e9e5f4d15dbea03f126e40).
 Its fields occupy offsets 0, 8, 12, 16, 20, and 24. Padding starts at offset 28.
-The [native heap owner](../sun60i_a733_gpu_fwheap.c)
+The [native heap owner](../../../../dev/powervr/pvr_fwheap.c)
 copies all 32 bytes to firmware-visible memory after encoding succeeds.
 Initializing only the address and PCSET leaves bytes 12 through 31 unspecified.
 

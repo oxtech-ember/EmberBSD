@@ -17,7 +17,7 @@ sha256_file()
 
 ${CC:-cc} -std=c11 -Wall -Wextra -Werror \
     ${FWFILE_TEST_CFLAGS:--fsanitize=address,undefined} \
-    -I"$src/sys/arch/arm/sunxi" -I"$tools" \
+    -I"$src/sys/arch/arm/sunxi" -I"$src/sys/dev/powervr" -I"$tools" \
     "$tools/a733-gpu-fwfile-contract.c" \
     "${FWFILE_SOURCE:-$src/sys/arch/arm/sunxi/sun60i_a733_gpu_fwcompute_file.c}" \
     "$src/sys/dev/powervr/pvr_fwcompute_file.c" \
@@ -32,7 +32,7 @@ if [ -n "${FWFILE_REJECT_IMAGE:-}" ]; then
 fi
 
 # Build the v3 packer and run it end to end on synthetic compiler artifacts.
-${CC:-cc} -std=c11 -Wall -Wextra -Werror -I"$src/sys/arch/arm/sunxi" \
+${CC:-cc} -std=c11 -Wall -Wextra -Werror -I"$src/sys/arch/arm/sunxi" -I"$src/sys/dev/powervr" \
     ${FWFILE_TEST_CFLAGS:--fsanitize=address,undefined} \
     -I"$tools" \
     "$tools/a733-gpu-compute-firmware.c" \
@@ -42,7 +42,6 @@ ${CC:-cc} -std=c11 -Wall -Wextra -Werror -I"$src/sys/arch/arm/sunxi" \
     "$src/sys/dev/powervr/pvr_fwcompute_cmd.c" \
     "$src/sys/arch/arm/sunxi/sun60i_a733_gpu_fwcompute.c" \
     "$src/sys/dev/powervr/pvr_fwcompute.c" \
-    "$src/sys/arch/arm/sunxi/sun60i_a733_gpu_fwcompute_vm.c" \
     "$src/sys/dev/powervr/pvr_fwcompute_vm.c" \
     "$src/sys/arch/arm/sunxi/sun60i_a733_gpu_mmu.c" \
     "$src/sys/dev/powervr/pvr_mmu.c" \

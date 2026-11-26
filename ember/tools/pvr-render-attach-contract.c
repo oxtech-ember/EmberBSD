@@ -7,8 +7,8 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "sun60i_a733_gpu_fwimage.h"
-#include "sun60i_a733_gpu_fwinit.h"
+#include "pvr_fwimage.h"
+#include "pvr_fwinit.h"
 #include "pvr_query.h"
 typedef uint64_t bus_addr_t;
 typedef void *bus_dma_tag_t;
@@ -40,14 +40,14 @@ static const struct pvr_query_input expected_input = {
 	.fw_build = 6976702, .brn_mask = 0x201, .ern_mask = 0xf5,
 	.feature = { 19456, 12, 16, 16, 2, 1, 6, 0, 0 }
 };
-static const enum sun60i_a733_gpu_fw_feature required_features[] = {
-	A733_GPU_FW_FEATURE_COMMON_STORE_SIZE_IN_DWORDS,
-	A733_GPU_FW_FEATURE_MAX_PARTITIONS,
-	A733_GPU_FW_FEATURE_TILE_SIZE_X,
-	A733_GPU_FW_FEATURE_TILE_SIZE_Y,
-	A733_GPU_FW_FEATURE_USC_MIN_OUTPUT_REGISTERS_PER_PIX,
-	A733_GPU_FW_FEATURE_NUM_CLUSTERS,
-	A733_GPU_FW_FEATURE_ISP_MAX_TILES_IN_FLIGHT,
+static const enum pvr_fw_feature required_features[] = {
+	PVR_FW_FEATURE_COMMON_STORE_SIZE_IN_DWORDS,
+	PVR_FW_FEATURE_MAX_PARTITIONS,
+	PVR_FW_FEATURE_TILE_SIZE_X,
+	PVR_FW_FEATURE_TILE_SIZE_Y,
+	PVR_FW_FEATURE_USC_MIN_OUTPUT_REGISTERS_PER_PIX,
+	PVR_FW_FEATURE_NUM_CLUSTERS,
+	PVR_FW_FEATURE_ISP_MAX_TILES_IN_FLIGHT,
 };
 static struct drm_device rendered = { 0x733 };
 static bool tree_held, callback_reentry;
@@ -174,7 +174,7 @@ main(void)
 {
 	struct sun60i_gpu_softc sc;
 	struct sun60i_a733_gpu_fwmem memory = { 0 };
-	struct sun60i_a733_gpu_fwinfo *info = &memory.image.info;
+	struct pvr_fwinfo *info = &memory.image.info;
 	unsigned int saved_calls, saved_lookups;
 	int value = 1;
 

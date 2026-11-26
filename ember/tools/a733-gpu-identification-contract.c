@@ -22,7 +22,7 @@
 #define EAUTH 80
 #endif
 #include "dev/powervr/fwif/pvr_rogue_fwif.h"
-#include "sun60i_a733_gpu_fwinfo.h"
+#include "pvr_fwinfo.h"
 
 typedef unsigned int u_int;
 typedef int kmutex_t;
@@ -36,15 +36,15 @@ typedef int kmutex_t;
 typedef void *bus_dma_tag_t;
 typedef void *bus_dmamap_t;
 typedef struct { bus_addr_t ds_addr; bus_size_t ds_len; } bus_dma_segment_t;
-#include "sun60i_a733_gpu_fwimage.h"
-#include "sun60i_a733_gpu_fwinit.h"
+#include "pvr_fwimage.h"
+#include "pvr_fwinit.h"
 #include "sun60i_a733_gpu_fwmem.h"
-#include "sun60i_a733_gpu_fwstart.h"
-#include "sun60i_a733_gpu_fwboot.h"
+#include "pvr_fwstart.h"
+#include "pvr_fwboot.h"
 #include "sun60i_a733_gpu_fwprobe.h"
 #include "sun60i_a733_gpu_fwcompute.h"
 #include "sun60i_a733_gpu_fwcompute_file.h"
-#include "sun60i_a733_gpu_fwheap.h"
+#include "pvr_fwheap.h"
 #include "sun60i_a733_gpu_fwservice.h"
 #include "pvr-backend.h-body.h"
 #include "sun60i_a733_gpu_fwbridge.h"
@@ -423,7 +423,7 @@ bus_space_map(bus_space_tag_t tag, bus_addr_t addr, bus_size_t size,
     int flags, bus_space_handle_t *handle)
 {
 	assert(addr == 0x01800000 && flags == 0);
-	if (size == A733_GPU_FWSTART_REG_SIZE) {
+	if (size == PVR_FWSTART_REG_SIZE) {
 		assert(!full_mapping);
 		full_maps++;
 		record('X');
@@ -463,7 +463,7 @@ bus_space_peek_8(bus_space_tag_t tag, bus_space_handle_t handle,
 static void
 bus_space_unmap(bus_space_tag_t tag, bus_space_handle_t handle, bus_size_t size)
 {
-	if (size == A733_GPU_FWSTART_REG_SIZE) {
+	if (size == PVR_FWSTART_REG_SIZE) {
 		assert(handle == 0x5678 && full_mapping);
 		assert(consumer_lock != NULL && *consumer_lock);
 		later_not_published();
@@ -627,7 +627,7 @@ static unsigned fw_interfaces, fw_boots;
 static int fw_interface_error, fw_boot_error;
 static uint64_t expected_interface_hz;
 static uint32_t expected_clusters, expected_slc;
-static struct sun60i_a733_gpu_fwboot_result boot_reply;
+static struct pvr_fwboot_result boot_reply;
 static struct sun60i_a733_gpu_fwprobe_result probe_reply;
 static unsigned fw_probes;
 static int fw_probe_error;
@@ -770,14 +770,14 @@ firmware_read(firmware_handle_t fh, off_t offset, void *bytes, size_t size)
 
 static int
 fw_parse(const void *bytes, size_t size, uint64_t expected,
-    struct sun60i_a733_gpu_fwinfo *info)
+    struct pvr_fwinfo *info)
 {
 	assert(fw_handle.open && bytes == fw_memory && size == fw_memory_size);
 	assert(fw_reads == 1 && fw_closes == 0);
 	fw_not_published();
 	fw_parses++;
 	record('v');
-	return sun60i_a733_gpu_fwinfo_parse(bytes, size, expected, info);
+	return pvr_fwinfo_parse(bytes, size, expected, info);
 }
 
 static int
@@ -839,11 +839,11 @@ sun60i_a733_gpu_fwmem_prepare(bus_dma_tag_t tag, const void *bytes, size_t size,
 	fixture_dma(&fwmem_live->table, 16384, 0x53);
 	fwmem_live->image.info.bvnc = expected;
 	fwmem_live->image.info.feature_mask[0] =
-	    (UINT64_C(1) << A733_GPU_FW_FEATURE_NUM_CLUSTERS) |
-	    (UINT64_C(1) << A733_GPU_FW_FEATURE_SLC_SIZE_IN_KILOBYTES);
-	fwmem_live->image.info.feature_value[A733_GPU_FW_FEATURE_NUM_CLUSTERS] = 2;
+	    (UINT64_C(1) << PVR_FW_FEATURE_NUM_CLUSTERS) |
+	    (UINT64_C(1) << PVR_FW_FEATURE_SLC_SIZE_IN_KILOBYTES);
+	fwmem_live->image.info.feature_value[PVR_FW_FEATURE_NUM_CLUSTERS] = 2;
 	fwmem_live->image.info.feature_value[
-	    A733_GPU_FW_FEATURE_SLC_SIZE_IN_KILOBYTES] = 16;
+	    PVR_FW_FEATURE_SLC_SIZE_IN_KILOBYTES] = 16;
 	if (native_fixture) {
 		/* Validated feature metadata for the real query-input converter. */
 		fwmem_live->image.info.feature_mask[0] = UINT64_MAX;
@@ -903,10 +903,12 @@ sun60i_a733_gpu_fwmem_interface(struct sun60i_a733_gpu_fwmem *mem,
 }
 
 int
-sun60i_a733_gpu_fwboot(bus_space_tag_t tag, bus_space_handle_t handle,
+pvr_fwboot(enum pvr_fw_profile profile, bus_space_tag_t tag,
+    bus_space_handle_t handle,
     struct sun60i_a733_gpu_fwmem *mem,
-    struct sun60i_a733_gpu_fwboot_result *out)
+    struct pvr_fwboot_result *out)
 {
+	assert(profile == PVR_FW_PROFILE_A733);
 	assert(handle == 0x5678 && full_mapping);
 	assert(mem == fwmem_live && mem->interface_prepared);
 	assert(consumer_lock != NULL && *consumer_lock);
@@ -923,7 +925,7 @@ sun60i_a733_gpu_fwboot(bus_space_tag_t tag, bus_space_handle_t handle,
 int
 sun60i_a733_gpu_fwprobe(bus_space_tag_t tag, bus_space_handle_t handle,
     struct sun60i_a733_gpu_fwmem *mem,
-    const struct sun60i_a733_gpu_fwboot_result *boot,
+    const struct pvr_fwboot_result *boot,
     struct sun60i_a733_gpu_fwprobe_result *out)
 {
 	assert(handle == 0x5678 && full_mapping);
@@ -946,7 +948,7 @@ static unsigned fwprobe_cmd_calls;
 int
 sun60i_a733_gpu_fwprobe_cmd(bus_space_tag_t tag, bus_space_handle_t handle,
     struct sun60i_a733_gpu_fwmem *mem,
-    const struct sun60i_a733_gpu_fwboot_result *boot,
+    const struct pvr_fwboot_result *boot,
     const struct sun60i_a733_gpu_fwprobe_result *previous,
     const struct rogue_fwif_kccb_cmd *cmd, unsigned int slot,
     uint32_t expected_log_type,
@@ -976,7 +978,7 @@ sun60i_a733_gpu_fwprobe_cmd(bus_space_tag_t tag, bus_space_handle_t handle,
 
 int
 sun60i_a733_gpu_fwprobe_observe(struct sun60i_a733_gpu_fwmem *mem,
-    const struct sun60i_a733_gpu_fwboot_result *boot, unsigned int slot,
+    const struct pvr_fwboot_result *boot, unsigned int slot,
     uint32_t command, uint32_t log_type,
     struct sun60i_a733_gpu_fwprobe_observation *out)
 {
@@ -1000,31 +1002,31 @@ sun60i_a733_gpu_fwprobe_observe(struct sun60i_a733_gpu_fwmem *mem,
 /* The submission provider allocates device memory; never in this fixture. */
 static unsigned fwheap_calls, fwvm_calls;
 int
-sun60i_a733_gpu_fwheap_prepare(bus_dma_tag_t tag,
+pvr_fwheap_prepare(bus_dma_tag_t tag,
     struct sun60i_a733_gpu_fwmem *mem,
     const struct sun60i_a733_gpu_fwcompute_image *image,
-    struct sun60i_a733_gpu_fwheap **out)
+    struct pvr_fwheap **out)
 {
 	fwheap_calls++;
 	return ENOSYS;
 }
 
 int
-sun60i_a733_gpu_fwheap_map(struct sun60i_a733_gpu_fwheap *heap,
+pvr_fwheap_map(struct pvr_fwheap *heap,
     struct sun60i_a733_gpu_fwmem *mem)
 {
 	return ENOSYS;
 }
 
 int
-sun60i_a733_gpu_fwheap_set_vm_context(struct sun60i_a733_gpu_fwheap *heap,
+pvr_fwheap_set_vm_context(struct pvr_fwheap *heap,
     const uint8_t context[32])
 {
 	return ENOSYS;
 }
 
 void
-sun60i_a733_gpu_fwheap_observe(const struct sun60i_a733_gpu_fwheap *heap,
+pvr_fwheap_observe(const struct pvr_fwheap *heap,
     uint32_t *read_offset, uint32_t *write_offset, uint32_t *timeline)
 {
 	bool completed = compute_completion_mode != 0 && compute_completion_mode != 4;
@@ -1039,29 +1041,29 @@ sun60i_a733_gpu_fwheap_observe(const struct sun60i_a733_gpu_fwheap *heap,
 }
 
 void
-sun60i_a733_gpu_fwheap_destroy(struct sun60i_a733_gpu_fwheap **out)
+pvr_fwheap_destroy(struct pvr_fwheap **out)
 {
 }
 
 int
-sun60i_a733_gpu_fwvm_prepare(bus_dma_tag_t tag,
+pvr_fwvm_prepare(bus_dma_tag_t tag,
     const struct a733_gpu_fwcompute_file *file, const uint8_t *bytes,
-    struct sun60i_a733_gpu_fwheap *heap,
-    struct sun60i_a733_gpu_fwvm **out)
+    struct pvr_fwheap *heap,
+    struct pvr_fwvm **out)
 {
 	fwvm_calls++;
 	return ENOSYS;
 }
 
 void
-sun60i_a733_gpu_fwvm_destroy(struct sun60i_a733_gpu_fwvm **out)
+pvr_fwvm_destroy(struct pvr_fwvm **out)
 {
 }
 
 int
 sun60i_a733_gpu_fwprobe_mmucache(bus_space_tag_t tag, bus_space_handle_t handle,
     struct sun60i_a733_gpu_fwmem *mem,
-    const struct sun60i_a733_gpu_fwboot_result *boot,
+    const struct pvr_fwboot_result *boot,
     const struct sun60i_a733_gpu_fwprobe_result *probe,
     struct sun60i_a733_gpu_fwprobe_result *out)
 {
@@ -1085,14 +1087,14 @@ sun60i_a733_gpu_fwprobe_mmucache(bus_space_tag_t tag, bus_space_handle_t handle,
 	return fw_cache_error;
 }
 
-#define sun60i_a733_gpu_fwinfo_parse fw_parse
+#define pvr_fwinfo_parse fw_parse
 /* The native-startup fixture checks this provider boundary and call order.
  * The separate bridge contract executes the real adoption implementation. */
 int
 sun60i_a733_gpu_fwbridge_prepare(struct sun60i_a733_gpu_fwbridge *bridge,
     kmutex_t *lock, bus_space_tag_t tag, bus_space_handle_t handle,
     struct sun60i_a733_gpu_fwmem *mem,
-    const struct sun60i_a733_gpu_fwboot_result *boot,
+    const struct pvr_fwboot_result *boot,
     const struct sun60i_a733_gpu_fwprobe_result *probe)
 {
 	assert(native_fixture && consumer_lock == lock && *lock);
@@ -1191,7 +1193,7 @@ pvr_fwbridge_set_irq(struct pvr_fwbridge *bridge, void *cookie,
 }
 
 #include "driver.h"
-#undef sun60i_a733_gpu_fwinfo_parse
+#undef pvr_fwinfo_parse
 #define CHECK(c) do { assert(c); checks++; } while (0)
 static struct sun60i_gpu_softc sc;
 
@@ -1683,7 +1685,7 @@ test_fwheap_optional_outputs(void)
 			uint32_t offset = completed ? A733_GPU_FWCOMPUTE_USED_BYTES : 0;
 
 			compute_completion_mode = mode;
-			sun60i_a733_gpu_fwheap_observe(NULL, mask & 1 ? &rd : NULL,
+			pvr_fwheap_observe(NULL, mask & 1 ? &rd : NULL,
 			    mask & 2 ? &wr : NULL, mask & 4 ? &timeline : NULL);
 			CHECK(rd == (mask & 1 ? offset : UINT32_MAX));
 			CHECK(wr == (mask & 2 ? offset : UINT32_MAX));
@@ -2229,7 +2231,7 @@ later_teardown(void)
 static void
 later_no_replay(u_int stage)
 {
-	struct sun60i_a733_gpu_fwboot_result saved_result = sc.sc_boot_result;
+	struct pvr_fwboot_result saved_result = sc.sc_boot_result;
 	struct sun60i_a733_gpu_fwprobe_result saved_probe = sc.sc_probe_result;
 	unsigned probe_calls = fw_probes, cache_calls = fw_caches;
 	struct sun60i_a733_gpu_fwprobe_result saved_cache = sc.sc_cache_result;
@@ -2268,8 +2270,8 @@ test_fwinit_stage(void)
 {
 	const int helper_errors[] = { EINVAL, EOPNOTSUPP, ENOMEM, EIO, EEXIST };
 	const unsigned features[] = {
-		A733_GPU_FW_FEATURE_NUM_CLUSTERS,
-		A733_GPU_FW_FEATURE_SLC_SIZE_IN_KILOBYTES
+		PVR_FW_FEATURE_NUM_CLUSTERS,
+		PVR_FW_FEATURE_SLC_SIZE_IN_KILOBYTES
 	};
 	struct memory_snapshot snap;
 	unsigned start = checks;
@@ -2375,7 +2377,7 @@ boot_stopped(int wanted, const char *order, unsigned mmap_calls,
 	CHECK(strcmp(events, order) == 0);
 	{
 		char prefix[128];
-		const struct sun60i_a733_gpu_fwboot_result *r = &sc.sc_boot_result;
+		const struct pvr_fwboot_result *r = &sc.sc_boot_result;
 
 		snprintf(prefix, sizeof(prefix),
 		    "error=%d attempted=%u device_owned=%u touched=%u released=%u ",
@@ -2479,7 +2481,7 @@ test_fwboot_stage(void)
 		case 16: map_error = ENOMEM; break;
 		case 17: peek_error = EFAULT; break;
 		case 18: pbvnc ^= 1; break;
-		case 19: binding_size = A733_GPU_FWSTART_REG_SIZE - 1; break;
+		case 19: binding_size = PVR_FWSTART_REG_SIZE - 1; break;
 		case 20: full_map_error = ENOMEM; break;
 		}
 		memory_snapshot_take(&snap);
@@ -2599,7 +2601,7 @@ test_fwprobe_stage(void)
 		{ EPROTO, true, true, true, true },
 		{ 0, true, true, true, true }
 	};
-	struct sun60i_a733_gpu_fwboot_result saved_boot;
+	struct pvr_fwboot_result saved_boot;
 	struct sun60i_a733_gpu_fwprobe_result saved_probe;
 	struct memory_snapshot snap;
 	unsigned start = checks;
@@ -2669,7 +2671,7 @@ test_fwprobe_stage(void)
 		case 16: map_error = ENOMEM; break;
 		case 17: peek_error = EFAULT; break;
 		case 18: pbvnc ^= 1; break;
-		case 19: binding_size = A733_GPU_FWSTART_REG_SIZE - 1; break;
+		case 19: binding_size = PVR_FWSTART_REG_SIZE - 1; break;
 		case 20: full_map_error = ENOMEM; break;
 		}
 		saved_boot = sc.sc_boot_result;
@@ -2798,7 +2800,7 @@ test_fwcache_stage(void)
 		{ EPROTO, true, true, true, true },
 		{ 0, true, true, true, true }
 	};
-	struct sun60i_a733_gpu_fwboot_result saved_boot;
+	struct pvr_fwboot_result saved_boot;
 	struct sun60i_a733_gpu_fwprobe_result saved_probe, saved_logtype;
 	struct memory_snapshot snap;
 	unsigned start = checks;
@@ -2887,7 +2889,7 @@ test_fwcache_stage(void)
 		case 16: map_error = ENOMEM; break;
 		case 17: peek_error = EFAULT; break;
 		case 18: pbvnc ^= 1; break;
-		case 19: binding_size = A733_GPU_FWSTART_REG_SIZE - 1; break;
+		case 19: binding_size = PVR_FWSTART_REG_SIZE - 1; break;
 		case 20: full_map_error = ENOMEM; break;
 		}
 		saved_boot = sc.sc_boot_result;
@@ -2951,7 +2953,7 @@ test_fwcache_stage(void)
 static void
 test_probe_report_capacity(void)
 {
-	struct sun60i_a733_gpu_fwboot_result boot = { .device_owned = true };
+	struct pvr_fwboot_result boot = { .device_owned = true };
 	struct sun60i_a733_gpu_fwprobe_result r = {
 		.attempted = true, .published = true, .kick_attempted = true,
 		.kicked = true, .slot = UINT32_MAX, .polls = UINT32_MAX,
@@ -2985,7 +2987,7 @@ test_trace_report(void)
 {
 	static const unsigned lengths[] = { 1, 64, 118, 256, 257, 512 };
 	struct sun60i_a733_gpu_fwmem mem = { 0 }, saved;
-	struct sun60i_a733_gpu_fwinit_region *ctl, *data;
+	struct pvr_fwinit_region *ctl, *data;
 	struct rogue_fwif_tracebuf *tc;
 	struct sun60i_gpu_softc *owner;
 	struct sun60i_a733_gpu_fwprobe_result previous;
@@ -3004,13 +3006,13 @@ test_trace_report(void)
 	mem.work.size = 3072;
 	mem.work.map = &mem;
 	mem.work.loaded = true;
-	mem.interface_layout.object[A733_GPU_FWINIT_TRACE_CTL] =
-	    (struct sun60i_a733_gpu_fwinit_region){
-		.buffer = A733_GPU_FWINIT_WORK, .offset = 0, .size = sizeof(*tc)
+	mem.interface_layout.object[PVR_FWINIT_TRACE_CTL] =
+	    (struct pvr_fwinit_region){
+		.buffer = PVR_FWINIT_WORK, .offset = 0, .size = sizeof(*tc)
 	    };
-	mem.interface_layout.object[A733_GPU_FWINIT_TRACE0] =
-	    (struct sun60i_a733_gpu_fwinit_region){
-		.buffer = A733_GPU_FWINIT_WORK, .offset = 1024, .size = 2048
+	mem.interface_layout.object[PVR_FWINIT_TRACE0] =
+	    (struct pvr_fwinit_region){
+		.buffer = PVR_FWINIT_WORK, .offset = 1024, .size = 2048
 	    };
 	owner->sc_fw_memory = &mem;
 	tc = (struct rogue_fwif_tracebuf *)arena;
@@ -3061,8 +3063,8 @@ test_trace_report(void)
 	CHECK(strstr(owner->sc_trace_state, "a50000ff") != NULL);
 	CHECK(memcmp(&previous, &owner->sc_trace_result, sizeof(previous)) == 0);
 	saved = mem;
-	ctl = &mem.interface_layout.object[A733_GPU_FWINIT_TRACE_CTL];
-	data = &mem.interface_layout.object[A733_GPU_FWINIT_TRACE0];
+	ctl = &mem.interface_layout.object[PVR_FWINIT_TRACE_CTL];
+	data = &mem.interface_layout.object[PVR_FWINIT_TRACE0];
 	for (unsigned n = 0; n < 20; n++) {
 		mem = saved;
 		owner->sc_fw_memory = &mem;
@@ -3074,8 +3076,8 @@ test_trace_report(void)
 		case 3: mem.work.map = NULL; break;
 		case 4: mem.work.loaded = false; break;
 		case 5: mem.work.cpu = arena + 1; break;
-		case 6: ctl->buffer = A733_GPU_FWINIT_CONFIG; break;
-		case 7: data->buffer = A733_GPU_FWINIT_CONFIG; break;
+		case 6: ctl->buffer = PVR_FWINIT_CONFIG; break;
+		case 7: data->buffer = PVR_FWINIT_CONFIG; break;
 		case 8: ctl->offset = 1; break;
 		case 9: data->offset = 1025; break;
 		case 10: ctl->size = sizeof(*tc) - 1; break;
@@ -3112,7 +3114,7 @@ static void
 test_hwr_report(void)
 {
 	struct sun60i_a733_gpu_fwmem mem = { 0 }, saved;
-	struct sun60i_a733_gpu_fwinit_region *region;
+	struct pvr_fwinit_region *region;
 	struct sun60i_gpu_softc *owner, *previous;
 	struct rogue_fwif_hwrinfobuf *hwr;
 	uint8_t *arena, *copy;
@@ -3131,9 +3133,9 @@ test_hwr_report(void)
 	mem.work.size = 2432;
 	mem.work.loaded = true;
 	mem.work.map = &mem;
-	region = &mem.interface_layout.object[A733_GPU_FWINIT_HWR];
-	*region = (struct sun60i_a733_gpu_fwinit_region){
-		.buffer = A733_GPU_FWINIT_WORK, .offset = 64, .size = 2336
+	region = &mem.interface_layout.object[PVR_FWINIT_HWR];
+	*region = (struct pvr_fwinit_region){
+		.buffer = PVR_FWINIT_WORK, .offset = 64, .size = 2336
 	};
 	owner->sc_fw_memory = &mem;
 	hwr = (struct rogue_fwif_hwrinfobuf *)(arena + 64);
@@ -3215,7 +3217,7 @@ test_hwr_report(void)
 		case 3: mem.work.map = NULL; break;
 		case 4: mem.work.loaded = false; break;
 		case 5: mem.work.cpu = arena + 1; break;
-		case 6: region->buffer = A733_GPU_FWINIT_CONFIG; break;
+		case 6: region->buffer = PVR_FWINIT_CONFIG; break;
 		case 7: region->offset = 1; break;
 		case 8: region->size = 2335; break;
 		case 9: region->offset = UINT32_MAX - 7; break;
@@ -3258,7 +3260,7 @@ test_scratch_error_snapshot(void)
 {
 	struct a733_gpu_fwcompute_file_header h = { 0 };
 	struct a733_gpu_fwcompute_file_entry entry[A733_GPU_FWCOMPUTE_RESOURCES] = { 0 }, swap;
-	struct sun60i_a733_gpu_fwvm vm = { 0 };
+	struct pvr_fwvm vm = { 0 };
 	uint32_t scratch, decoy;
 	unsigned start = checks, calls;
 
@@ -3583,7 +3585,7 @@ test_native_startup(void)
 		case 2: request_len = 1; break;
 		case 3: request_len = 0; break;
 		case 4: managed_len = -1; break;
-		case 5: binding_size = A733_GPU_FWSTART_REG_SIZE - 1; break;
+		case 5: binding_size = PVR_FWSTART_REG_SIZE - 1; break;
 		case 6: binding_size = A733_GPU_ID_SIZE; break;
 		}
 		sun60i_gpu_attach(&soc_device, &gpu_device, (void *)&faa);

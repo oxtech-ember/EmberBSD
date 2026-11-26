@@ -10,9 +10,9 @@
 #include <string.h>
 #include <time.h>
 
-#include "sun60i_a733_gpu_fwimage.h"
+#include "pvr_fwimage.h"
 #include "../../sys/dev/powervr/pvr_fw_handshake.h"
-#include "sun60i_a733_gpu_fwinit.h"
+#include "pvr_fwinit.h"
 #include "dev/powervr/fwif/pvr_rogue_fwif.h"
 
 #ifndef __arraycount
@@ -52,7 +52,7 @@ static unsigned int checks;
 } while (0)
 
 static struct sun60i_a733_gpu_fwmem mem;
-static struct sun60i_a733_gpu_fwboot_result result;
+static struct pvr_fwboot_result result;
 static struct fake_map maps[5];
 static uint8_t *cpu[5], *device[5], *saved[5];
 static const size_t sizes[5] = {16384, 16384, 16384, 139264, 12288};
@@ -176,9 +176,9 @@ bus_dmamap_sync(bus_dma_tag_t tag, bus_dmamap_t map, bus_addr_t offset,
 
 int
 pvr_fwstart(enum pvr_fw_profile profile, bus_space_tag_t tag, bus_space_handle_t handle,
-    const struct sun60i_a733_gpu_fwinfo *info, uint64_t boot_code,
+    const struct pvr_fwinfo *info, uint64_t boot_code,
     uint64_t boot_data, uint64_t exception_code,
-    struct sun60i_a733_gpu_fwstart_result *out)
+    struct pvr_fwstart_result *out)
 {
 	CHECK(result.attempted && result.device_owned);
 	CHECK(profile == mem.profile);
@@ -248,13 +248,13 @@ reset(void)
 		memset(cpu[i], 0x80 + (int)i, sizes[i]);
 		memset(device[i], 0xcc, sizes[i]);
 	}
-	mem.image.info.allocation_size[A733_GPU_FW_CODE] = 16384;
-	mem.image.info.allocation_size[A733_GPU_FW_DATA] = 16384;
+	mem.image.info.allocation_size[PVR_FW_CODE] = 16384;
+	mem.image.info.allocation_size[PVR_FW_DATA] = 16384;
 	mem.boot_code = mem.code.address + 4096;
 	mem.exception_code = mem.code.address + 8192;
 	mem.boot_data = mem.data.address + 4096;
 	mem.stack = mem.data.address + 8192;
-	CHECK(sun60i_a733_gpu_fwinit(mem.work.cpu, mem.work.size,
+	CHECK(pvr_fwinit(mem.work.cpu, mem.work.size,
 	    mem.config.cpu, mem.config.size, mem.work.address, 600000000,
 	    2, 16, &mem.interface_layout) == 0);
 	mem.interface_prepared = true;
@@ -295,13 +295,13 @@ assert_snapshot(void)
 static int
 run(void)
 {
-	return sun60i_a733_gpu_fwboot(&mem, 0x12340000, &mem, &result);
+	return pvr_fwboot(PVR_FW_PROFILE_A733, &mem, 0x12340000, &mem, &result);
 }
 
 static void
 assert_retained(void)
 {
-	struct sun60i_a733_gpu_fwboot_result old = result;
+	struct pvr_fwboot_result old = result;
 	unsigned int old_syncs = syncs, old_starts = start_calls;
 
 	CHECK(result.attempted && result.device_owned);
@@ -313,8 +313,8 @@ assert_retained(void)
 	CHECK(memcmp(&old, &result, sizeof(old)) == 0);
 	CHECK(old_syncs == syncs && old_starts == start_calls);
 	/* A fresh result cannot revoke ownership held by the memory owner. */
-	struct sun60i_a733_gpu_fwboot_result fresh = { 0 };
-	CHECK(sun60i_a733_gpu_fwboot(&mem, 0x12340000, &mem, &fresh) == EBUSY);
+	struct pvr_fwboot_result fresh = { 0 };
+	CHECK(pvr_fwboot(PVR_FW_PROFILE_A733, &mem, 0x12340000, &mem, &fresh) == EBUSY);
 	CHECK(!fresh.attempted && !fresh.device_owned);
 	CHECK(old_syncs == syncs && old_starts == start_calls);
 }
@@ -390,7 +390,7 @@ boot_tests(void)
 		CHECK(memcmp(cpu[i], device[i], sizes[i]) == 0);
 	}
 	{
-		struct sun60i_a733_gpu_fwboot_result old = result;
+		struct pvr_fwboot_result old = result;
 
 		CHECK(run() == EBUSY && syncs == 10 && start_calls == 1);
 		CHECK(memcmp(&old, &result, sizeof(old)) == 0);
@@ -408,14 +408,14 @@ boot_tests(void)
 
 static void
 rejected(bus_space_tag_t tag, struct sun60i_a733_gpu_fwmem *owner,
-    struct sun60i_a733_gpu_fwboot_result *out)
+    struct pvr_fwboot_result *out)
 {
-	struct sun60i_a733_gpu_fwboot_result old = result;
+	struct pvr_fwboot_result old = result;
 	struct sun60i_a733_gpu_fwmem old_mem = mem;
 
 	for (unsigned int i = 0; i < 5; i++)
 		memcpy(saved[i], cpu[i], sizes[i]);
-	CHECK(sun60i_a733_gpu_fwboot(tag, 0x12340000, owner, out) == EINVAL);
+	CHECK(pvr_fwboot(PVR_FW_PROFILE_A733, tag, 0x12340000, owner, out) == EINVAL);
 	CHECK(syncs == 0 && start_calls == 0 && delays == 0);
 	CHECK(memcmp(&old, &result, sizeof(old)) == 0);
 	CHECK(memcmp(&old_mem, &mem, sizeof(mem)) == 0);
@@ -454,17 +454,17 @@ preflight_tests(void)
 		REJECT(maps[i].dm_segs[0].ds_addr += 4096);
 	}
 	for (unsigned int i = 0; i < 3; i++) {
-		unsigned int id = A733_GPU_FWINIT_CONNECTION + i;
+		unsigned int id = PVR_FWINIT_CONNECTION + i;
 
 		REJECT(mem.interface_layout.object[id].offset += 4096);
 		REJECT(mem.interface_layout.object[id].offset = UINT32_MAX);
 		REJECT(mem.interface_layout.object[id].size--);
 		REJECT(mem.interface_layout.object[id].fw_addr += 4096);
-		REJECT(mem.interface_layout.object[id].buffer = A733_GPU_FWINIT_WORK);
+		REJECT(mem.interface_layout.object[id].buffer = PVR_FWINIT_WORK);
 	}
 	REJECT(mem.interface_layout.total_work_size--);
-	REJECT(mem.image.info.allocation_size[A733_GPU_FW_CODE]--);
-	REJECT(mem.image.info.allocation_size[A733_GPU_FW_DATA]--);
+	REJECT(mem.image.info.allocation_size[PVR_FW_CODE]--);
+	REJECT(mem.image.info.allocation_size[PVR_FW_DATA]--);
 	REJECT(mem.boot_code = mem.code.address + mem.code.size);
 	REJECT(mem.boot_data = mem.data.address - 4096);
 	REJECT(mem.exception_code = mem.boot_code);

@@ -1,6 +1,6 @@
 # A733 PowerVR MIPS CPU image preparation
 
-[The native helper](../sun60i_a733_gpu_fwimage.c) wraps the [common mechanism](../../../../dev/powervr/pvr_fwimage.c) and
+[The native helper](../../../../dev/powervr/pvr_fwimage.c) directly
 prepares code and data in caller-owned CPU buffers.
 It validates metadata through the [production parser](a733-gpu-fwinfo.md).
 It then checks the ELF32 program headers before it writes any output.
@@ -8,7 +8,7 @@ This is a preparation component, not evidence of firmware execution or GPU rende
 
 ## API and supported scope
 
-[`sun60i_a733_gpu_fwimage_prepare()`](../sun60i_a733_gpu_fwimage.h)
+[`pvr_fwimage_prepare()`](../../../../dev/powervr/pvr_fwimage.h)
 accepts the original stable firmware bytes, their size, and the expected live BVNC.
 The caller supplies separate writable code, data, and result buffers.
 The capacities must cover the metadata allocation sizes.
@@ -42,7 +42,7 @@ Capacity beyond the required allocation sizes stays unchanged.
 Any validation error leaves the input, code, data, and result unchanged.
 
 The result contains decoded metadata and six layouts in ID order.
-Use `section[id - A733_GPU_FW_MIPS_CODE]` to get each layout.
+Use `section[id - PVR_FW_MIPS_CODE]` to get each layout.
 Each layout supplies `alloc_offset`, `alloc_size`, and `base_addr`.
 `entry` preserves the microMIPS bit; `entry_addr` clears it.
 `entry_offset` locates the normalized entry in the code buffer.

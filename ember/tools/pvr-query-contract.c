@@ -7,7 +7,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include "sun60i_a733_gpu_fwinfo.h"
+#include "pvr_fwinfo.h"
 #ifdef PVR_GE_TEST
 #include "../../sys/dev/powervr/pvr_ge8300.h"
 #endif
@@ -68,7 +68,7 @@ copyout(const void *from, void *to, size_t size)
 static struct pvr_query_input
 metadata(const char *path)
 {
-	struct sun60i_a733_gpu_fwinfo info;
+	struct pvr_fwinfo info;
 	struct pvr_query_input input, saved;
 	uint8_t *bytes;
 	FILE *file;
@@ -85,7 +85,7 @@ metadata(const char *path)
 	CHECK(bytes != NULL);
 	CHECK(fread(bytes, 1, (size_t)length, file) == (size_t)length);
 	CHECK(fclose(file) == 0);
-	CHECK(sun60i_a733_gpu_fwinfo_parse(bytes, (size_t)length,
+	CHECK(pvr_fwinfo_parse(bytes, (size_t)length,
 	    UINT64_C(0x00240038006800b7), &info) == 0);
 	free(bytes);
 	CHECK(sun60i_gpu_query_input(&info, &input) == 0);
@@ -97,19 +97,19 @@ metadata(const char *path)
 		CHECK(memcmp(input.feature, expected, sizeof(expected)) == 0);
 	}
 	saved = input;
-	for (i = 0; i < A733_GPU_FW_FEATURE_MAX; i++) {
-		struct sun60i_a733_gpu_fwinfo broken = info;
+	for (i = 0; i < PVR_FW_FEATURE_MAX; i++) {
+		struct pvr_fwinfo broken = info;
 		int error;
 
 		broken.feature_mask[i / 64] &= ~(UINT64_C(1) << (i % 64));
 		input = saved;
 		error = sun60i_gpu_query_input(&broken, &input);
-		if (i == A733_GPU_FW_FEATURE_COMMON_STORE_SIZE_IN_DWORDS ||
-		    i == A733_GPU_FW_FEATURE_MAX_PARTITIONS ||
-		    i == A733_GPU_FW_FEATURE_TILE_SIZE_X || i == A733_GPU_FW_FEATURE_TILE_SIZE_Y ||
-		    i == A733_GPU_FW_FEATURE_USC_MIN_OUTPUT_REGISTERS_PER_PIX ||
-		    i == A733_GPU_FW_FEATURE_NUM_CLUSTERS ||
-		    i == A733_GPU_FW_FEATURE_ISP_MAX_TILES_IN_FLIGHT) {
+		if (i == PVR_FW_FEATURE_COMMON_STORE_SIZE_IN_DWORDS ||
+		    i == PVR_FW_FEATURE_MAX_PARTITIONS ||
+		    i == PVR_FW_FEATURE_TILE_SIZE_X || i == PVR_FW_FEATURE_TILE_SIZE_Y ||
+		    i == PVR_FW_FEATURE_USC_MIN_OUTPUT_REGISTERS_PER_PIX ||
+		    i == PVR_FW_FEATURE_NUM_CLUSTERS ||
+		    i == PVR_FW_FEATURE_ISP_MAX_TILES_IN_FLIGHT) {
 			CHECK(error == ENOENT);
 			CHECK(memcmp(&input, &saved, sizeof(input)) == 0);
 		} else {

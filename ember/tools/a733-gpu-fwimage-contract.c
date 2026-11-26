@@ -4,7 +4,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include "sun60i_a733_gpu_fwimage.h"
+#include "pvr_fwimage.h"
 
 #define IMAGE_SIZE 12288
 #define INFO 8192
@@ -100,7 +100,7 @@ fixture(void)
 }
 
 static void
-fill_outputs(struct sun60i_a733_gpu_fwimage *out)
+fill_outputs(struct pvr_fwimage *out)
 {
 	memset(code, 0xa5, sizeof(code));
 	memset(data, 0xa5, sizeof(data));
@@ -119,13 +119,13 @@ unchanged(const void *bytes, size_t size)
 static void
 expect(int expected)
 {
-	struct sun60i_a733_gpu_fwimage out;
+	struct pvr_fwimage out;
 	uint8_t saved[IMAGE_SIZE];
 	int error;
 
 	memcpy(saved, image, sizeof(saved));
 	fill_outputs(&out);
-	error = sun60i_a733_gpu_fwimage_prepare(image, sizeof(image), BVNC,
+	error = pvr_fwimage_prepare(image, sizeof(image), BVNC,
 	    code, sizeof(code), data, sizeof(data), &out);
 	if (expected >= 0)
 		CHECK(error == expected);
@@ -146,13 +146,13 @@ expect(int expected)
 static void
 success_tests(void)
 {
-	struct sun60i_a733_gpu_fwimage out;
+	struct pvr_fwimage out;
 	uint8_t want_code[CAPACITY], want_data[CAPACITY];
 	uint8_t *unaligned;
 	uint8_t layout[24];
 
 	fill_outputs(&out);
-	CHECK(sun60i_a733_gpu_fwimage_prepare(image, sizeof(image), BVNC,
+	CHECK(pvr_fwimage_prepare(image, sizeof(image), BVNC,
 	    code, sizeof(code), data, sizeof(data), &out) == 0);
 	memset(want_code, 0xa5, sizeof(want_code));
 	memset(want_data, 0xa5, sizeof(want_data));
@@ -173,7 +173,7 @@ success_tests(void)
 	unaligned = malloc(IMAGE_SIZE + 1);
 	CHECK(unaligned != NULL);
 	memcpy(unaligned + 1, image, IMAGE_SIZE);
-	CHECK(sun60i_a733_gpu_fwimage_prepare(unaligned + 1, IMAGE_SIZE, BVNC,
+	CHECK(pvr_fwimage_prepare(unaligned + 1, IMAGE_SIZE, BVNC,
 	    code, sizeof(code), data, sizeof(data), &out) == 0);
 	CHECK(memcmp(want_code, code, sizeof(code)) == 0);
 	free(unaligned);
@@ -212,7 +212,7 @@ success_tests(void)
 		put32(p + 28, 1);
 	}
 	expect(0);
-	CHECK(sun60i_a733_gpu_fwimage_prepare(image, sizeof(image), BVNC,
+	CHECK(pvr_fwimage_prepare(image, sizeof(image), BVNC,
 	    code, sizeof(code), data, sizeof(data), &out) == 0);
 	CHECK(out.load_count == 16);
 	put32(1024 + 15 * 32 + 24, 7);
@@ -226,9 +226,9 @@ success_tests(void)
 	/* Adjacent declared output spans are valid, including the result. */
 	unaligned = malloc(REQUIRED * 2 + sizeof(out));
 	CHECK(unaligned != NULL);
-	CHECK(sun60i_a733_gpu_fwimage_prepare(image, sizeof(image), BVNC,
+	CHECK(pvr_fwimage_prepare(image, sizeof(image), BVNC,
 	    unaligned, REQUIRED, unaligned + REQUIRED, REQUIRED,
-	    (struct sun60i_a733_gpu_fwimage *)(void *)(unaligned +
+	    (struct pvr_fwimage *)(void *)(unaligned +
 	    REQUIRED * 2)) == 0);
 	CHECK(memcmp(unaligned, want_code, REQUIRED) == 0);
 	CHECK(memcmp(unaligned + REQUIRED, want_data, REQUIRED) == 0);
@@ -318,7 +318,7 @@ corrupt_tests(void)
 static void
 argument_tests(void)
 {
-	struct sun60i_a733_gpu_fwimage out, saved;
+	struct pvr_fwimage out, saved;
 	struct {
 		const void *input;
 		size_t length;
@@ -327,7 +327,7 @@ argument_tests(void)
 		size_t code_size;
 		void *data_pointer;
 		size_t data_size;
-		struct sun60i_a733_gpu_fwimage *output;
+		struct pvr_fwimage *output;
 		int error;
 	} cases[] = {
 		{ NULL, IMAGE_SIZE, BVNC, code, CAPACITY, data, CAPACITY, &out, EINVAL },
@@ -352,13 +352,13 @@ argument_tests(void)
 		{ image, IMAGE_SIZE, BVNC, code, CAPACITY, data, SIZE_MAX, &out, EINVAL },
 		{ (void *)(UINTPTR_MAX - 2), 4, BVNC, code, CAPACITY, data, CAPACITY, &out, EINVAL },
 		{ image, IMAGE_SIZE, BVNC, code, CAPACITY, data, CAPACITY,
-		    (struct sun60i_a733_gpu_fwimage *)(UINTPTR_MAX - 2), EINVAL }
+		    (struct pvr_fwimage *)(UINTPTR_MAX - 2), EINVAL }
 	};
 
 	for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
 		fill_outputs(&out);
 		memcpy(&saved, &out, sizeof(saved));
-		CHECK(sun60i_a733_gpu_fwimage_prepare(cases[i].input,
+		CHECK(pvr_fwimage_prepare(cases[i].input,
 		    cases[i].length, cases[i].bvnc, cases[i].code_pointer,
 		    cases[i].code_size, cases[i].data_pointer, cases[i].data_size,
 		    cases[i].output) == cases[i].error);
@@ -370,7 +370,7 @@ argument_tests(void)
 	/* Bounds reach the production metadata parser before any ELF read. */
 	for (size_t size = 1; size < IMAGE_SIZE; size++) {
 		fill_outputs(&out);
-		CHECK(sun60i_a733_gpu_fwimage_prepare(image, size, BVNC, code,
+		CHECK(pvr_fwimage_prepare(image, size, BVNC, code,
 		    CAPACITY, data, CAPACITY, &out) != 0);
 		unchanged(&out, sizeof(out));
 		unchanged(code, sizeof(code));
@@ -399,7 +399,7 @@ mutation_tests(void)
 static void
 blob_test(const char *path)
 {
-	struct sun60i_a733_gpu_fwimage out;
+	struct pvr_fwimage out;
 	uint8_t *blob, *saved, *blob_code, *blob_data, *want_code, *want_data;
 	FILE *fp;
 	const size_t size = 131072, code_size = 102400, data_size = 20480;
@@ -420,10 +420,10 @@ blob_test(const char *path)
 	memcpy(saved, blob, size);
 	memset(blob_code, 0xa5, code_size + 16);
 	memset(blob_data, 0xa5, data_size + 16);
-	CHECK(sun60i_a733_gpu_fwimage_prepare(blob, size, BVNC, blob_code,
+	CHECK(pvr_fwimage_prepare(blob, size, BVNC, blob_code,
 	    code_size + 16, blob_data, data_size + 16, &out) == 0);
-	CHECK(out.info.allocation_size[A733_GPU_FW_CODE] == code_size);
-	CHECK(out.info.allocation_size[A733_GPU_FW_DATA] == data_size);
+	CHECK(out.info.allocation_size[PVR_FW_CODE] == code_size);
+	CHECK(out.info.allocation_size[PVR_FW_DATA] == data_size);
 	CHECK(out.entry == 0xbfc00001 && out.entry_offset == 98304);
 	CHECK(out.load_count == 5);
 	CHECK(out.section[1].alloc_offset == 94208);

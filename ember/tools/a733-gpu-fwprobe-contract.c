@@ -10,9 +10,9 @@
 #include <string.h>
 #include <time.h>
 
-#include "sun60i_a733_gpu_fwimage.h"
+#include "pvr_fwimage.h"
 #include "../../sys/dev/powervr/pvr_fw_handshake.h"
-#include "sun60i_a733_gpu_fwinit.h"
+#include "pvr_fwinit.h"
 #include "dev/powervr/fwif/pvr_rogue_fwif.h"
 #include "dev/powervr/fwif/pvr_rogue_fwif_client.h"
 #include "../../sys/dev/powervr/pvr_fwcompute.h"
@@ -64,7 +64,7 @@ static unsigned int assertions;
 } while (0)
 
 static struct sun60i_a733_gpu_fwmem owner;
-static struct sun60i_a733_gpu_fwboot_result booted;
+static struct pvr_fwboot_result booted;
 static struct sun60i_a733_gpu_fwprobe_result result, previous, previous_saved;
 static unsigned int test_slot;
 static uint32_t test_log_type;
@@ -458,7 +458,7 @@ reset(void)
 		a->coherent = i >= 3;
 		memset(cpu[i], 0xa0 + (int)i, sizes[i]);
 	}
-	CHECK(sun60i_a733_gpu_fwinit(cpu[3], sizes[3], cpu[4], sizes[4],
+	CHECK(pvr_fwinit(cpu[3], sizes[3], cpu[4], sizes[4],
 	    areas[3]->address, 600000000, 2, 16, &owner.interface_layout) == 0);
 	owner.interface_prepared = true;
 	owner.image.info.bvnc = UINT64_C(0x00240038006800b7);
@@ -698,11 +698,11 @@ compatibility_tests(void)
 
 static void
 structural_reject(int error, struct sun60i_a733_gpu_fwmem *mem,
-    const struct sun60i_a733_gpu_fwboot_result *boot,
+    const struct pvr_fwboot_result *boot,
     struct sun60i_a733_gpu_fwprobe_result *out)
 {
 	struct sun60i_a733_gpu_fwmem old_owner = owner;
-	struct sun60i_a733_gpu_fwboot_result old_boot = booted;
+	struct pvr_fwboot_result old_boot = booted;
 	struct sun60i_a733_gpu_fwprobe_result old_result = result;
 
 	for (unsigned int i = 0; i < 5; i++)
@@ -758,7 +758,7 @@ structural_tests(void)
 		REJECT(EOPNOTSUPP, maps[i]._dm_flags = 0);
 		REJECT(EOPNOTSUPP, maps[i]._dm_flags |= _BUS_DMAMAP_IS_BOUNCING);
 	}
-	for (unsigned int i = 0; i < A733_GPU_FWINIT_OBJECT_COUNT; i++) {
+	for (unsigned int i = 0; i < PVR_FWINIT_OBJECT_COUNT; i++) {
 		REJECT(EINVAL, owner.interface_layout.object[i].offset++);
 		REJECT(EINVAL, owner.interface_layout.object[i].offset = UINT32_MAX);
 		REJECT(EINVAL, owner.interface_layout.object[i].size--);
@@ -803,7 +803,7 @@ cache_reject(int error, const struct sun60i_a733_gpu_fwprobe_result *prior,
 {
 	struct sun60i_a733_gpu_fwprobe_result old = result, old_previous = previous;
 	struct sun60i_a733_gpu_fwmem old_owner = owner;
-	struct sun60i_a733_gpu_fwboot_result old_boot = booted;
+	struct pvr_fwboot_result old_boot = booted;
 
 	for (unsigned int i = 0; i < 5; i++)
 		memcpy(saved[i], cpu[i], sizes[i]);
@@ -917,9 +917,9 @@ cache_tests(void)
 	CACHE_REJECT(EINVAL, previous.after.fw_faults = 1);
 	CACHE_REJECT(EOPNOTSUPP, owner.work.coherent = false);
 	CACHE_REJECT(EOPNOTSUPP, maps[4]._dm_flags |= _BUS_DMAMAP_IS_BOUNCING);
-	CACHE_REJECT(EINVAL, owner.interface_layout.object[A733_GPU_FWINIT_MMUCACHE_SYNC].offset++);
-	CACHE_REJECT(EINVAL, owner.interface_layout.object[A733_GPU_FWINIT_MMUCACHE_SYNC].size++);
-	CACHE_REJECT(EINVAL, owner.interface_layout.object[A733_GPU_FWINIT_MMUCACHE_SYNC].fw_addr++);
+	CACHE_REJECT(EINVAL, owner.interface_layout.object[PVR_FWINIT_MMUCACHE_SYNC].offset++);
+	CACHE_REJECT(EINVAL, owner.interface_layout.object[PVR_FWINIT_MMUCACHE_SYNC].size++);
+	CACHE_REJECT(EINVAL, owner.interface_layout.object[PVR_FWINIT_MMUCACHE_SYNC].fw_addr++);
 	prepare_cache(); cache_reject(EINVAL, NULL, &result);
 	prepare_cache(); cache_reject(EINVAL, (void *)((uint8_t *)&previous + 1), &result);
 	prepare_cache(); cache_reject(EINVAL, (void *)(UINTPTR_MAX - 7), &result);
@@ -1103,7 +1103,7 @@ observation_tests(void)
 	    ROGUE_FWIF_KCCB_CMD_KICK, 0x3f,
 	    &out) == EINVAL);
 	CHECK(sun60i_a733_gpu_fwprobe_observe(&owner, &booted,
-	    A733_GPU_FWINIT_KCCB_COUNT, ROGUE_FWIF_KCCB_CMD_KICK, 0x3f, &out) == EINVAL);
+	    PVR_FWINIT_KCCB_COUNT, ROGUE_FWIF_KCCB_CMD_KICK, 0x3f, &out) == EINVAL);
 	CHECK(sun60i_a733_gpu_fwprobe_observe(&owner, &booted, 4,
 	    ROGUE_FWIF_KCCB_CMD_KICK, 0x80003f,
 	    &out) == EINVAL);
@@ -1113,7 +1113,7 @@ observation_tests(void)
 	CHECK(sun60i_a733_gpu_fwprobe_observe(&owner, &booted, 4,
 	    ROGUE_FWIF_KCCB_CMD_KICK, 0x3f,
 	    (void *)&owner) == EINVAL);
-	owner.interface_layout.object[A733_GPU_FWINIT_FWCCB_CMDS].size++;
+	owner.interface_layout.object[PVR_FWINIT_FWCCB_CMDS].size++;
 	CHECK(sun60i_a733_gpu_fwprobe_observe(&owner, &booted, 4,
 	    ROGUE_FWIF_KCCB_CMD_KICK, 0x3f,
 	    &out) == EINVAL);

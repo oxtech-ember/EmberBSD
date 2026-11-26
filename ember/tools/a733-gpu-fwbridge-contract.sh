@@ -14,7 +14,10 @@ for kind in mem start boot probe service bridge; do
     case "$kind" in mem|start|boot|probe)
         sed '/^#include /d' "$src/sys/dev/powervr/pvr_fw${kind}.h" > "$work/$kind.h" ;;
     esac
-    sed '/^#include /d' "$src/sys/arch/arm/sunxi/sun60i_a733_gpu_fw${kind}.h" >> "$work/$kind.h"
+    case "$kind" in
+    boot|start) ;;
+    *) sed '/^#include /d' "$src/sys/arch/arm/sunxi/sun60i_a733_gpu_fw${kind}.h" >> "$work/$kind.h" ;;
+    esac
 done
 sed '/^#include /d' "$src/sys/dev/powervr/pvr_fwservice.h" > "$work/service.h"
 sed '/^#include /d' "$src/sys/arch/arm/sunxi/sun60i_a733_gpu_fwservice.h" >> "$work/service.h"
@@ -32,6 +35,6 @@ awk '/^sun60i_gpu_run_stage\(/ { active=1; print "static void" }
 sed -n '/^#define A733_GPU_BASE/,/^struct sun60i_gpu_softc/p' \
     "$src/sys/arch/arm/sunxi/sun60i_a733_gpu.c" | sed '$d' > "$work/platform-defines.h"
 ${CC:-cc} -std=c11 -Wall -Wextra -Werror ${FWBRIDGE_TEST_CFLAGS:-} \
-    -I"$work" -I"$src/sys/arch/arm/sunxi" -idirafter "$src/sys" \
+    -I"$work" -I"$src/sys/arch/arm/sunxi" -I"$src/sys/dev/powervr" -idirafter "$src/sys" \
     "$tools/a733-gpu-fwbridge-contract.c" -o "$work/contract"
 "$work/contract"

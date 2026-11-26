@@ -11,10 +11,9 @@ trap 'rm -rf "$work"' EXIT HUP INT TERM
 # FWCOMPUTE_VM_SOURCE selects an earlier encoder for the causal regression.
 ${CC:-cc} -std=c11 -Wall -Wextra -Werror \
     ${FWCOMPUTE_VM_TEST_CFLAGS:--fsanitize=address,undefined} \
-    -I"$src/sys/arch/arm/sunxi" \
+    -I"$src/sys/arch/arm/sunxi" -I"$src/sys/dev/powervr" \
     "$tools/a733-gpu-fwcompute-vm-contract.c" \
-    "${FWCOMPUTE_VM_SOURCE:-$src/sys/arch/arm/sunxi/sun60i_a733_gpu_fwcompute_vm.c}" \
-    "$src/sys/dev/powervr/pvr_fwcompute_vm.c" \
+    "${FWCOMPUTE_VM_SOURCE:-$src/sys/dev/powervr/pvr_fwcompute_vm.c}" \
     "$src/sys/arch/arm/sunxi/sun60i_a733_gpu_mmu.c" \
     "$src/sys/dev/powervr/pvr_mmu.c" \
     -o "$work/fwcompute-vm"

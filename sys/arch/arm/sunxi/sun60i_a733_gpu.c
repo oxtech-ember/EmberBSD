@@ -48,14 +48,14 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #include <dev/fdt/fdtvar.h>
 #include <dev/firmload.h>
 #include <dev/powervr/pvr_job_irq_fdt.h>
-#include <arm/sunxi/sun60i_a733_gpu_fwinfo.h>
+#include <dev/powervr/pvr_fwinfo.h>
 #include <arm/sunxi/sun60i_a733_gpu_fwmem.h>
-#include <arm/sunxi/sun60i_a733_gpu_fwboot.h>
+#include <dev/powervr/pvr_fwboot.h>
 #include <arm/sunxi/sun60i_a733_gpu_fwprobe.h>
 #include <arm/sunxi/sun60i_a733_gpu_fwbridge.h>
 #include <arm/sunxi/sun60i_a733_gpu_fwcompute.h>
 #include <arm/sunxi/sun60i_a733_gpu_fwcompute_file.h>
-#include <arm/sunxi/sun60i_a733_gpu_fwheap.h>
+#include <dev/powervr/pvr_fwheap.h>
 #include <arm/sunxi/sun60i_a733_ccu.h>
 #include <arm/sunxi/sun60i_a733_pck600.h>
 #include <external/bsd/drm2/powervr/pvr_drv.h>
@@ -100,7 +100,7 @@ struct sun60i_gpu_softc {
 	bus_space_tag_t sc_bst;
 	bus_dma_tag_t sc_dmat;
 	struct sun60i_a733_gpu_fwmem *sc_fw_memory;
-	struct sun60i_a733_gpu_fwboot_result sc_boot_result;
+	struct pvr_fwboot_result sc_boot_result;
 	struct sun60i_a733_gpu_fwprobe_result sc_probe_result;
 	struct sun60i_a733_gpu_fwprobe_result sc_cache_result;
 	const char *sc_stage;
@@ -127,8 +127,8 @@ struct sun60i_gpu_softc {
 	char sc_kick_state[1024];	/* cached stage-21 submission */
 	char sc_trace_state[4096];	/* cached stage-21 firmware trace */
 	char sc_hwr_state[8192];	/* cached stage-21 firmware HWR records */
-	struct sun60i_a733_gpu_fwheap *sc_fwheap;
-	struct sun60i_a733_gpu_fwvm *sc_fwvm;
+	struct pvr_fwheap *sc_fwheap;
+	struct pvr_fwvm *sc_fwvm;
 	struct sun60i_a733_gpu_fwprobe_result sc_heap_result, sc_kick_result;
 	struct sun60i_a733_gpu_fwprobe_result sc_trace_result;
 	bool sc_have_id, sc_probed, sc_retained, sc_compute_done;
@@ -442,7 +442,7 @@ sun60i_gpu_stage_identify(struct sun60i_gpu_softc *sc)
 static int
 sun60i_gpu_stage_fwinfo(struct sun60i_gpu_softc *sc)
 {
-	struct sun60i_a733_gpu_fwinfo info;
+	struct pvr_fwinfo info;
 	firmware_handle_t fh = NULL;
 	void *bytes = NULL;
 	off_t file_size;
@@ -459,7 +459,7 @@ sun60i_gpu_stage_fwinfo(struct sun60i_gpu_softc *sc)
 	if (error != 0)
 		goto out;
 	file_size = firmware_get_size(fh);
-	if (file_size < A733_GPU_FW_BLOCK_SIZE ||
+	if (file_size < PVR_FW_BLOCK_SIZE ||
 	    file_size > A733_GPU_FW_MAX_SIZE) {
 		error = EINVAL;
 		goto out;
@@ -472,7 +472,7 @@ sun60i_gpu_stage_fwinfo(struct sun60i_gpu_softc *sc)
 	}
 	error = firmware_read(fh, 0, bytes, size);
 	if (error == 0)
-		error = sun60i_a733_gpu_fwinfo_parse(bytes, size, sc->sc_bvnc,
+		error = pvr_fwinfo_parse(bytes, size, sc->sc_bvnc,
 		    &info);
 out:
 	if (fh != NULL) {
@@ -492,8 +492,8 @@ out:
 		    "bvnc=0x%016llx layouts=%u code=%u data=%u payload=%zu",
 		    (u_int)info.version_major, (u_int)info.version_minor,
 		    info.version_build, (unsigned long long)info.bvnc,
-		    info.layout_count, info.allocation_size[A733_GPU_FW_CODE],
-		    info.allocation_size[A733_GPU_FW_DATA], info.payload_size);
+		    info.layout_count, info.allocation_size[PVR_FW_CODE],
+		    info.allocation_size[PVR_FW_DATA], info.payload_size);
 	}
 	return error;
 }
@@ -520,7 +520,7 @@ sun60i_gpu_stage_fwmem(struct sun60i_gpu_softc *sc)
 	if (error != 0)
 		goto out;
 	file_size = firmware_get_size(fh);
-	if (file_size < A733_GPU_FW_BLOCK_SIZE ||
+	if (file_size < PVR_FW_BLOCK_SIZE ||
 	    file_size > A733_GPU_FW_MAX_SIZE) {
 		error = EINVAL;
 		goto out;
@@ -575,12 +575,12 @@ sun60i_gpu_stage_fwinit(struct sun60i_gpu_softc *sc)
 		error = EBUSY;
 		goto out;
 	}
-	error = sun60i_a733_gpu_fwinfo_feature(&mem->image.info,
-	    A733_GPU_FW_FEATURE_NUM_CLUSTERS, &clusters);
+	error = pvr_fwinfo_feature(&mem->image.info,
+	    PVR_FW_FEATURE_NUM_CLUSTERS, &clusters);
 	if (error != 0)
 		goto out;
-	error = sun60i_a733_gpu_fwinfo_feature(&mem->image.info,
-	    A733_GPU_FW_FEATURE_SLC_SIZE_IN_KILOBYTES, &slc_kib);
+	error = pvr_fwinfo_feature(&mem->image.info,
+	    PVR_FW_FEATURE_SLC_SIZE_IN_KILOBYTES, &slc_kib);
 	if (error != 0)
 		goto out;
 	if (clusters == 0 || clusters > UINT32_MAX ||
@@ -599,7 +599,7 @@ out:
 		    "CPU-owned interface only error=0 work=%zu config=%zu "
 		    "objects=%u core_hz=%u clusters=%u slc_kib=%u",
 		    mem->work.size, mem->config.size,
-		    (u_int)A733_GPU_FWINIT_OBJECT_COUNT, sc->sc_core_hz,
+		    (u_int)PVR_FWINIT_OBJECT_COUNT, sc->sc_core_hz,
 		    (u_int)clusters, (u_int)slc_kib);
 	}
 	return error;
@@ -634,7 +634,7 @@ sun60i_gpu_boot_ready(struct sun60i_gpu_softc *sc, int power_node)
 static int
 sun60i_gpu_stage_fwboot(struct sun60i_gpu_softc *sc, int power_node)
 {
-	struct sun60i_a733_gpu_fwboot_result *r = &sc->sc_boot_result;
+	struct pvr_fwboot_result *r = &sc->sc_boot_result;
 	struct sun60i_a733_gpu_fwmem *mem = sc->sc_fw_memory;
 	bus_space_handle_t bsh;
 	bus_addr_t addr;
@@ -654,17 +654,17 @@ sun60i_gpu_stage_fwboot(struct sun60i_gpu_softc *sc, int power_node)
 		goto out;
 	error = fdtbus_get_reg(sc->sc_phandle, 0, &addr, &size);
 	if (error != 0 || addr != A733_GPU_BASE ||
-	    size < A733_GPU_FWSTART_REG_SIZE) {
+	    size < PVR_FWSTART_REG_SIZE) {
 		error = EINVAL;
 		goto out;
 	}
-	error = bus_space_map(sc->sc_bst, addr, A733_GPU_FWSTART_REG_SIZE,
+	error = bus_space_map(sc->sc_bst, addr, PVR_FWSTART_REG_SIZE,
 	    0, &bsh);
 	if (error != 0)
 		goto out;
-	error = sun60i_a733_gpu_fwboot(sc->sc_bst, bsh, mem, r);
+	error = pvr_fwboot(PVR_FW_PROFILE_A733, sc->sc_bst, bsh, mem, r);
 	/* This is only the CPU register mapping, never a DMA allocation. */
-	bus_space_unmap(sc->sc_bst, bsh, A733_GPU_FWSTART_REG_SIZE);
+	bus_space_unmap(sc->sc_bst, bsh, PVR_FWSTART_REG_SIZE);
 out:
 	if (r->device_owned) {
 		/* Do not leave the earlier CPU-ownership reports visible as current. */
@@ -690,7 +690,7 @@ out:
 
 static void
 sun60i_gpu_probe_report(char *state, size_t size,
-    const struct sun60i_a733_gpu_fwboot_result *boot,
+    const struct pvr_fwboot_result *boot,
     const struct sun60i_a733_gpu_fwprobe_result *r, int error)
 {
 	snprintf(state, size,
@@ -722,7 +722,7 @@ sun60i_gpu_probe_report(char *state, size_t size,
 static int
 sun60i_gpu_stage_fwprobe(struct sun60i_gpu_softc *sc, int power_node)
 {
-	const struct sun60i_a733_gpu_fwboot_result *boot = &sc->sc_boot_result;
+	const struct pvr_fwboot_result *boot = &sc->sc_boot_result;
 	struct sun60i_a733_gpu_fwprobe_result *r = &sc->sc_probe_result;
 	struct sun60i_a733_gpu_fwmem *mem = sc->sc_fw_memory;
 	bus_space_handle_t bsh;
@@ -746,17 +746,17 @@ sun60i_gpu_stage_fwprobe(struct sun60i_gpu_softc *sc, int power_node)
 		goto out;
 	error = fdtbus_get_reg(sc->sc_phandle, 0, &addr, &size);
 	if (error != 0 || addr != A733_GPU_BASE ||
-	    size < A733_GPU_FWSTART_REG_SIZE) {
+	    size < PVR_FWSTART_REG_SIZE) {
 		error = EINVAL;
 		goto out;
 	}
-	error = bus_space_map(sc->sc_bst, addr, A733_GPU_FWSTART_REG_SIZE,
+	error = bus_space_map(sc->sc_bst, addr, PVR_FWSTART_REG_SIZE,
 	    0, &bsh);
 	if (error != 0)
 		goto out;
 	error = sun60i_a733_gpu_fwprobe(sc->sc_bst, bsh, mem, boot, r);
 	/* Release only the CPU register mapping. All DMA memory stays owned. */
-	bus_space_unmap(sc->sc_bst, bsh, A733_GPU_FWSTART_REG_SIZE);
+	bus_space_unmap(sc->sc_bst, bsh, PVR_FWSTART_REG_SIZE);
 out:
 	sun60i_gpu_probe_report(sc->sc_probe_state, sizeof(sc->sc_probe_state),
 	    boot, r, error);
@@ -766,7 +766,7 @@ out:
 static int
 sun60i_gpu_stage_fwcache(struct sun60i_gpu_softc *sc, int power_node)
 {
-	const struct sun60i_a733_gpu_fwboot_result *boot = &sc->sc_boot_result;
+	const struct pvr_fwboot_result *boot = &sc->sc_boot_result;
 	struct sun60i_a733_gpu_fwprobe_result *r = &sc->sc_cache_result;
 	const struct sun60i_a733_gpu_fwprobe_result *probe = &sc->sc_probe_result;
 	struct sun60i_a733_gpu_fwmem *mem = sc->sc_fw_memory;
@@ -799,18 +799,18 @@ sun60i_gpu_stage_fwcache(struct sun60i_gpu_softc *sc, int power_node)
 		goto out;
 	error = fdtbus_get_reg(sc->sc_phandle, 0, &addr, &size);
 	if (error != 0 || addr != A733_GPU_BASE ||
-	    size < A733_GPU_FWSTART_REG_SIZE) {
+	    size < PVR_FWSTART_REG_SIZE) {
 		error = EINVAL;
 		goto out;
 	}
-	error = bus_space_map(sc->sc_bst, addr, A733_GPU_FWSTART_REG_SIZE,
+	error = bus_space_map(sc->sc_bst, addr, PVR_FWSTART_REG_SIZE,
 	    0, &bsh);
 	if (error != 0)
 		goto out;
 	error = sun60i_a733_gpu_fwprobe_mmucache(sc->sc_bst, bsh, mem, boot,
 	    probe, r);
 	/* Release only the CPU register mapping. All DMA memory stays owned. */
-	bus_space_unmap(sc->sc_bst, bsh, A733_GPU_FWSTART_REG_SIZE);
+	bus_space_unmap(sc->sc_bst, bsh, PVR_FWSTART_REG_SIZE);
 out:
 	sun60i_gpu_probe_report(sc->sc_cache_state, sizeof(sc->sc_cache_state),
 	    boot, r, error);
@@ -827,7 +827,7 @@ out:
 static int
 sun60i_gpu_stage_fwcompute(struct sun60i_gpu_softc *sc)
 {
-	const struct sun60i_a733_gpu_fwboot_result *boot = &sc->sc_boot_result;
+	const struct pvr_fwboot_result *boot = &sc->sc_boot_result;
 	const struct sun60i_a733_gpu_fwprobe_result *probe = &sc->sc_probe_result;
 	const struct sun60i_a733_gpu_fwprobe_result *cache = &sc->sc_cache_result;
 	struct sun60i_a733_gpu_fwmem *mem = sc->sc_fw_memory;
@@ -868,10 +868,10 @@ sun60i_gpu_stage_fwcompute(struct sun60i_gpu_softc *sc)
 	/* The declared span window must stay clear of every live mapping. */
 	if (UINT64_C(0xc0000000) + mem->code.size >
 	    A733_GPU_FWCOMPUTE_SPAN_BASE ||
-	    (uint64_t)A733_GPU_FWINIT_WORK_VA + mem->work.size >
+	    (uint64_t)PVR_FWINIT_WORK_VA + mem->work.size >
 	    A733_GPU_FWCOMPUTE_SPAN_BASE ||
 	    (uint64_t)A733_GPU_FWCOMPUTE_SPAN_BASE +
-	    A733_GPU_FWCOMPUTE_SPAN_BYTES > A733_GPU_FWINIT_CONNECTION_VA) {
+	    A733_GPU_FWCOMPUTE_SPAN_BYTES > PVR_FWINIT_CONNECTION_VA) {
 		error = EBUSY;
 		goto out;
 	}
@@ -1112,7 +1112,7 @@ out:
 }
 
 static bool sun60i_gpu_compute_chain_ready(const struct sun60i_gpu_softc *,
-    const struct sun60i_a733_gpu_fwboot_result *,
+    const struct pvr_fwboot_result *,
     const struct sun60i_a733_gpu_fwprobe_result *,
     const struct sun60i_a733_gpu_fwprobe_result *);
 
@@ -1124,7 +1124,7 @@ static bool sun60i_gpu_compute_chain_ready(const struct sun60i_gpu_softc *,
 static int
 sun60i_gpu_stage_fwheap(struct sun60i_gpu_softc *sc, int power_node)
 {
-	const struct sun60i_a733_gpu_fwboot_result *boot = &sc->sc_boot_result;
+	const struct pvr_fwboot_result *boot = &sc->sc_boot_result;
 	const struct sun60i_a733_gpu_fwprobe_result *probe = &sc->sc_probe_result;
 	const struct sun60i_a733_gpu_fwprobe_result *cache = &sc->sc_cache_result;
 	struct sun60i_a733_gpu_fwprobe_result *r = &sc->sc_heap_result;
@@ -1147,11 +1147,11 @@ sun60i_gpu_stage_fwheap(struct sun60i_gpu_softc *sc, int power_node)
 	error = sun60i_gpu_compute_load(sc, &file, &bytes, &image);
 	if (error != 0)
 		goto out;
-	error = sun60i_a733_gpu_fwheap_prepare(sc->sc_dmat, sc->sc_fw_memory,
+	error = pvr_fwheap_prepare(sc->sc_dmat, sc->sc_fw_memory,
 	    image, &sc->sc_fwheap);
 	if (error != 0)
 		goto out;
-	error = sun60i_a733_gpu_fwheap_map(sc->sc_fwheap, sc->sc_fw_memory);
+	error = pvr_fwheap_map(sc->sc_fwheap, sc->sc_fw_memory);
 	if (error != 0)
 		goto out;
 	/* The mapping becomes visible to the firmware only after this sync. */
@@ -1160,11 +1160,11 @@ sun60i_gpu_stage_fwheap(struct sun60i_gpu_softc *sc, int power_node)
 		goto out;
 	error = fdtbus_get_reg(sc->sc_phandle, 0, &addr, &size);
 	if (error != 0 || addr != A733_GPU_BASE ||
-	    size < A733_GPU_FWSTART_REG_SIZE) {
+	    size < PVR_FWSTART_REG_SIZE) {
 		error = EINVAL;
 		goto out;
 	}
-	error = bus_space_map(sc->sc_bst, addr, A733_GPU_FWSTART_REG_SIZE,
+	error = bus_space_map(sc->sc_bst, addr, PVR_FWSTART_REG_SIZE,
 	    0, &bsh);
 	if (error != 0)
 		goto out;
@@ -1173,11 +1173,11 @@ sun60i_gpu_stage_fwheap(struct sun60i_gpu_softc *sc, int power_node)
 	kcmd.cmd_data.mmu_cache_data.cache_flags = 0x0400001f;
 	kcmd.cmd_data.mmu_cache_data.mmu_cache_sync_fw_addr =
 	    sc->sc_fw_memory->interface_layout.object[
-	    A733_GPU_FWINIT_MMUCACHE_SYNC].fw_addr;
+	    PVR_FWINIT_MMUCACHE_SYNC].fw_addr;
 	kcmd.cmd_data.mmu_cache_data.mmu_cache_sync_update_value = 0;
 	error = sun60i_a733_gpu_fwprobe_cmd(sc->sc_bst, bsh, sc->sc_fw_memory,
 	    boot, cache, &kcmd, 2, 0, r);
-	bus_space_unmap(sc->sc_bst, bsh, A733_GPU_FWSTART_REG_SIZE);
+	bus_space_unmap(sc->sc_bst, bsh, PVR_FWSTART_REG_SIZE);
 out:
 	sc->sc_heap_done = true;
 	heap_pa = sc->sc_fwheap != NULL ?
@@ -1192,7 +1192,7 @@ out:
 		    "heap error=0 fw=0x%08x pa=0x%08x pages=%u mapped=1 "
 		    "sync=slot%u rtn=0x%x polls=%u kicked=%u",
 		    (u_int)A733_GPU_FWCOMPUTE_SPAN_BASE, heap_pa,
-		    (u_int)A733_GPU_FWHEAP_PAGES, (u_int)r->slot,
+		    (u_int)PVR_FWHEAP_PAGES, (u_int)r->slot,
 		    (u_int)r->after.rtn, (u_int)r->polls, (u_int)r->kicked);
 	}
 	if (image != NULL)
@@ -1206,7 +1206,7 @@ out:
 static int
 sun60i_gpu_stage_fwvm(struct sun60i_gpu_softc *sc)
 {
-	const struct sun60i_a733_gpu_fwboot_result *boot = &sc->sc_boot_result;
+	const struct pvr_fwboot_result *boot = &sc->sc_boot_result;
 	const struct sun60i_a733_gpu_fwprobe_result *probe = &sc->sc_probe_result;
 	const struct sun60i_a733_gpu_fwprobe_result *cache = &sc->sc_cache_result;
 	struct a733_gpu_fwcompute_file file;
@@ -1225,7 +1225,7 @@ sun60i_gpu_stage_fwvm(struct sun60i_gpu_softc *sc)
 	error = sun60i_gpu_compute_load(sc, &file, &bytes, &image);
 	if (error != 0)
 		goto out;
-	error = sun60i_a733_gpu_fwvm_prepare(sc->sc_dmat, &file, bytes,
+	error = pvr_fwvm_prepare(sc->sc_dmat, &file, bytes,
 	    sc->sc_fwheap, &sc->sc_fwvm);
 	if (error != 0)
 		goto out;
@@ -1243,7 +1243,7 @@ out:
 		    (u_int)sc->sc_fwvm->leaves,
 		    (u_int)A733_GPU_FWCOMPUTE_RESOURCES,
 		    (u_int)A733_GPU_FWCOMPUTE_SPAN_BASE +
-		    A733_GPU_FWHEAP_VM_CONTEXT_OFF);
+		    PVR_FWHEAP_VM_CONTEXT_OFF);
 	}
 	if (image != NULL)
 		kmem_free(image, sizeof(*image));
@@ -1257,7 +1257,7 @@ static void
 sun60i_gpu_trace_report(struct sun60i_gpu_softc *sc)
 {
 	const struct sun60i_a733_gpu_fwmem *m = sc->sc_fw_memory;
-	const struct sun60i_a733_gpu_fwinit_region *ctl, *data;
+	const struct pvr_fwinit_region *ctl, *data;
 	const struct rogue_fwif_tracebuf *tc;
 	const struct sun60i_a733_gpu_fwprobe_result *r = &sc->sc_trace_result;
 	const uint32_t *words = NULL;
@@ -1269,10 +1269,10 @@ sun60i_gpu_trace_report(struct sun60i_gpu_softc *sc)
 	    m->work.map == NULL || !m->work.loaded ||
 	    (uintptr_t)m->work.cpu % 8 != 0)
 		goto report;
-	ctl = &m->interface_layout.object[A733_GPU_FWINIT_TRACE_CTL];
-	data = &m->interface_layout.object[A733_GPU_FWINIT_TRACE0];
-	if (ctl->buffer != A733_GPU_FWINIT_WORK ||
-	    data->buffer != A733_GPU_FWINIT_WORK || ctl->offset % 8 != 0 ||
+	ctl = &m->interface_layout.object[PVR_FWINIT_TRACE_CTL];
+	data = &m->interface_layout.object[PVR_FWINIT_TRACE0];
+	if (ctl->buffer != PVR_FWINIT_WORK ||
+	    data->buffer != PVR_FWINIT_WORK || ctl->offset % 8 != 0 ||
 	    data->offset % sizeof(uint32_t) != 0 ||
 	    ctl->size < sizeof(*tc) || ctl->offset > m->work.size ||
 	    ctl->size > m->work.size - ctl->offset ||
@@ -1322,7 +1322,7 @@ static void
 sun60i_gpu_hwr_report(struct sun60i_gpu_softc *sc)
 {
 	const struct sun60i_a733_gpu_fwmem *m = sc->sc_fw_memory;
-	const struct sun60i_a733_gpu_fwinit_region *region;
+	const struct pvr_fwinit_region *region;
 	struct rogue_fwif_hwrinfobuf *snapshot;
 	size_t used, i;
 	int count, error = EINVAL;
@@ -1334,8 +1334,8 @@ sun60i_gpu_hwr_report(struct sun60i_gpu_softc *sc)
 	    m->work.map == NULL || !m->work.loaded ||
 	    (uintptr_t)m->work.cpu % 8 != 0)
 		goto fail;
-	region = &m->interface_layout.object[A733_GPU_FWINIT_HWR];
-	if (region->buffer != A733_GPU_FWINIT_WORK ||
+	region = &m->interface_layout.object[PVR_FWINIT_HWR];
+	if (region->buffer != PVR_FWINIT_WORK ||
 	    region->offset % 8 != 0 || region->size < sizeof(*snapshot) ||
 	    region->offset > m->work.size ||
 	    region->size > m->work.size - region->offset)
@@ -1406,7 +1406,7 @@ fail:
 
 /* Sample the manifest's SCRATCH backing after device-to-host DMA sync. */
 static int
-sun60i_gpu_scratch_snapshot(const struct sun60i_a733_gpu_fwvm *vm,
+sun60i_gpu_scratch_snapshot(const struct pvr_fwvm *vm,
     const struct a733_gpu_fwcompute_file *file, uint32_t *value)
 {
 	const struct sun60i_a733_gpu_dma *dma;
@@ -1441,7 +1441,7 @@ sun60i_gpu_scratch_snapshot(const struct sun60i_a733_gpu_fwvm *vm,
 static int
 sun60i_gpu_stage_fwkick(struct sun60i_gpu_softc *sc, int power_node)
 {
-	const struct sun60i_a733_gpu_fwboot_result *boot = &sc->sc_boot_result;
+	const struct pvr_fwboot_result *boot = &sc->sc_boot_result;
 	const struct sun60i_a733_gpu_fwprobe_result *probe = &sc->sc_probe_result;
 	const struct sun60i_a733_gpu_fwprobe_result *cache = &sc->sc_cache_result;
 	const struct sun60i_a733_gpu_fwprobe_result *heap = &sc->sc_heap_result;
@@ -1487,11 +1487,11 @@ sun60i_gpu_stage_fwkick(struct sun60i_gpu_softc *sc, int power_node)
 		goto out;
 	error = fdtbus_get_reg(sc->sc_phandle, 0, &addr, &size);
 	if (error != 0 || addr != A733_GPU_BASE ||
-	    size < A733_GPU_FWSTART_REG_SIZE) {
+	    size < PVR_FWSTART_REG_SIZE) {
 		error = EINVAL;
 		goto out;
 	}
-	error = bus_space_map(sc->sc_bst, addr, A733_GPU_FWSTART_REG_SIZE,
+	error = bus_space_map(sc->sc_bst, addr, PVR_FWSTART_REG_SIZE,
 	    0, &bsh);
 	if (error != 0)
 		goto out;
@@ -1499,7 +1499,7 @@ sun60i_gpu_stage_fwkick(struct sun60i_gpu_softc *sc, int power_node)
 	{
 		struct sun60i_a733_gpu_fwmem *m = sc->sc_fw_memory;
 		size_t off = m->interface_layout.object[
-		    A733_GPU_FWINIT_TRACE_CTL].offset;
+		    PVR_FWINIT_TRACE_CTL].offset;
 		struct rogue_fwif_tracebuf *tc;
 
 		bus_dmamap_sync(m->dmat, m->work.map, off, sizeof(*tc),
@@ -1513,23 +1513,23 @@ sun60i_gpu_stage_fwkick(struct sun60i_gpu_softc *sc, int power_node)
 	error = sun60i_a733_gpu_fwprobe_cmd(sc->sc_bst, bsh, sc->sc_fw_memory,
 	    boot, heap, &log_command, 3, A733_GPU_FWPROBE_TRACE_LOGTYPE,
 	    &sc->sc_trace_result);
-	bus_space_unmap(sc->sc_bst, bsh, A733_GPU_FWSTART_REG_SIZE);
+	bus_space_unmap(sc->sc_bst, bsh, PVR_FWSTART_REG_SIZE);
 	if (error != 0)
 		goto out;
-	error = bus_space_map(sc->sc_bst, addr, A733_GPU_FWSTART_REG_SIZE,
+	error = bus_space_map(sc->sc_bst, addr, PVR_FWSTART_REG_SIZE,
 	    0, &bsh);
 	if (error != 0)
 		goto out;
 	error = sun60i_a733_gpu_fwprobe_cmd(sc->sc_bst, bsh, sc->sc_fw_memory,
 	    boot, &sc->sc_trace_result, &image->kick, 4,
 	    A733_GPU_FWPROBE_TRACE_LOGTYPE, r);
-	bus_space_unmap(sc->sc_bst, bsh, A733_GPU_FWSTART_REG_SIZE);
+	bus_space_unmap(sc->sc_bst, bsh, PVR_FWSTART_REG_SIZE);
 	if (error != 0)
 		goto out;
 	/* Check firmware after every client observation, including immediate completion. */
 	getnanouptime(&start);
 	for (;;) {
-		sun60i_a733_gpu_fwheap_observe(sc->sc_fwheap, &read_off,
+		pvr_fwheap_observe(sc->sc_fwheap, &read_off,
 		    &write_off, &timeline);
 		completion_polls++;
 		memset(&fresh, 0, sizeof(fresh));
@@ -1556,7 +1556,7 @@ out:
 		scratch_after_valid = sun60i_gpu_scratch_snapshot(sc->sc_fwvm,
 		    &file, &scratch_after) == 0;
 	if (sc->sc_fwheap != NULL)
-		sun60i_a733_gpu_fwheap_observe(sc->sc_fwheap, &read_off,
+		pvr_fwheap_observe(sc->sc_fwheap, &read_off,
 		    &write_off, &timeline);
 	/* Acquire current firmware state after the final result DMA reads. */
 	if (error == 0 && fresh.valid) {
@@ -1570,11 +1570,11 @@ out:
 		last = &fresh.state;
 	/* Decode a pending firmware response; a context reset explains EIO. */
 	if (last->fw_write_offset != last->fw_read_offset &&
-	    last->fw_read_offset < A733_GPU_FWINIT_FWCCB_COUNT &&
+	    last->fw_read_offset < PVR_FWINIT_FWCCB_COUNT &&
 	    last->fw_command == 0x2abc0069 && sc->sc_fw_memory != NULL) {
 		const struct sun60i_a733_gpu_fwmem *m = sc->sc_fw_memory;
 		size_t off = m->interface_layout.object[
-		    A733_GPU_FWINIT_FWCCB_CMDS].offset +
+		    PVR_FWINIT_FWCCB_CMDS].offset +
 		    last->fw_read_offset *
 		    sizeof(struct rogue_fwif_fwccb_cmd);
 		const struct rogue_fwif_fwccb_cmd *cmd;
@@ -1647,7 +1647,7 @@ return error;
 /* Gate shared by the heap, VM, and kick stages after stage 18. */
 static bool
 sun60i_gpu_compute_chain_ready(const struct sun60i_gpu_softc *sc,
-    const struct sun60i_a733_gpu_fwboot_result *boot,
+    const struct pvr_fwboot_result *boot,
     const struct sun60i_a733_gpu_fwprobe_result *probe,
     const struct sun60i_a733_gpu_fwprobe_result *cache)
 {
@@ -1887,7 +1887,7 @@ sun60i_gpu_sysctl_stage(SYSCTLFN_ARGS)
 
 /* Convert parsed firmware metadata into the device-independent query input. */
 static int
-sun60i_gpu_query_input(const struct sun60i_a733_gpu_fwinfo *info,
+sun60i_gpu_query_input(const struct pvr_fwinfo *info,
     struct pvr_query_input *out)
 {
 	return pvr_query_input_from_fwinfo(info, out);
@@ -1999,11 +1999,11 @@ sun60i_gpu_exec_attach(struct sun60i_gpu_softc *sc)
 	error = fdtbus_get_reg(sc->sc_phandle, 0, &addr, &size);
 	if (error != 0)
 		goto out;
-	if (addr != A733_GPU_BASE || size < A733_GPU_FWSTART_REG_SIZE) {
+	if (addr != A733_GPU_BASE || size < PVR_FWSTART_REG_SIZE) {
 		error = EINVAL;
 		goto out;
 	}
-	error = bus_space_map(sc->sc_bst, addr, A733_GPU_FWSTART_REG_SIZE,
+	error = bus_space_map(sc->sc_bst, addr, PVR_FWSTART_REG_SIZE,
 	    0, &bsh);
 	if (error != 0)
 		goto out;
@@ -2239,7 +2239,7 @@ sun60i_gpu_binding(struct sun60i_gpu_softc *sc,
 	if (error != 0)
 		return error;
 	if (addr != A733_GPU_BASE || size < A733_GPU_ID_SIZE ||
-	    (!observe_only && !prepare && size < A733_GPU_FWSTART_REG_SIZE))
+	    (!observe_only && !prepare && size < PVR_FWSTART_REG_SIZE))
 		return EINVAL;
 	pd = fdtbus_get_prop(sc->sc_phandle, "power-domains", &len);
 	if (pd == NULL || len != 2 * sizeof(*pd) ||

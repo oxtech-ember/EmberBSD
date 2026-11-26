@@ -4,7 +4,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include "sun60i_a733_gpu_fwinfo.h"
+#include "pvr_fwinfo.h"
 
 #define IMAGE_SIZE 12288
 #define INFO_OFFSET 8192
@@ -76,14 +76,14 @@ fixture(void)
 static void
 expect(int expected)
 {
-	struct sun60i_a733_gpu_fwinfo info, saved;
+	struct pvr_fwinfo info, saved;
 	uint8_t unchanged[IMAGE_SIZE];
 	int error;
 
 	memset(&info, 0xa5, sizeof(info));
 	memcpy(&saved, &info, sizeof(saved));
 	memcpy(unchanged, image, sizeof(image));
-	error = sun60i_a733_gpu_fwinfo_parse(image, sizeof(image), BVNC, &info);
+	error = pvr_fwinfo_parse(image, sizeof(image), BVNC, &info);
 	CHECK(error == expected);
 	CHECK(memcmp(unchanged, image, sizeof(image)) == 0);
 	if (error != 0)
@@ -108,21 +108,21 @@ header_tests(void)
 		{ 40, 0, EINVAL }, { 40, 31, EINVAL },
 		{ 40, INFO_OFFSET, EINVAL }, { 40, UINT32_MAX, EINVAL }
 	};
-	struct sun60i_a733_gpu_fwinfo info, saved;
+	struct pvr_fwinfo info, saved;
 
 	fixture(); expect(0);
 	memset(&info, 0xa5, sizeof(info));
 	memcpy(&saved, &info, sizeof(saved));
-	CHECK(sun60i_a733_gpu_fwinfo_parse(NULL, IMAGE_SIZE, BVNC, &info) == EINVAL);
-	CHECK(sun60i_a733_gpu_fwinfo_parse(image, IMAGE_SIZE, BVNC, NULL) == EINVAL);
-	CHECK(sun60i_a733_gpu_fwinfo_parse(image, IMAGE_SIZE, 0, &info) == EINVAL);
+	CHECK(pvr_fwinfo_parse(NULL, IMAGE_SIZE, BVNC, &info) == EINVAL);
+	CHECK(pvr_fwinfo_parse(image, IMAGE_SIZE, BVNC, NULL) == EINVAL);
+	CHECK(pvr_fwinfo_parse(image, IMAGE_SIZE, 0, &info) == EINVAL);
 	CHECK(memcmp(&saved, &info, sizeof(info)) == 0);
 	for (size_t n = 0; n < IMAGE_SIZE; n++) {
 		uint8_t *short_input = malloc(n + 1);
 
 		CHECK(short_input != NULL);
 		memcpy(short_input + 1, image, n);
-		CHECK(sun60i_a733_gpu_fwinfo_parse(short_input + 1, n,
+		CHECK(pvr_fwinfo_parse(short_input + 1, n,
 		    BVNC, &info) != 0);
 		CHECK(memcmp(&saved, &info, sizeof(info)) == 0);
 		free(short_input);
@@ -137,7 +137,7 @@ header_tests(void)
 
 		CHECK(unaligned != NULL);
 		memcpy(unaligned + n, original, IMAGE_SIZE);
-		CHECK(sun60i_a733_gpu_fwinfo_parse(unaligned + n, IMAGE_SIZE,
+		CHECK(pvr_fwinfo_parse(unaligned + n, IMAGE_SIZE,
 		    BVNC, &info) == 0);
 		CHECK(info.bvnc == BVNC && info.version_major == 1 &&
 		    info.version_minor == 1 && info.version_build == 6976702);
@@ -196,7 +196,7 @@ device_tests(void)
 	static const unsigned int parameters[] = { 1, 3, 9, 10, 11, 12, 13, 14,
 	    20, 21, 23, 24, 25, 26, 28, 29, 30, 31, 36, 42, 43, 44, 46,
 	    51, 52, 57, 60, 63, 66, 67, 68 };
-	struct sun60i_a733_gpu_fwinfo info;
+	struct pvr_fwinfo info;
 	uint64_t value;
 
 	for (unsigned int n = 0; n < 4; n++) {
@@ -241,31 +241,31 @@ device_tests(void)
 		expect(expected);
 		if (expected != 0)
 			continue;
-		CHECK(sun60i_a733_gpu_fwinfo_parse(image, sizeof(image), BVNC, &info) == 0);
+		CHECK(pvr_fwinfo_parse(image, sizeof(image), BVNC, &info) == 0);
 		value = UINT64_MAX;
-		CHECK(sun60i_a733_gpu_fwinfo_feature(&info,
-		    (enum sun60i_a733_gpu_fw_feature)bit, &value) == 0);
+		CHECK(pvr_fwinfo_feature(&info,
+		    (enum pvr_fw_feature)bit, &value) == 0);
 		CHECK(value == (has_parameter ? (bit == 26 ? 0 : 0xabc000 + bit) : 1));
 	}
 	fixture();
-	CHECK(sun60i_a733_gpu_fwinfo_parse(image, sizeof(image), BVNC, &info) == 0);
+	CHECK(pvr_fwinfo_parse(image, sizeof(image), BVNC, &info) == 0);
 	value = UINT64_MAX;
-	CHECK(sun60i_a733_gpu_fwinfo_feature(&info, A733_GPU_FW_FEATURE_META,
+	CHECK(pvr_fwinfo_feature(&info, PVR_FW_FEATURE_META,
 	    &value) == ENOENT && value == UINT64_MAX);
-	CHECK(sun60i_a733_gpu_fwinfo_feature(NULL, A733_GPU_FW_FEATURE_MIPS,
+	CHECK(pvr_fwinfo_feature(NULL, PVR_FW_FEATURE_MIPS,
 	    &value) == EINVAL);
-	CHECK(sun60i_a733_gpu_fwinfo_feature(&info, A733_GPU_FW_FEATURE_MIPS,
+	CHECK(pvr_fwinfo_feature(&info, PVR_FW_FEATURE_MIPS,
 	    NULL) == EINVAL);
-	CHECK(sun60i_a733_gpu_fwinfo_feature(&info, A733_GPU_FW_FEATURE_MAX,
+	CHECK(pvr_fwinfo_feature(&info, PVR_FW_FEATURE_MAX,
 	    &value) == EINVAL && value == UINT64_MAX);
-	CHECK(sun60i_a733_gpu_fwinfo_feature(&info,
-	    (enum sun60i_a733_gpu_fw_feature)-1, &value) == EINVAL);
+	CHECK(pvr_fwinfo_feature(&info,
+	    (enum pvr_fw_feature)-1, &value) == EINVAL);
 }
 
 static void
 mutation_tests(void)
 {
-	struct sun60i_a733_gpu_fwinfo info, saved;
+	struct pvr_fwinfo info, saved;
 	uint32_t random = 0x733f;
 
 	fixture();
@@ -280,7 +280,7 @@ mutation_tests(void)
 		/* Mutate metadata only, never bytes from the real firmware. */
 		pos = DEVICE_OFFSET + random % (IMAGE_SIZE - DEVICE_OFFSET);
 		image[pos] ^= (uint8_t)(1U << ((random >> 16) & 7));
-		error = sun60i_a733_gpu_fwinfo_parse(image, sizeof(image), BVNC, &info);
+		error = pvr_fwinfo_parse(image, sizeof(image), BVNC, &info);
 		if (error != 0)
 			CHECK(memcmp(&saved, &info, sizeof(info)) == 0);
 		else {
@@ -294,7 +294,7 @@ mutation_tests(void)
 static void
 blob_test(const char *path)
 {
-	struct sun60i_a733_gpu_fwinfo info;
+	struct pvr_fwinfo info;
 	uint8_t *bytes;
 	uint64_t value;
 	FILE *file = fopen(path, "rb");
@@ -309,7 +309,7 @@ blob_test(const char *path)
 	CHECK(bytes != NULL);
 	CHECK(fread(bytes, 1, (size_t)length, file) == (size_t)length);
 	CHECK(fclose(file) == 0);
-	CHECK(sun60i_a733_gpu_fwinfo_parse(bytes, (size_t)length, BVNC, &info) == 0);
+	CHECK(pvr_fwinfo_parse(bytes, (size_t)length, BVNC, &info) == 0);
 	CHECK(info.version_major == 1 && info.version_minor == 1 &&
 	    info.version_build == 6976702 && info.layout_count == 6);
 	CHECK(info.payload_size == 122880 && info.device_info_size == 4096);
@@ -319,10 +319,10 @@ blob_test(const char *path)
 	CHECK(info.brn_mask == 0x201 && info.ern_mask == 0xf5);
 	CHECK(info.feature_mask[0] == UINT64_C(0x92d9ff57fdbf7cdb) &&
 	    info.feature_mask[1] == 0x1f);
-	CHECK(sun60i_a733_gpu_fwinfo_feature(&info,
-	    A733_GPU_FW_FEATURE_PHYS_BUS_WIDTH, &value) == 0 && value == 36);
-	CHECK(sun60i_a733_gpu_fwinfo_feature(&info,
-	    A733_GPU_FW_FEATURE_VIRTUAL_ADDRESS_SPACE_BITS, &value) == 0 &&
+	CHECK(pvr_fwinfo_feature(&info,
+	    PVR_FW_FEATURE_PHYS_BUS_WIDTH, &value) == 0 && value == 36);
+	CHECK(pvr_fwinfo_feature(&info,
+	    PVR_FW_FEATURE_VIRTUAL_ADDRESS_SPACE_BITS, &value) == 0 &&
 	    value == 40);
 	free(bytes);
 	puts("Pinned 36.56.104.183 firmware metadata: accepted, no execution");

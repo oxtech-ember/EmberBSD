@@ -1,8 +1,6 @@
 # A733 PowerVR initial firmware structures
 
-The A733 interface forwards to the [common PowerVR owner](../../../../dev/powervr/pvr_fwinit.c).
-
-The native [initializer](../sun60i_a733_gpu_fwinit.c)
+The native [initializer](../../../../dev/powervr/pvr_fwinit.c)
 prepares CPU-owned work and configuration buffers for the first MIPS boot.
 It uses the [exact native FWIF declarations](../powervr/README.md).
 It performs no allocation, DMA, MMIO, clock change, queue submission, or execution.
@@ -32,15 +30,15 @@ The existing boot firmware, DTB and startup configuration were preserved.
 
 ## Interface and ownership
 
-Include [sun60i_a733_gpu_fwinit.h](../sun60i_a733_gpu_fwinit.h).
-Call `sun60i_a733_gpu_fwinit_work_size()` before allocating the work buffer.
+Include [pvr_fwinit.h](../../../../dev/powervr/pvr_fwinit.h).
+Call `pvr_fwinit_work_size()` before allocating the work buffer.
 The current layout requires 139264 bytes, or 34 pages.
 
 ```c
-int sun60i_a733_gpu_fwinit(void *work, size_t work_size,
+int pvr_fwinit(void *work, size_t work_size,
     void *config, size_t config_size, uint64_t work_phys,
     uint64_t core_hz, uint32_t clusters, uint32_t slc_kib,
-    struct sun60i_a733_gpu_fwinit_layout *out);
+    struct pvr_fwinit_layout *out);
 ```
 
 Both CPU buffers require 4096-byte alignment.
