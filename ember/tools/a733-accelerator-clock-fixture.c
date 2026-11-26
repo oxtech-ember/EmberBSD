@@ -124,6 +124,7 @@ struct device_compatible_entry { const char *compat; };
 static uint32_t registers[0x2000 / 4], last_write;
 static bus_size_t ccu_size, read_regs[64];
 static int ccu_reg_error;
+static unsigned ccu_reg_reads;
 static unsigned reject_write_number, fail_poke_number, pokes;
 static unsigned output_drift_after;
 static bus_size_t output_drift_reg;
@@ -151,6 +152,7 @@ fdtbus_get_reg(int node, int index, bus_addr_t *addr, bus_size_t *size)
 {
 	assert(index == 0);
 	*addr = 0x02002000;
+	ccu_reg_reads++;
 	*size = ccu_size;
 	return ccu_reg_error;
 }
