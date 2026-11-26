@@ -25,7 +25,7 @@ SUBDIR= aiomixer apply asa at audio audiocfg \
 	realpath renice resize rev revoke rfcomm_sppd rlogin rpcgen rpcinfo rs rsh \
 	rup ruptime rusers rwall rwho scmdctl \
 	script sdiff sdpquery sed seq shar shlock \
-	showmount shuffle sockstat sort sortinfo \
+	showmount shuffle sockstat sort \
 	spell split stat su sys_info systat \
 	tabs tail talk tcopy tee telnet tftp tic time timeout tip touch \
 	tput \

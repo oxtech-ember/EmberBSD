@@ -739,7 +739,7 @@
 ./usr/share/man/html1/sntp.html			man-ntp-htmlman		html
 ./usr/share/man/html1/sockstat.html		man-util-htmlman	html
 ./usr/share/man/html1/sort.html			man-util-htmlman	html
-./usr/share/man/html1/sortinfo.html		man-texinfo-htmlman	html
+./usr/share/man/html1/sortinfo.html		man-obsolete		obsolete
 ./usr/share/man/html1/source.html		man-util-htmlman	html
 ./usr/share/man/html1/spell.html		man-util-htmlman	html
 ./usr/share/man/html1/split.html		man-util-htmlman	html
