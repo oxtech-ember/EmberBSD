@@ -78,6 +78,7 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #define RTW89_PCI_BAR		PCI_BAR(2)
 #define RTW89_TXBUF_SIZE	4096
 #define RTW89_RXFRAME_MAX	4096
+#define RTW89_SYSCTL_LINK_LEN	512
 #define RTW89_SCAN_DWELL_MS	200
 
 typedef int (*rtw89_irq_fn)(int, void *);
@@ -194,6 +195,7 @@ CFATTACH_DECL_NEW(rtwx, sizeof(struct rtw89_softc),
 
 static int rtw89_debug;
 static uint64_t rtw89_txagg;	/* frames given to the MAC for an A-MPDU */
+static struct rtw89_softc *rtw89_sysctl_sc;	/* the attached device */
 
 static const uint16_t rtw89_products[] = {
 	0xb852,		/* RTL8852BE */
@@ -349,6 +351,7 @@ rtw89_attach_hook(device_t self)
 	}
 	rtw89_nb_get_macaddr(sc->sc_nb, ic->ic_myaddr);
 	sc->sc_nss = rtw89_nb_nss(sc->sc_nb);
+	rtw89_sysctl_sc = sc;
 
 	ic->ic_ifp = ifp;
 	ic->ic_phytype = IEEE80211_T_OFDM;
@@ -413,6 +416,8 @@ rtw89_detach(device_t self, int flags)
 	struct ieee80211com *ic = &sc->sc_ic;
 	struct ifnet *ifp = &sc->sc_ec.ec_if;
 
+	if (rtw89_sysctl_sc == sc)
+		rtw89_sysctl_sc = NULL;
 	if (sc->sc_nb != NULL) {
 		if (ifp->if_softc != NULL) {
 			rtw89_stop(ifp, 1);
@@ -828,6 +833,12 @@ rtw89_ht20_admit(struct ieee80211com *ic, struct ieee80211_ht20_profile *p)
 	 * The MAC receives each MPDU of an A-MPDU into its own RX buffer.
 	 */
 	p->ampdu = 0x03;
+	/*
+	 * Each data frame carries RTS_EN and HW_RTS_EN in its TX descriptor,
+	 * and the MAC has hardware CTS-to-self enabled (ptcl_init()), so the
+	 * MAC protects HT PPDUs as the BSS protection mode requires.
+	 */
+	p->protection = IEEE80211_HT20_PROFILE_HW_PROT;
 	return 0;
 }
 
@@ -1657,6 +1668,72 @@ rtw89_ioctl(struct ifnet *ifp, u_long cmd, void *data)
 /* Module glue                                                         */
 /* ------------------------------------------------------------------ */
 
+/*
+ * hw.rtw89.link: the last firmware TX rate report, RX rate and RSSI of the
+ * AP, then the net80211 HT20/VHT negotiation and TX block-ack counters.
+ * Numbers only, no addresses or keys.
+ */
+static int
+rtw89_sysctl_link(SYSCTLFN_ARGS)
+{
+	static const char *const mode[] = { "legacy", "HT", "VHT", "HE" };
+	struct sysctlnode node = *rnode;
+	struct rtw89_softc *sc = rtw89_sysctl_sc;
+	struct ieee80211_ht20_diag d;
+	struct ieee80211_txba_diag t;
+	struct rtw89_nb_link lk;
+	char *buf;
+	size_t len = 0;
+	int error, s;
+
+	buf = kmem_zalloc(RTW89_SYSCTL_LINK_LEN, KM_SLEEP);
+	memset(&lk, 0, sizeof(lk));
+	memset(&t, 0, sizeof(t));
+	if (sc != NULL && sc->sc_nb != NULL) {
+		/* net80211 replaces ic_bss with the kernel lock held. */
+		KERNEL_LOCK(1, NULL);
+		s = splnet();
+		d = sc->sc_ic.ic_ht20_diag;
+		if (sc->sc_ic.ic_bss != NULL)
+			t = sc->sc_ic.ic_bss->ni_rxba.tx_diag;
+		if (sc->sc_running)
+			rtw89_nb_link_info(sc->sc_nb, &lk);
+		splx(s);
+		KERNEL_UNLOCK_ONE(NULL);
+		if (lk.valid && lk.tx_mode == RTW89_NB_MODE_LEGACY)
+			len += snprintf(buf + len, RTW89_SYSCTL_LINK_LEN - len,
+			    "tx legacy %u.%u Mbit/s", lk.tx_legacy / 10,
+			    lk.tx_legacy % 10);
+		else if (lk.valid)
+			len += snprintf(buf + len, RTW89_SYSCTL_LINK_LEN - len,
+			    "tx %s mcs %u nss %u bw %u sgi %u",
+			    mode[lk.tx_mode & 3], lk.tx_mcs, lk.tx_nss, lk.tx_bw,
+			    lk.tx_sgi);
+		else
+			len += snprintf(buf + len, RTW89_SYSCTL_LINK_LEN - len,
+			    "no station");
+		if (len < RTW89_SYSCTL_LINK_LEN)
+			len += snprintf(buf + len, RTW89_SYSCTL_LINK_LEN - len,
+			    " hw 0x%03x rx_hw 0x%03x rssi %d;"
+			    " ht20 offers %u vht_offers %u ht %u vht %u legacy %u"
+			    " bad %u resets %u reset %u/%u state_fail %u/%u"
+			    " fail %u/%u;"
+			    " txba req %u acc %u ref %u tmo %u delba %u inv %u",
+			    lk.tx_hw_rate, lk.rx_hw_rate, lk.rssi,
+			    d.offers, d.vht_offers, d.ht, d.vht, d.legacy, d.bad,
+			    d.resets, d.reset_reason, d.reset_clause,
+			    d.state_fail, d.state_reason, d.failures,
+			    d.failure_reason, t.requests, t.accepts,
+			    t.refusals, t.timeouts, t.delbas, t.invalid);
+	} else
+		strlcpy(buf, "no device", RTW89_SYSCTL_LINK_LEN);
+	node.sysctl_data = buf;
+	node.sysctl_size = strlen(buf) + 1;
+	error = sysctl_lookup(SYSCTLFN_CALL(&node));
+	kmem_free(buf, RTW89_SYSCTL_LINK_LEN);
+	return error;
+}
+
 SYSCTL_SETUP(sysctl_hw_rtw89_setup, "sysctl hw.rtw89 setup")
 {
 	const struct sysctlnode *node;
@@ -1677,6 +1754,10 @@ SYSCTL_SETUP(sysctl_hw_rtw89_setup, "sysctl hw.rtw89 setup")
 	    CTLFLAG_READONLY, CTLTYPE_QUAD, "txagg",
 	    SYSCTL_DESCR("Frames given to the MAC for A-MPDU aggregation"),
 	    NULL, 0, &rtw89_txagg, 0, CTL_CREATE, CTL_EOL);
+	sysctl_createv(clog, 0, &node, NULL, CTLFLAG_PERMANENT |
+	    CTLFLAG_READONLY, CTLTYPE_STRING, "link",
+	    SYSCTL_DESCR("Firmware TX rate, RSSI and HT/VHT negotiation"),
+	    rtw89_sysctl_link, 0, NULL, 0, CTL_CREATE, CTL_EOL);
 }
 
 MODULE(MODULE_CLASS_DRIVER, if_rtw89, "pci");

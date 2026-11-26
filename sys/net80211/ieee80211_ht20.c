@@ -47,6 +47,7 @@ ht20_local(struct ieee80211com *ic, struct ieee80211_ht20_profile *p)
 	    ic->ic_ht20_admit != NULL && ic->ic_ht20_admit(ic, p) == 0 &&
 	    p->generation != 0 && p->ready == IEEE80211_HT20_READY_ALL &&
 	    (p->ampdu & 0xe0) == 0 &&
+	    (p->protection & ~IEEE80211_HT20_PROFILE_HW_PROT) == 0 &&
 	    (p->rx_mcs & 0xff) == 0xff && p->rx_mcs == p->tx_mcs;
 }
 
@@ -197,7 +198,8 @@ ht20_stale(struct ieee80211com *ic, struct ieee80211_node *ni,
 	if (local.generation != h->profile.generation)
 		return 13;
 	if (local.rx_mcs != h->profile.rx_mcs ||
-	    local.tx_mcs != h->profile.tx_mcs || local.ampdu != h->profile.ampdu)
+	    local.tx_mcs != h->profile.tx_mcs || local.ampdu != h->profile.ampdu ||
+	    local.protection != h->profile.protection)
 		return 14;
 	return 0;
 }
@@ -426,8 +428,9 @@ ieee80211_ht20_tx_protection(struct ieee80211com *ic, struct ieee80211_node *ni,
  * contract uses is unchanged: HT Capabilities SMPS/greenfield bits and
  * MCS0-7, and HT Operation primary, secondary offset/STA width, the
  * octets 4-5 and the basic MCS set. The protection mode may change
- * within the supported set (as ieee80211_ht20_tx_protection() accepts),
- * since APs update it as non-HT stations come and go.
+ * within the supported set (as ieee80211_ht20_tx_protection() accepts, or
+ * modes 0-3 for a provider with IEEE80211_HT20_PROFILE_HW_PROT), since
+ * APs update it as non-HT stations come and go.
  */
 /* Return 0, or the first IEEE80211_HT20_BEACON_* clause that differs. */
 static unsigned
@@ -444,7 +447,10 @@ ht20_beacon_contract(const struct ieee80211_ht20_node *h, const uint8_t *cap,
 		return IEEE80211_HT20_BEACON_PRIMARY;
 	if ((op[1] & 0x07) != (h->peer_htop[1] & 0x07))
 		return IEEE80211_HT20_BEACON_SECONDARY;
-	if (operation != 0 && operation != 4 && operation != 6 &&
+	if ((h->profile.protection & IEEE80211_HT20_PROFILE_HW_PROT) != 0 ?
+	    /* Protection 0-3, non-GF present (bit 2), OBSS non-HT (bit 4). */
+	    (operation & ~0x0017) != 0 :
+	    operation != 0 && operation != 4 && operation != 6 &&
 	    !((operation == 3 || operation == 7) && op[0] > 14))
 		return IEEE80211_HT20_BEACON_PROTECTION;
 	if (op[4] != h->peer_htop[4])
