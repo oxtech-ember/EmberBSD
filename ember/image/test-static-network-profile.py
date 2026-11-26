@@ -114,6 +114,14 @@ def has_multiuser_rc_dependencies(root):
 
 
 selected = profile.network('riscv32')
+usb = profile.network('earmv7hf', ('usb',))
+usb_controllers = {'usb' + str(unit) for unit in range(16)}
+check('usr.sbin/usbdevs' in usb['crunch_programs'] and
+      'usr.sbin/usbdevs' not in selected['crunch_programs'] and
+      usb_controllers | {'drvctl'} <= set(usb['device_nodes']) and
+      {'drvctl', 'usbs'} <= set(usb['device_make_groups']) and
+      usb_controllers.isdisjoint(selected['device_nodes']),
+      'USB diagnostics select usbdevs, drvctl and the standard MAKEDEV USB controller nodes')
 littlefs = profile.network('riscv32', root_filesystem='littlefs')
 wpa_selected = 'external/bsd/wpa/bin/wpa_supplicant' in selected['crunch_programs']
 wpa_source = Path(os.environ['EMBER_WPA_SOURCE']) if wpa_selected and os.environ.get('EMBER_WPA_SOURCE') else None

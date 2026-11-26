@@ -355,7 +355,7 @@ the selected WPA/DHCP paths; the staged resolver, DHCP state and runtime
 directories remain writable on the root filesystem or under `/var/run`.
 Optional `EMBER_NETWORK_TOOLSETS` is a comma-separated selection of `system`,
 `audio`, `video`, `envsys`, `spi`, `transfer`, `mdns`, `ssh`, `sftp`,
-`logging`, and `display`. Select `sftp` together with `ssh`. These choices add the corresponding standard
+`logging`, `display`, and `usb`. Select `sftp` together with `ssh`. These choices add the corresponding standard
 tools to the shared `console-tools` executable and ask target `MAKEDEV` for
 their device nodes. `system` includes `env`, `uname`, and `df`; `audio` includes `audioctl`, `audioplay`, `audiorecord`,
 `mixerctl`, `timeout`, and `wc`; `video` includes `videoctl`; `envsys` includes
@@ -369,6 +369,8 @@ tools out.
 `transfer` adds `cksum`, `uuencode`, and `uudecode` to the shared utility
 binary for standard text-safe transfers over a captured console. It is opt-in;
 the normal network profile remains unchanged.
+`usb` adds `/usr/sbin/usbdevs`, `/dev/drvctl`, and the 16 USB controller nodes
+from the target `MAKEDEV usbs` group. Run `usbdevs -v` to inspect the attached devices.
 `display` adds `/dev/ttyE0` through the `wscons` MAKEDEV group and selects it as
 an optional secondary startup status sink. The screen receives a fixed title,
 rc script stage names, completion statuses, and the final startup result. Script

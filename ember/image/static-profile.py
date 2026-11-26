@@ -513,7 +513,7 @@ def network(target, toolsets=(), spi_units=(), root_filesystem='ffs',
     import re
 
     allowed_toolsets = {'system', 'audio', 'video', 'envsys', 'spi', 'transfer',
-                        'mdns', 'ssh', 'sftp', 'logging', 'display'}
+                        'mdns', 'ssh', 'sftp', 'logging', 'display', 'usb'}
     if (len(set(toolsets)) != len(toolsets) or
             any(not re.fullmatch(r'[a-z]+', item) or item not in allowed_toolsets
                 for item in toolsets)):
@@ -592,6 +592,11 @@ def network(target, toolsets=(), spi_units=(), root_filesystem='ffs',
         selected['device_nodes'] += ('audio0', 'audioctl0', 'mixer0')
         selected['device_links'] += ('audio', 'audioctl', 'mixer')
         selected['device_make_groups'] += ('audio',)
+    if 'usb' in toolsets:
+        selected['crunch_programs'] += ('usr.sbin/usbdevs',)
+        # MAKEDEV usbs provides the standard USB controller units 0 through 15.
+        selected['device_nodes'] += ('drvctl',) + tuple('usb' + str(unit) for unit in range(16))
+        selected['device_make_groups'] += ('drvctl', 'usbs')
     if 'video' in toolsets:
         selected['crunch_programs'] += ('usr.bin/videoctl/videoctl',)
         selected['device_nodes'] += ('video0',)
