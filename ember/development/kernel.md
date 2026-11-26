@@ -166,8 +166,9 @@ host mode. The USB2 PHY uses the 24 MHz reference and its internal 480 MHz
 output. U-Boot must leave the system bus clocks running and the USB resets
 released. On the serial console, check for the DWC2 host and the downstream
 hub. On the radio's vendor WLAN interface, `uaicfw` reads the chip ID and
-sub-ID with firmware commands. A successful probe prints both values and
-closes its pipes. Firmware loading, wireless association and a network
+sub-ID with firmware commands. It then asks the MAC management task for its
+version. A complete reply identifies a responsive FullMAC service. Its patch
+revision and startup state still require separate evidence. Firmware loading, wireless association and a network
 interface still require a USB radio driver.
 
 The clock and reset IDs come from [Linux commit

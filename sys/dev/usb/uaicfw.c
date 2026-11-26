@@ -108,20 +108,20 @@ uaicfw_close(struct uaicfw_pipe *p)
 		usbd_close_pipe(p->pipe);
 }
 
-/* Read only the two silicon identification registers during attachment. */
+/* One synchronous command owns both pipes through its confirmation. */
 static usbd_status
-uaicfw_read_id(struct uaicfw_pipe *tx, struct uaicfw_pipe *rx,
-    uint32_t reg, uint32_t *value)
+uaicfw_command(struct uaicfw_pipe *tx, struct uaicfw_pipe *rx, uint16_t cmd,
+    const void *param, size_t request_len, uint16_t cfm, void *reply,
+    size_t reply_len)
 {
 	uint8_t *buf = usbd_get_buffer(tx->xfer);
-	uint8_t req[4];
 	uint32_t actual;
 	usbd_status status;
+	size_t len;
 
-	le32enc(req, reg);
-	size_t len = aicwf_command_encode(buf, UAICFW_TX_SIZE,
-	    AICWF_DBG_MEM_READ_REQ, req, sizeof(req));
-	KASSERT(len == UAICFW_TX_SIZE);
+	len = aicwf_command_encode(buf, UAICFW_TX_SIZE, cmd, param, request_len);
+	if (len == 0)
+		return USBD_INVAL;
 	usbd_setup_xfer(tx->xfer, NULL, buf, len, 0, UAICFW_TIMEOUT_MS, NULL);
 	status = usbd_sync_transfer(tx->xfer);
 	if (status != USBD_NORMAL_COMPLETION)
@@ -155,10 +155,11 @@ uaicfw_read_id(struct uaicfw_pipe *tx, struct uaicfw_pipe *rx,
 			if ((frame[2] & 0x7f) == AICWF_TYPE_MSG) {
 				if (!aicwf_reply_decode(msg, body, &id, &param_len))
 					return USBD_INVAL;
-				if (id == AICWF_DBG_MEM_READ_CFM) {
-					if (!aicwf_read_confirm(msg +
-					    AICWF_RX_MSG_PARAM, param_len, reg, value))
+				if (id == cfm) {
+					if (param_len != reply_len)
 						return USBD_INVAL;
+					memcpy(reply, msg + AICWF_RX_MSG_PARAM,
+					    reply_len);
 					return USBD_NORMAL_COMPLETION;
 				}
 			}
@@ -171,6 +172,22 @@ uaicfw_read_id(struct uaicfw_pipe *tx, struct uaicfw_pipe *rx,
 	return USBD_TIMEOUT;
 }
 
+static usbd_status
+uaicfw_read_id(struct uaicfw_pipe *tx, struct uaicfw_pipe *rx,
+    uint32_t reg, uint32_t *value)
+{
+	uint8_t req[4], cfm[8];
+	usbd_status status;
+
+	le32enc(req, reg);
+	status = uaicfw_command(tx, rx, AICWF_DBG_MEM_READ_REQ, req,
+	    sizeof(req), AICWF_DBG_MEM_READ_CFM, cfm, sizeof(cfm));
+	if (status == USBD_NORMAL_COMPLETION &&
+	    !aicwf_read_confirm(cfm, sizeof(cfm), reg, value))
+		return USBD_INVAL;
+	return status;
+}
+
 static void
 uaicfw_attach(device_t parent, device_t self, void *aux)
 {
@@ -179,6 +196,8 @@ uaicfw_attach(device_t parent, device_t self, void *aux)
 	struct uaicfw_pipe rx = { 0 }, tx = { 0 };
 	uint8_t in, out;
 	uint32_t chip, sub;
+	struct aicwf_version version;
+	uint8_t cfm[AICWF_VERSION_LEN];
 	usbd_status status;
 
 	aprint_naive("\n");
@@ -194,15 +213,28 @@ uaicfw_attach(device_t parent, device_t self, void *aux)
 		status = uaicfw_read_id(&tx, &rx, UAICFW_IDENT_REG, &chip);
 	if (status == USBD_NORMAL_COMPLETION)
 		status = uaicfw_read_id(&tx, &rx, UAICFW_SUBID_REG, &sub);
-	uaicfw_close(&tx);
-	uaicfw_close(&rx);
 	if (status != USBD_NORMAL_COMPLETION) {
 		aprint_error_dev(self, "firmware identification failed: %s\n",
 		    usbd_errstr(status));
-		return;
+		goto out;
 	}
 	aprint_normal_dev(self, "chip ID 0x%02x, sub-ID 0x%02x\n",
 	    (unsigned int)((chip >> 16) & 0xff), (unsigned int)(sub & 0xff));
+
+	/* A missing reply leaves the FullMAC state unknown. */
+	status = uaicfw_command(&tx, &rx, AICWF_MM_VERSION_REQ, NULL, 0,
+	    AICWF_MM_VERSION_CFM, cfm, sizeof(cfm));
+	if (status == USBD_NORMAL_COMPLETION) {
+		aicwf_version_decode(cfm, &version);
+		aprint_normal_dev(self, "FullMAC version 0x%08x, features 0x%08x\n",
+		    version.lmac, version.features);
+	} else {
+		aprint_verbose_dev(self, "FullMAC version unavailable: %s\n",
+		    usbd_errstr(status));
+	}
+out:
+	uaicfw_close(&tx);
+	uaicfw_close(&rx);
 }
 
 static int

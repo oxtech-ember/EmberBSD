@@ -134,8 +134,6 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #define	AICWF_MM_RESET_CFM		0x0001
 #define	AICWF_MM_START_REQ		0x0002
 #define	AICWF_MM_START_CFM		0x0003
-#define	AICWF_MM_VERSION_REQ		0x0004
-#define	AICWF_MM_VERSION_CFM		0x0005
 #define	AICWF_MM_ADD_IF_REQ		0x0006
 #define	AICWF_MM_ADD_IF_CFM		0x0007
 #define	 AICWF_IF_STA			0
@@ -1323,6 +1321,7 @@ aicwf_fw_bip_runtime_verify(struct aicwf_softc *sc)
 static int
 aicwf_fw_init(struct aicwf_softc *sc)
 {
+	struct aicwf_version version;
 	uint8_t req[256], cfm[64];
 	u_int n2g, n5g;
 	bool bip_mfp;
@@ -1375,30 +1374,30 @@ aicwf_fw_init(struct aicwf_softc *sc)
 		return error;
 
 	error = aicwf_fw_cmd(sc, AICWF_MM_VERSION_REQ, NULL, 0,
-	    AICWF_MM_VERSION_CFM, cfm, 28);
+	    AICWF_MM_VERSION_CFM, cfm, AICWF_VERSION_LEN);
 	if (error != 0)
 		return error;
+	aicwf_version_decode(cfm, &version);
 	aprint_verbose_dev(sc->sc_dev, "MAC 0x%08x, hardware 0x%08x 0x%08x, "
 	    "PHY 0x%08x 0x%08x, features 0x%08x, %u stations, %u interfaces\n",
-	    le32dec(cfm), le32dec(cfm + 4), le32dec(cfm + 8),
-	    le32dec(cfm + 12), le32dec(cfm + 16), le32dec(cfm + 20),
-	    le16dec(cfm + 24), cfm[26]);
+	    version.lmac, version.machw[0], version.machw[1],
+	    version.phy[0], version.phy[1], version.features,
+	    version.max_sta, version.max_vif);
 
-	sc->sc_fw_version = le32dec(cfm);
-	bip_mfp = le32dec(cfm) == 0x06090101 &&
-	    (le32dec(cfm + 20) & AICWF_FEATURE_MFP) != 0;
+	sc->sc_fw_version = version.lmac;
+	bip_mfp = version.lmac == 0x06090101 &&
+	    (version.features & AICWF_FEATURE_MFP) != 0;
 	if (sc->sc_fw_bip_pending && !bip_mfp)
 		return EPROTO;
-	if (le32dec(cfm) == 0x06090101 &&
-	    (le32dec(cfm + 20) & AICWF_FEATURE_MFP) != 0) {
+	if (bip_mfp) {
 		sc->sc_sae_caps = IEEE80211_SAE_CAP_EXTERNAL |
 		    IEEE80211_SAE_CAP_PMF | IEEE80211_SAE_CAP_SA_QUERY;
 		aprint_normal_dev(sc->sc_dev, "external SAE and firmware PMF available\n");
 	}
 
 	/* Firmware builds association capabilities from this bounded request. */
-	if (aicwf_me_config_build(req, le32dec(cfm), le32dec(cfm + 12),
-	    le32dec(cfm + 20), sc->sc_5ghz))
+	if (aicwf_me_config_build(req, version.lmac, version.phy[0],
+	    version.features, sc->sc_5ghz))
 		aprint_normal_dev(sc->sc_dev,
 		    "VHT enabled: 1 stream, MCS 0-9, maximum width 80 MHz\n");
 	error = aicwf_cmd(sc, AICWF_ME_CONFIG_REQ, req, AICWF_ME_CONFIG_LEN,

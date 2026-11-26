@@ -14,8 +14,34 @@
 #define	AICWF_MSG_HDR_LEN		8
 #define	AICWF_RX_MSG_PARAM		12	/* includes the pattern word */
 #define	AICWF_TASK_DRIVER		100
+#define	AICWF_MM_VERSION_REQ		0x0004
+#define	AICWF_MM_VERSION_CFM		0x0005
+#define	AICWF_VERSION_LEN		28
 #define	AICWF_DBG_MEM_READ_REQ		0x0400
 #define	AICWF_DBG_MEM_READ_CFM		0x0401
+
+struct aicwf_version {
+	uint32_t lmac;
+	uint32_t machw[2];
+	uint32_t phy[2];
+	uint32_t features;
+	uint16_t max_sta;
+	uint8_t max_vif;
+};
+
+static inline void
+aicwf_version_decode(const uint8_t cfm[AICWF_VERSION_LEN],
+    struct aicwf_version *version)
+{
+	version->lmac = le32dec(cfm);
+	version->machw[0] = le32dec(cfm + 4);
+	version->machw[1] = le32dec(cfm + 8);
+	version->phy[0] = le32dec(cfm + 12);
+	version->phy[1] = le32dec(cfm + 16);
+	version->features = le32dec(cfm + 20);
+	version->max_sta = le16dec(cfm + 24);
+	version->max_vif = cfm[26];
+}
 
 static inline size_t
 aicwf_command_encode(uint8_t *buf, size_t capacity, uint16_t id,

@@ -69,11 +69,23 @@ struct usbd_xfer {
 #define aprint_naive(...) ((void)0)
 #define aprint_normal(...) ((void)0)
 #define aprint_error_dev(dev, ...) (errors++)
-#define aprint_normal_dev(dev, fmt, chip, sub)                                 \
-	do {                                                                   \
-		assert((chip) == 0xc3 && (sub) == 2);                          \
-		identified++;                                                  \
-	} while (0)
+#define aprint_normal_dev(dev, fmt, first, second) \
+	report((fmt), (first), (second))
+#define aprint_verbose_dev(dev, ...) (unavailable++)
+
+static unsigned identified, versions, unavailable;
+
+static void
+report(const char *fmt, uint32_t first, uint32_t second)
+{
+	if (strncmp(fmt, "FullMAC", 7) == 0) {
+		assert(first == 0x06010203 && second == 0x12345678);
+		versions++;
+	} else {
+		assert(first == 0xc3 && second == 2);
+		identified++;
+	}
+}
 
 static uint16_t
 le16dec(const void *p)
@@ -120,10 +132,12 @@ enum fault {
 	SHORT_BODY,
 	BAD_ECHO,
 	BAD_PARAM_LEN,
-	OTHER
+	OTHER,
+	VERSION_TIMEOUT,
+	VERSION_SHORT
 };
 static enum fault fault;
-static unsigned opens, allocs, writes, reads, errors, identified;
+static unsigned opens, allocs, writes, reads, errors;
 static uint32_t requested;
 
 static usb_interface_descriptor_t *
@@ -205,24 +219,41 @@ usbd_sync_transfer(struct usbd_xfer *x)
 	if (x->pipe->addr == 2) {
 		static const uint8_t hdr[16] = {
 		    16, 0, 0x11, 0, 0, 0, 0, 0, 0, 4, 1, 0, 100, 0, 4, 0};
-		assert(x->len == 20 && memcmp(b, hdr, sizeof(hdr)) == 0);
-		requested = le32dec(b + 16);
-		assert(requested == (writes == 0 ? 0x40500000 : 0x20));
+		static const uint8_t version_hdr[16] = {
+		    12, 0, 0x11, 0, 0, 0, 0, 0, 4, 0, 0, 0, 100, 0, 0, 0 };
+		if (writes < 2) {
+			assert(x->len == 20 && memcmp(b, hdr, sizeof(hdr)) == 0);
+			requested = le32dec(b + 16);
+			assert(requested == (writes == 0 ? 0x40500000 : 0x20));
+		} else {
+			assert(writes == 2 && x->len == sizeof(version_hdr));
+			assert(memcmp(b, version_hdr, sizeof(version_hdr)) == 0);
+		}
 		writes++;
 		if (fault == TX_ERROR)
 			return USBD_INVAL;
-		x->actual = fault == SHORT_TX ? 19 : 20;
+		x->actual = fault == SHORT_TX ? 19 : x->len;
 	} else {
 		assert(writes && x->len == 2048);
 		reads++;
-		if (fault == TIMEOUT)
+		if (fault == TIMEOUT || (writes == 3 && fault == VERSION_TIMEOUT))
 			return USBD_TIMEOUT;
 		memset(b, 0, x->len);
 		/* Put an unrelated indication before the confirmation. */
 		le16enc(b, 12);
 		b[2] = 0x11;
-		le16enc(b + 4, 5);
+		le16enc(b + 4, 0x1004);
 		b += 16;
+		if (writes == 3) {
+			le16enc(b, 12 + 28);
+			b[2] = 0x11;
+			le16enc(b + 4, 5);
+			le16enc(b + 10, fault == VERSION_SHORT ? 27 : 28);
+			le32enc(b + 16, 0x06010203);
+			le32enc(b + 36, 0x12345678);
+			x->actual = 60;
+			return USBD_NORMAL_COMPLETION;
+		}
 		le16enc(b, fault == SHORT_BODY ? 200 : 20);
 		b[2] = 0x11;
 		le16enc(b + 4, fault == OTHER ? 6 : 0x401);
@@ -260,13 +291,17 @@ main(void)
 	a.uiaa_product++;
 	assert(uaicfw_match(0, 0, &a) == UMATCH_NONE);
 	a.uiaa_product--;
-	for (fault = NONE; fault <= OTHER; fault++) {
+	for (fault = NONE; fault <= VERSION_SHORT; fault++) {
 		opens = allocs = writes = reads = errors = identified = 0;
+		versions = unavailable = 0;
 		uaicfw_attach(0, 0, &a);
 		assert(!opens && !allocs && uaicfw_detach(0, 0) == 0);
-		assert(
-		    identified == (fault == NONE) && errors == (fault != NONE));
-		assert(fault != NONE || (writes == 2 && reads == 2));
+		bool have_id = fault == NONE || fault == VERSION_TIMEOUT ||
+		    fault == VERSION_SHORT;
+		assert(identified == have_id && errors == !have_id);
+		assert(versions == (fault == NONE));
+		assert(unavailable == (have_id && fault != NONE));
+		assert(!have_id || (writes == 3 && reads == 3));
 		if (fault == OTHER || fault == EMPTY_RX)
 			assert(reads == 4 && writes == 1);
 	}
@@ -275,7 +310,7 @@ main(void)
 	assert(uaicfw_match(0, 0, &a) == UMATCH_NONE);
 	uaicfw_attach(0, 0, &a);
 	assert(!writes && errors == 1);
-	puts("PASS: two fixed USB reads, interface selection, short and "
-	     "unrelated replies, deadlines and resource release");
+	puts("PASS: silicon and FullMAC queries, interface selection, bounded "
+	     "replies, timeouts and resource release");
 	return 0;
 }
