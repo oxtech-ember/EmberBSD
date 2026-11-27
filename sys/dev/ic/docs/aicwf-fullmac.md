@@ -20,8 +20,11 @@ ifconfig aicwf0 up
 ifconfig aicwf0 list scan
 ```
 
-The command requests a scan and prints the cached results. An empty result
-and a zero exit status do not confirm beacon reception.
+The command waits for this interface and prints its cached results. A
+completed scan with no networks produces no output and exits successfully.
+After a failed survey, reading the results returns `EIO` until a scan
+succeeds. The kernel logs the failed operation and error code. A firmware
+refusal of `MM_ADD_IF` also logs the numeric firmware status.
 
 The driver starts in manual roaming mode. A scan creates a temporary firmware
 station interface, listens on the selected channels and removes the interface.

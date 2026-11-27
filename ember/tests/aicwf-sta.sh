@@ -14,7 +14,7 @@ else
     trap 'rm -rf "$work"' EXIT HUP INT TERM
 fi
 awk '/^#define[[:space:]]+IEEE80211_(STA|SAE)_/ {print}
-    /^#define[[:space:]]+IEEE80211_IOC_(WPA|MLME|SCAN_REQ|CHANLIST)[[:space:]]/ {print}
+    /^#define[[:space:]]+IEEE80211_IOC_(WPA|MLME|SCAN_REQ|SCAN_RESULTS|CHANLIST)[[:space:]]/ {print}
     /^struct ieee80211req_(sta_mgmt|sae) / {copy=1}
     copy {print} copy && /^};/ {copy=0}' \
     "$src/sys/net80211/ieee80211_ioctl.h" > "$work/abi.h"
@@ -49,7 +49,7 @@ for spec in aicwf_sta_action_valid:bool aicwf_sta_supported:bool \
     aicwf_sta_tx_finish_locked:bool aicwf_sta_scan_finish_locked:bool \
     aicwf_sta_scan_cancel_locked:void aicwf_sta_retire_locked:void aicwf_sae_advance_if:uint64_t \
     aicwf_sae_advance:void aicwf_tx_power:int8_t aicwf_dc_channel:bool \
-    aicwf_survey_remove_vif:int aicwf_survey_scan_status:int aicwf_survey_set:int aicwf_chan_set:void aicwf_chan_list:u_int aicwf_add_vif:int aicwf_passive_scan:void aicwf_scan:void aicwf_connect:void \
+    aicwf_survey_remove_vif:int aicwf_survey_scan_status:int aicwf_survey_ioctl:int aicwf_chan_set:void aicwf_chan_list:u_int aicwf_add_vif:int aicwf_passive_scan:void aicwf_scan:void aicwf_connect:void \
     aicwf_sae_clear_keys:void aicwf_disconnect:void aicwf_newstate_cb:void aicwf_state_cb:void \
     aicwf_sta_tx_cfm:void aicwf_sta_scan_request:int aicwf_sta_mgmt:int \
     aicwf_sta_mgmt_cb:void aicwf_sta_cancel_scan_cb:void aicwf_scan_done:void \

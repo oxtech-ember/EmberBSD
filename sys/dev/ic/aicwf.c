@@ -267,11 +267,16 @@ aicwf_survey_add_reply(struct aicwf_softc *sc, const uint8_t *p, size_t len,
 	KASSERT(mutex_owned(&sc->sc_lock));
 	if (len != 2 || p[0] >= AICWF_CO_OP_IN_PROGRESS ||
 	    (p[0] == 0 && p[1] > 3)) {
+		device_printf(sc->sc_dev,
+		    "invalid MM_ADD_IF confirmation: length %zu status %d\n",
+		    len, len != 0 ? p[0] : -1);
 		sc->sc_survey_failed = true;
 		return EPROTO;
 	}
-	if (p[0] != 0)
+	if (p[0] != 0) {
+		device_printf(sc->sc_dev, "MM_ADD_IF firmware status %u\n", p[0]);
 		return EIO;
+	}
 	if (abandoned && !atomic_load_relaxed(&sc->sc_dying)) {
 		sc->sc_survey_cleanup = true;
 		sc->sc_survey_vif = p[1];
@@ -708,8 +713,9 @@ aicwf_passive_scan(struct aicwf_softc *sc)
 	uint16_t freqs[11];
 	uint8_t req[AICWF_STA_SCAN_LEN];
 	const unsigned limit = mstohz(4000);
+	const char *phase = "admission";
 	size_t n = 0;
-	int error = 0, release;
+	int error, release;
 
 	for (u_int ch = 1; ch <= __arraycount(freqs); ch++) {
 		const u_int freq = 2407 + ch * 5;
@@ -717,8 +723,14 @@ aicwf_passive_scan(struct aicwf_softc *sc)
 			freqs[n++] = freq;
 	}
 	error = aicwf_survey_scan_status(sc);
-	if (n == 0 || error != 0)
+	if (error != 0)
 		goto done;
+	if (n == 0) {
+		phase = "channel selection";
+		error = EINVAL;
+		goto done;
+	}
+	phase = "MM_ADD_IF";
 	error = aicwf_add_vif(sc);
 	if (error != 0)
 		goto done;
@@ -728,10 +740,13 @@ aicwf_passive_scan(struct aicwf_softc *sc)
 	sc->sc_survey_ok = false;
 	sc->sc_scan_published = false;
 	mutex_exit(&sc->sc_lock);
+	phase = "SCANU_START";
 	error = aicwf_cmd(sc, AICWF_SCANU_START_REQ, req, sizeof(req),
 	    AICWF_SCANU_START_ACK, NULL, 0);
 	mutex_enter(&sc->sc_lock);
 	const unsigned start = getticks();
+	if (error == 0)
+		phase = "scan completion";
 	while (error == 0 && sc->sc_scanning && !atomic_load_relaxed(&sc->sc_dying)) {
 		const unsigned elapsed = (unsigned)getticks() - start;
 		error = elapsed >= limit ? ETIMEDOUT :
@@ -745,14 +760,23 @@ aicwf_passive_scan(struct aicwf_softc *sc)
 	sc->sc_scanning = false;
 	mutex_exit(&sc->sc_lock);
 	release = aicwf_survey_remove_vif(sc, sc->sc_vif);
-	if (error != 0 || release != 0)
-		aprint_error_dev(sc->sc_dev, "passive scan failed: %d, VIF removal: %d\n",
-		    error, release);
+	if (release != 0) {
+		if (error == 0) {
+			phase = "MM_REMOVE_IF";
+			error = release;
+		} else
+			aprint_error_dev(sc->sc_dev, "MM_REMOVE_IF failed: %d\n",
+			    release);
+	}
 done:
 	if (!atomic_load_relaxed(&sc->sc_dying)) {
+		if (error != 0)
+			aprint_error_dev(sc->sc_dev, "passive scan %s failed: %d\n",
+			    phase, error);
 		int s = splnet();
 		if (error != 0)
 			ieee80211_node_table_reset(&ic->ic_scan);
+		sc->sc_survey_result_failed = error != 0;
 		ieee80211_end_scan(ic);
 		splx(s);
 	}
@@ -3445,8 +3469,14 @@ aicwf_watchdog(struct ifnet *ifp)
 
 /* State and WPA configuration stay unavailable on a receive-only radio. */
 static int
-aicwf_survey_set(struct aicwf_softc *sc, unsigned type)
+aicwf_survey_ioctl(struct aicwf_softc *sc, unsigned type, bool set)
 {
+	if (!set) {
+		if (type == IEEE80211_IOC_SCAN_RESULTS &&
+		    sc->sc_survey_result_failed)
+			return EIO;
+		return 0;
+	}
 	switch (type) {
 	case IEEE80211_IOC_SCAN_REQ:
 		return aicwf_survey_scan_status(sc);
@@ -3467,9 +3497,10 @@ aicwf_ioctl(struct ifnet *ifp, u_long cmd, void *data)
 	if (atomic_load_relaxed(&sc->sc_dying))
 		return ENXIO;
 	if (sc->sc_receive_only) {
-		if (cmd == SIOCS80211) {
-			struct ieee80211req *ireq = data;
-			error = aicwf_survey_set(sc, ireq->i_type);
+		if (cmd == SIOCS80211 || cmd == SIOCG80211) {
+			const struct ieee80211req *ireq = data;
+			error = aicwf_survey_ioctl(sc, ireq->i_type,
+			    cmd == SIOCS80211);
 			if (error != 0)
 				return error;
 		} else if (cmd == SIOCS80211NWID || cmd == SIOCS80211NWKEY ||

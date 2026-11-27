@@ -74,7 +74,7 @@ static int getmaxrate(const uint8_t [15], u_int8_t);
 static const char * getcaps(int);
 static void printie(const char*, const uint8_t *, size_t, int);
 static int copy_essid(char [], size_t, const u_int8_t *, size_t);
-static void scan_and_wait(prop_dictionary_t);
+static void scan_and_wait(prop_dictionary_t, unsigned int);
 static void list_scan(prop_dictionary_t);
 static int mappsb(u_int , u_int);
 static int mapgsm(u_int , u_int);
@@ -500,7 +500,9 @@ scan_exec(prop_dictionary_t env, prop_dictionary_t oenv)
 	if ((ifr.ifr_flags & IFF_UP) == 0)
 		errx(EXIT_FAILURE, "The interface must be up before scanning.");
 
-	scan_and_wait(env);
+	if (direct_ioctl(env, SIOCGIFINDEX, &ifr) == -1)
+		err(EXIT_FAILURE, "ioctl(SIOCGIFINDEX)");
+	scan_and_wait(env, ifr.ifr_index);
 	list_scan(env);
 
 	return 0;
@@ -762,7 +764,7 @@ ieee80211_status(prop_dictionary_t env, prop_dictionary_t oenv)
 }
 
 static void
-scan_and_wait(prop_dictionary_t env)
+scan_and_wait(prop_dictionary_t env, unsigned int ifindex)
 {
 	int sroute;
 
@@ -773,21 +775,22 @@ scan_and_wait(prop_dictionary_t env)
 	}
 	/* NB: only root can trigger a scan so ignore errors */
 	if (set80211(env, IEEE80211_IOC_SCAN_REQ, 0, 0, NULL) >= 0) {
-		char buf[2048];
-		struct if_announcemsghdr *ifan;
-		struct rt_msghdr *rtm;
+		struct if_announcemsghdr ifan;
+		ssize_t n;
 
 		do {
-			if (prog_read(sroute, buf, sizeof(buf)) < 0) {
+			n = prog_read(sroute, &ifan, sizeof(ifan));
+			if (n < 0) {
 				warn("read(PF_ROUTE)");
 				break;
 			}
-			rtm = (struct rt_msghdr *) buf;
-			if (rtm->rtm_version != RTM_VERSION)
+			if (n == 0)
 				break;
-			ifan = (struct if_announcemsghdr *) rtm;
-		} while (rtm->rtm_type != RTM_IEEE80211 ||
-		    ifan->ifan_what != RTM_IEEE80211_SCAN);
+		} while (n < (ssize_t)sizeof(ifan) ||
+		    ifan.ifan_version != RTM_VERSION ||
+		    ifan.ifan_type != RTM_IEEE80211 ||
+		    ifan.ifan_what != RTM_IEEE80211_SCAN ||
+		    ifan.ifan_index != ifindex);
 	}
 	prog_close(sroute);
 }
@@ -828,7 +831,7 @@ list_scan(prop_dictionary_t env)
 	ireq.i_data = buf;
 	ireq.i_len = sizeof(buf);
 	if (direct_ioctl(env, SIOCG80211, &ireq) < 0)
-		errx(EXIT_FAILURE, "unable to get scan results");
+		err(EXIT_FAILURE, "unable to get scan results");
 	len = ireq.i_len;
 	if (len < (int)sizeof(*sr))
 		return;

@@ -10,9 +10,14 @@ copy {print} copy && /^}/ {exit}' \
 awk '/^aicwf_newstate_cb\(/ {copy=1; print "static void"}
 copy {print} copy && /^}/ {exit}' \
     "$src/sys/dev/ic/aicwf.c" > "$work/state.h"
+awk '/^scan_and_wait\(/ {copy=1; print "static void"}
+copy {print} copy && /^}/ {exit}' \
+    "$src/sbin/ifconfig/ieee80211.c" > "$work/wait.h"
 cat > "$work/check.c" <<'C'
 #include <assert.h>
 #include <stdbool.h>
+#include <err.h>
+#include <sys/types.h>
 #include <stdint.h>
 #include <errno.h>
 #include <stdio.h>
@@ -118,14 +123,55 @@ static void check(bool user_scan, bool connected, enum ieee80211_state old,
     assert(disconnects == (connected ? 1 : 0));
     assert(leaves == expected_leaves);
 }
+/* A shared route socket also receives notifications for other interfaces. */
+enum { PF_ROUTE = 1, SOCK_RAW, IEEE80211_IOC_SCAN_REQ, RTM_VERSION,
+    RTM_IEEE80211, RTM_IEEE80211_SCAN };
+typedef void *prop_dictionary_t;
+struct if_announcemsghdr {
+    uint16_t ifan_msglen;
+    uint8_t ifan_version, ifan_type;
+    uint16_t ifan_index;
+    char ifan_name[16];
+    uint16_t ifan_what;
+};
+static unsigned messages, closes;
+static int request_error;
+static int prog_socket(int family, int type, int proto)
+{ assert(family == PF_ROUTE && type == SOCK_RAW && proto == 0); return 10; }
+static int set80211(prop_dictionary_t env, int op, int val, int len, void *data)
+{ assert(!env && op == IEEE80211_IOC_SCAN_REQ && !val && !len && !data); return request_error; }
+static ssize_t prog_read(int fd, void *buf, size_t len)
+{
+    struct if_announcemsghdr event = {
+        .ifan_msglen = sizeof(event), .ifan_version = RTM_VERSION,
+        .ifan_type = RTM_IEEE80211, .ifan_what = RTM_IEEE80211_SCAN,
+        .ifan_index = 7
+    };
+    assert(fd == 10 && len >= sizeof(event) && messages < 5);
+    switch (messages++) {
+    case 0: memcpy(buf, &event, 2); return 2;
+    case 1: event.ifan_version++; break;
+    case 2: event.ifan_what++; break;
+    case 3: event.ifan_index++; break;
+    }
+    memcpy(buf, &event, sizeof(event));
+    return sizeof(event);
+}
+static int prog_close(int fd) { assert(fd == 10); closes++; return 0; }
+#include "wait.h"
 int main(void)
 {
+    scan_and_wait(NULL, 7);
+    assert(messages == 5 && closes == 1);
+    request_error = -1;
+    scan_and_wait(NULL, 7);
+    assert(messages == 5 && closes == 2);
     check(true, true, IEEE80211_S_RUN, 1);
     check(false, true, IEEE80211_S_RUN, 1);
     check(true, false, IEEE80211_S_INIT, 0);
     check(false, false, IEEE80211_S_AUTH, 0);
     check(false, false, IEEE80211_S_SCAN, 0);
-    puts("PASS: connected scans notify departure once; initial/repeated scans do not");
+    puts("PASS: scan departure and completion on the requested interface");
     return 0;
 }
 C
