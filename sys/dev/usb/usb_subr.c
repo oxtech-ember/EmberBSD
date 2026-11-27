@@ -94,8 +94,9 @@ Static const char * const usbd_error_strs[] = {
 	"SHORT_XFER",
 	"STALLED",
 	"INTERRUPTED",
-	"XXX",
+	"REENUMERATE",
 };
+__CTASSERT(__arraycount(usbd_error_strs) == USBD_ERROR_MAX);
 
 DEV_VERBOSE_DEFINE(usb);
 
@@ -1665,6 +1666,7 @@ usbd_reload_device_desc(struct usbd_device *dev)
 void
 usbd_remove_device(struct usbd_device *dev, struct usbd_port *up)
 {
+	size_t dindex;
 
 	USBHIST_FUNC();
 	USBHIST_CALLARGS(usbdebug, "dev %#jx up %#jx",
@@ -1673,7 +1675,10 @@ usbd_remove_device(struct usbd_device *dev, struct usbd_port *up)
 	if (dev->ud_pipe0 != NULL)
 		usbd_kill_pipe(dev->ud_pipe0);
 	up->up_dev = NULL;
-	dev->ud_bus->ub_devices[usb_addr2dindex(dev->ud_addr)] = NULL;
+	/* An unaddressed child has not claimed the root hub's entry. */
+	dindex = usb_addr2dindex(dev->ud_addr);
+	if (dev->ud_bus->ub_devices[dindex] == dev)
+		dev->ud_bus->ub_devices[dindex] = NULL;
 
 	if (dev->ud_vendor != NULL) {
 		kmem_free(dev->ud_vendor, USB_MAX_ENCODED_STRING_LEN);

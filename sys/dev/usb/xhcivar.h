@@ -72,6 +72,14 @@ struct xhci_ring {
 	u_int xr_ep;			/* enqueue pointer */
 	u_int xr_cs;			/* cycle state */
 	bool is_halted;
+	/*
+	 * Command ring only.  Changed with sc_lock held, except that
+	 * xhci_event_cmd() runs without it in polling mode.
+	 */
+	enum {
+		XHCI_CR_READY, XHCI_CR_ABORTING, XHCI_CR_STOP_SEEN,
+		XHCI_CR_BLOCKED, XHCI_CR_RESTARTED
+	} xr_cmd_state;
 };
 
 struct xhci_slot {

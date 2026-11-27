@@ -416,8 +416,10 @@ static const int utoppy_usbdstatus_lookup[] = {
 	ETIMEDOUT,	/* USBD_TIMEOUT */
 	EBADMSG,	/* USBD_SHORT_XFER */
 	EHOSTDOWN,	/* USBD_STALLED */
-	EINTR		/* USBD_INTERRUPTED */
+	EINTR,		/* USBD_INTERRUPTED */
+	ETIMEDOUT	/* USBD_REENUMERATE */
 };
+__CTASSERT(__arraycount(utoppy_usbdstatus_lookup) == USBD_ERROR_MAX);
 
 static __inline int
 utoppy_usbd_status2errno(usbd_status err)

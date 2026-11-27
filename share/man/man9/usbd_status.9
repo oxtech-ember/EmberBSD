@@ -24,7 +24,7 @@
 .\" OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
 .\" SUCH DAMAGE.
 .\"
-.Dd May 12, 2012
+.Dd November 27, 2026
 .Dt USBD_STATUS 9
 .Os
 .Sh NAME
@@ -96,6 +96,10 @@ USB controller has stalled (controller specific.)
 .It Dv USBD_INTERRUPTED
 Process was interrupted by external means (such as a signal) while
 waiting for a transfer to complete.
+.It Dv USBD_REENUMERATE
+The host controller released the device after a timed-out address
+assignment.
+The hub driver may reset the port and address the device again.
 .El
 .Sh SEE ALSO
 .Xr usb 4 ,

@@ -66,6 +66,7 @@ typedef enum {		/* keep in sync with usbd_error_strs */
 	USBD_STALLED,		/* 17 */
 	USBD_INTERRUPTED,	/* 18 */
 
+	USBD_REENUMERATE,	/* 19, address the device again */
 	USBD_ERROR_MAX		/* must be last */
 } usbd_status;
 

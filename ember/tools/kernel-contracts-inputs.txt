@@ -51,6 +51,17 @@ ember/tests/aicwf-usb-id.sh sys/dev/ic/aicwf_sta.h
 ember/tests/aicwf-usb-id.sh sys/dev/usb/uaicfw.c
 ember/tests/aicwf-usb-id.sh sys/dev/usb/usbdevs
 ember/tests/aicwf-usb-id.sh sys/dev/usb/usbdevs.h
+ember/tests/usb-hub-reset-changes.sh ember/tests/usb-hub-reset-changes.c
+ember/tests/usb-hub-reset-changes.sh sys/dev/usb/uhub.c
+ember/tests/usb-hub-reset-changes.sh sys/dev/usb/usb.h
+ember/tests/usb-xhci-port-change-contract.py sys/dev/usb/xhci.c
+ember/tests/usb-hub-address-retry.sh ember/tests/usb-hub-address-retry.c
+ember/tests/usb-hub-address-retry.sh sys/dev/usb/uhub.c
+ember/tests/usb-hub-address-retry.sh sys/dev/usb/usb.h
+ember/tests/usb-hub-address-retry.sh sys/dev/usb/usbdi.h
+ember/tests/xhci-command-abort.sh ember/tests/xhci-command-abort.c
+ember/tests/xhci-command-abort.sh sys/dev/usb/xhci.c
+ember/tests/xhci-command-abort.sh sys/dev/usb/xhcivar.h
 ember/tests/aicwf-sta.sh sys/dev/ic/aicwf_command.h
 ember/tests/aicwf-sta.sh sys/dev/ic/aicwf_sae.h
 ember/tests/aicwf-sta.sh sys/dev/ic/aicwf_vht.h

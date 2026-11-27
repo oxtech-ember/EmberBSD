@@ -577,6 +577,91 @@ uhub_drop_reset_changes(struct usbd_device *dev, int port, int change)
 	return (UGETW(ps.wPortStatus) & UPS_CURRENT_CONNECT_STATUS) != 0;
 }
 
+/*
+ * Origin: EmberBSD (AI-assisted).  After a timed-out Address Device command,
+ * xhci(4) restarts its command ring and, when it could release the slot,
+ * returns USBD_REENUMERATE.  Address a device on a high-speed root hub port
+ * once more, but only if the same device is still connected: a set
+ * connect-change bit also shows an unplug followed by a quick replug.
+ */
+static bool
+uhub_retry_attached(const usb_port_status_t *ps)
+{
+	const unsigned status = UGETW(ps->wPortStatus);
+	const unsigned change = UGETW(ps->wPortChange);
+	const unsigned required = UPS_CURRENT_CONNECT_STATUS | UPS_PORT_POWER |
+	    UPS_HIGH_SPEED;
+
+	return (status & required) == required &&
+	    !(status & (UPS_OVERCURRENT_INDICATOR | UPS_RESET)) &&
+	    !(change & (UPS_C_CONNECT_STATUS | UPS_C_OVERCURRENT_INDICATOR));
+}
+
+/* Explore the port again later, within the restart limit. */
+static void
+uhub_retry_later(struct usbd_device *hub, struct usbd_port *up)
+{
+
+	if (up->up_restartcnt++ < USBD_RESTART_MAX) {
+		up->up_reattach = 1;
+		usb_needs_explore(hub);
+	}
+}
+
+/*
+ * Handle USBD_REENUMERATE from usbd_new_device().  Return true when
+ * *result is the final status of the port: the caller then attaches the
+ * device or disables the port as usual.  Return false when the port has
+ * changed: it is explored again later, as after a failed port reset.
+ */
+static bool
+uhub_retry_address(struct uhub_softc *sc, struct usbd_device *hub,
+    struct usbd_port *up, int port, int speed, usbd_status *result)
+{
+	usb_port_status_t ps;
+	int change;
+
+	/* xhci(4) returns USBD_REENUMERATE only for these ports. */
+	if (up->up_dev != NULL || hub->ud_depth != 0 ||
+	    speed != USB_SPEED_HIGH ||
+	    hub->ud_bus->ub_devices[USB_ROOTHUB_INDEX] != hub) {
+		*result = USBD_TIMEOUT;
+		return true;
+	}
+	if (usbd_get_port_status(hub, port, &ps) || !uhub_retry_attached(&ps)) {
+		uhub_retry_later(hub, up);
+		return false;
+	}
+
+	if (usbd_reset_port(hub, port, &ps)) {
+		*result = USBD_TIMEOUT;
+		return true;
+	}
+	change = UGETW(ps.wPortChange);
+	if (!uhub_retry_attached(&ps) ||
+	    !(UGETW(ps.wPortStatus) & UPS_PORT_ENABLED)) {
+		/* As after a failed reset: clear every change bit. */
+		if (uhub_drop_reset_changes(hub, port, change))
+			uhub_retry_later(hub, up);
+		return false;
+	}
+	/* As after an ordinary reset: drop a Warm Reset Change. */
+	if (change & UPS_C_BH_PORT_RESET)
+		usbd_clear_port_feature(hub, port, UHF_C_BH_PORT_RESET);
+
+	aprint_normal_dev(sc->sc_dev,
+	    "port %d: address timed out, addressing the device again\n", port);
+	*result = usbd_new_device(sc->sc_dev, hub->ud_bus, hub->ud_depth + 1,
+	    speed, port, up);
+	if (*result == USBD_NORMAL_COMPLETION)
+		return true;
+	aprint_error_dev(sc->sc_dev, "port %d: second address failed: %s\n",
+	    port, usbd_errstr(*result));
+	if (*result == USBD_REENUMERATE)
+		*result = USBD_TIMEOUT;
+	return true;
+}
+
 usbd_status
 uhub_explore(struct usbd_device *dev)
 {
@@ -910,7 +995,9 @@ uhub_explore(struct usbd_device *dev)
 			    KCOV_REMOTE_VHCI_ID(dev->ud_bus->ub_busnum, port));
 		}
 
-		/* XXX retry a few times? */
+		if (err == USBD_REENUMERATE &&
+		    !uhub_retry_address(sc, dev, up, port, speed, &err))
+			continue;
 		if (err) {
 			DPRINTF("uhub%jd: usbd_new_device failed, error %jd",
 			    device_unit(sc->sc_dev), err, 0, 0);

@@ -134,6 +134,8 @@ struct xhci_pipe {
 	int16_t xp_isoc_next; /* next frame */
 	uint8_t xp_maxb; /* max burst */
 	uint8_t xp_mult;
+	/* Result of the synchronous close of an unaddressed EP0. */
+	usbd_status *xp_disable_result;
 };
 
 #define XHCI_COMMAND_RING_TRBS 256
@@ -1027,6 +1029,8 @@ xhci_resume(device_t self, const pmf_qual_t *qual)
 	 */
 	xhci_op_write_8(sc, XHCI_CRCR, xhci_ring_trbp(sc->sc_cr, 0) |
 	    sc->sc_cr->xr_cs);
+	/* The controller was halted: no aborted command can still run. */
+	sc->sc_cr->xr_cmd_state = XHCI_CR_READY;
 
 	/*
 	 * `8. Enable the controller by setting Run/Stop (R/S) =
@@ -2180,6 +2184,7 @@ xhci_open(struct usbd_pipe *pipe)
 
 	cv_init(&xpipe->xp_restart_cv, "xhcirestart");
 	xpipe->xp_restarting = false;
+	xpipe->xp_disable_result = NULL;
 
 	return USBD_NORMAL_COMPLETION;
 }
@@ -2226,8 +2231,10 @@ xhci_close_pipe(struct usbd_pipe *pipe)
 
 	if (dci == XHCI_DCI_EP_CONTROL) {
 		DPRINTFN(4, "closing ep0", 0, 0, 0, 0);
-		/* This frees all rings */
-		xhci_disable_slot(sc, xs->xs_idx);
+		/* Disable Slot releases the contexts and rings on success. */
+		usbd_status err = xhci_disable_slot(sc, xs->xs_idx);
+		if (xp->xp_disable_result != NULL)
+			*xp->xp_disable_result = err;
 		return;
 	}
 
@@ -2722,7 +2729,20 @@ xhci_event_cmd(struct xhci_softc * const sc, const struct xhci_trb * const trb)
 	trb_2 = le32toh(trb->trb_2);
 	trb_3 = le32toh(trb->trb_3);
 
-	if (trb_0 == sc->sc_command_addr) {
+	/* A ring-stop event names the dequeue position, not a command. */
+	if (XHCI_TRB_2_ERROR_GET(trb_2) == XHCI_TRB_ERROR_CMD_RING_STOP) {
+		if (sc->sc_cr->xr_cmd_state == XHCI_CR_ABORTING) {
+			sc->sc_cr->xr_cmd_state = XHCI_CR_STOP_SEEN;
+			cv_signal(&sc->sc_command_cv);
+		}
+		return;
+	}
+
+	if (sc->sc_resultpending && trb_0 == sc->sc_command_addr &&
+	    sc->sc_cr->xr_cmd_state != XHCI_CR_STOP_SEEN &&
+	    sc->sc_cr->xr_cmd_state != XHCI_CR_BLOCKED &&
+	    (XHCI_TRB_2_ERROR_GET(trb_2) != XHCI_TRB_ERROR_CMD_ABORTED ||
+	     sc->sc_cr->xr_cmd_state == XHCI_CR_ABORTING)) {
 		sc->sc_resultpending = false;
 
 		sc->sc_result_trb.trb_0 = trb_0;
@@ -2961,6 +2981,7 @@ xhci_new_device(device_t parent, struct usbd_bus *bus, int depth,
 	struct xhci_softc * const sc = XHCI_BUS2SC(bus);
 	struct usbd_device *dev;
 	usbd_status err;
+	usbd_status released = USBD_NOT_STARTED;
 	usb_device_descriptor_t *dd;
 	struct xhci_slot *xs;
 	uint32_t *cp;
@@ -3072,11 +3093,26 @@ xhci_new_device(device_t parent, struct usbd_bus *bus, int depth,
 		if (err) {
 			DPRINTFN(1, "setup default pipe failed %jd", err, 0, 0,
 			    0);
+			/* No EP0 close will release this initialized slot. */
+			mutex_enter(&sc->sc_lock);
+			(void)xhci_disable_slot(sc, slot);
+			mutex_exit(&sc->sc_lock);
 			goto bad;
 		}
 
 		/* 4.3.4 Address Assignment */
 		err = xhci_set_address(dev, slot, false);
+		if (err == USBD_REENUMERATE) {
+			/* Other failures follow the ordinary timeout path. */
+			err = USBD_TIMEOUT;
+			if (depth == 1 && speed == USB_SPEED_HIGH &&
+			    dev->ud_addr == 0) {
+				struct xhci_pipe *xp =
+				    (struct xhci_pipe *)dev->ud_pipe0;
+
+				xp->xp_disable_result = &released;
+			}
+		}
 		if (err) {
 			DPRINTFN(1, "failed! to set address: %ju", err, 0, 0, 0);
 			goto bad;
@@ -3164,6 +3200,9 @@ xhci_new_device(device_t parent, struct usbd_bus *bus, int depth,
 		if (depth == 0 && port == 0 && dev->ud_pipe0)
 			usbd_kill_pipe(dev->ud_pipe0);
 		usbd_remove_device(dev, up);
+		/* The slot is free again: the hub can address it once more. */
+		if (released == USBD_NORMAL_COMPLETION && up->up_dev == NULL)
+			return USBD_REENUMERATE;
 	}
 
 	return err;
@@ -3332,43 +3371,60 @@ xhci_ring_put_xfer(struct xhci_softc * const sc, struct xhci_ring * const tr,
 }
 
 /*
- * Stop execution commands, purge all commands on command ring, and
- * rewind dequeue pointer.
+ * Origin: EmberBSD (AI-assisted).  Abort the timed-out command and restart
+ * the command ring (xHCI 4.6.1.2).  Keep sc_command_addr until the Command
+ * Ring Stopped event is seen and CRR is clear: before that, the controller
+ * can still complete the old command, and its event names the old TRB.
+ * Release sc_lock while waiting, so that the event handler can run.  Clear
+ * the ring before CRCR is written again, so that no old TRB stays valid.
+ * If the ring does not stop within 5 s, mark the ring blocked: later
+ * commands fail with USBD_IOERROR instead of reusing a running ring.
  */
 static void
 xhci_abort_command(struct xhci_softc *sc)
 {
 	struct xhci_ring * const cr = sc->sc_cr;
-	uint64_t crcr;
-	int i;
+	const unsigned start = getticks();
+	const unsigned limit = MAX(1, mstohz(5000));
+	uint32_t crcr;
+	bool stopped;
 
-	XHCIHIST_FUNC();
-	XHCIHIST_CALLARGS("command %#jx timeout, aborting",
-	    sc->sc_command_addr, 0, 0, 0);
+	KASSERT(mutex_owned(&sc->sc_lock));
+	KASSERT(sc->sc_command_addr != 0);
+	cr->xr_cmd_state = XHCI_CR_ABORTING;
+
+	/* Keep the old command owner until the stop event is consumed. */
+	crcr = xhci_op_read_4(sc, XHCI_CRCR);
+	if (crcr & XHCI_CRCR_LO_CRR)
+		xhci_op_write_8(sc, XHCI_CRCR,
+		    xhci_ring_trbp(cr, 0) | XHCI_CRCR_LO_CA);
+
+	for (;;) {
+		unsigned elapsed = (unsigned)getticks() - start;
+		crcr = xhci_op_read_4(sc, XHCI_CRCR);
+		stopped = cr->xr_cmd_state == XHCI_CR_STOP_SEEN;
+		if (stopped && !(crcr & XHCI_CRCR_LO_CRR))
+			break;
+		if (elapsed >= limit) {
+			cr->xr_cmd_state = XHCI_CR_BLOCKED;
+			aprint_error_dev(sc->sc_dev,
+			    "command ring did not stop after abort "
+			    "(stop event %u, CRR %u); commands disabled\n",
+			    (unsigned)stopped, !!(crcr & XHCI_CRCR_LO_CRR));
+			return;
+		}
+		/* Release sc_lock, so that the stop event can be consumed. */
+		(void)cv_timedwait(&sc->sc_command_cv, &sc->sc_lock,
+		    stopped ? 1 : (int)(limit - elapsed));
+	}
 
 	mutex_enter(&cr->xr_lock);
-
-	/* 4.6.1.2 Aborting a Command */
-	crcr = xhci_op_read_8(sc, XHCI_CRCR);
-	xhci_op_write_8(sc, XHCI_CRCR, crcr | XHCI_CRCR_LO_CA);
-
-	for (i = 0; i < 500; i++) {
-		crcr = xhci_op_read_8(sc, XHCI_CRCR);
-		if ((crcr & XHCI_CRCR_LO_CRR) == 0)
-			break;
-		usb_delay_ms(&sc->sc_bus, 1);
-	}
-	if ((crcr & XHCI_CRCR_LO_CRR) != 0) {
-		DPRINTFN(1, "Command Abort timeout", 0, 0, 0, 0);
-		/* reset HC here? */
-	}
-
-	/* reset command ring dequeue pointer */
-	cr->xr_ep = 0;
-	cr->xr_cs = 1;
+	xhci_host_dequeue(cr);	/* clear old cycle bits and sync before CRCR */
 	xhci_op_write_8(sc, XHCI_CRCR, xhci_ring_trbp(cr, 0) | cr->xr_cs);
-
 	mutex_exit(&cr->xr_lock);
+	cr->xr_cmd_state = XHCI_CR_RESTARTED;
+	aprint_normal_dev(sc->sc_dev,
+	    "command ring restarted after a command timeout\n");
 }
 
 /*
@@ -3395,7 +3451,7 @@ xhci_do_command_locked(struct xhci_softc * const sc,
 	while (sc->sc_command_addr != 0 ||
 	    (sc->sc_suspender != NULL && sc->sc_suspender != curlwp))
 		cv_wait(&sc->sc_cmdbusy_cv, &sc->sc_lock);
-	if (sc->sc_suspendresume_failed)
+	if (sc->sc_suspendresume_failed || cr->xr_cmd_state == XHCI_CR_BLOCKED)
 		return USBD_IOERROR;
 
 	/*
@@ -3407,6 +3463,9 @@ xhci_do_command_locked(struct xhci_softc * const sc,
 	else
 		sc->sc_command_addr = xhci_ring_trbp(cr, cr->xr_ep);
 
+	/* After the restart of the previous abort, the ring is ready. */
+	if (cr->xr_cmd_state == XHCI_CR_RESTARTED)
+		cr->xr_cmd_state = XHCI_CR_READY;
 	sc->sc_resultpending = true;
 
 	mutex_enter(&cr->xr_lock);
@@ -3417,8 +3476,26 @@ xhci_do_command_locked(struct xhci_softc * const sc,
 
 	while (sc->sc_resultpending) {
 		if (cv_timedwait(&sc->sc_command_cv, &sc->sc_lock,
-		    MAX(1, mstohz(timeout))) == EWOULDBLOCK) {
+		    MAX(1, mstohz(timeout))) == EWOULDBLOCK &&
+		    sc->sc_resultpending) {
 			xhci_abort_command(sc);
+			/* A real completion can win the race with abort. */
+			if (!sc->sc_resultpending &&
+			    XHCI_TRB_2_ERROR_GET(sc->sc_result_trb.trb_2) !=
+			    XHCI_TRB_ERROR_CMD_ABORTED)
+				break;
+			/*
+			 * Give xhci_set_address() the Command Aborted code:
+			 * after a clean restart, the device can be addressed
+			 * again (USBD_REENUMERATE).
+			 */
+			if (XHCI_TRB_3_TYPE_GET(trb->trb_3) ==
+			    XHCI_TRB_TYPE_ADDRESS_DEVICE &&
+			    cr->xr_cmd_state == XHCI_CR_RESTARTED &&
+			    !sc->sc_resultpending &&
+			    XHCI_TRB_2_ERROR_GET(sc->sc_result_trb.trb_2) ==
+			    XHCI_TRB_ERROR_CMD_ABORTED)
+				trb->trb_2 = sc->sc_result_trb.trb_2;
 			err = USBD_TIMEOUT;
 			goto timedout;
 		}
@@ -3555,6 +3632,10 @@ xhci_address_device(struct xhci_softc * const sc,
 	    (bsr ? XHCI_TRB_3_BSR_BIT : 0);
 
 	err = xhci_do_command(sc, &trb, USBD_DEFAULT_TIMEOUT);
+
+	if (!bsr && err == USBD_TIMEOUT &&
+	    XHCI_TRB_2_ERROR_GET(trb.trb_2) == XHCI_TRB_ERROR_CMD_ABORTED)
+		return USBD_REENUMERATE;
 
 	if (XHCI_TRB_2_ERROR_GET(trb.trb_2) == XHCI_TRB_ERROR_NO_SLOTS)
 		err = USBD_NO_ADDR;
