@@ -506,7 +506,8 @@ done:
 
 /* These are the only readable fields. No caller supplies a device address. */
 enum uaicfw_field {
-	UAICFW_CHIP, UAICFW_SUBID, UAICFW_USB_CONFIG, UAICFW_XTAL, UAICFW_BBPLL
+	UAICFW_CHIP, UAICFW_SUBID, UAICFW_USB_CONFIG, UAICFW_XTAL, UAICFW_BBPLL,
+	UAICFW_CLOCK_SELECT
 };
 
 static usbd_status
@@ -519,6 +520,7 @@ uaicfw_read_field(struct uaicfw_softc *sc, enum uaicfw_field field,
 		[UAICFW_USB_CONFIG] = 0x40200024,
 		[UAICFW_XTAL] = 0x40500148,
 		[UAICFW_BBPLL] = 0x40505010,
+		[UAICFW_CLOCK_SELECT] = 0x40500010,
 	};
 	uint8_t req[4], cfm[8];
 	usbd_status status;
@@ -537,15 +539,18 @@ uaicfw_read_field(struct uaicfw_softc *sc, enum uaicfw_field field,
 #ifdef FDT
 /*
  * Luckfox rkwifibt 223f2479: aicwf_usb_config and set_bbpll_config.
- * Report the factory branches, without applying either setting. These are
- * the last register reads on this attachment, also after a missing reply.
+ * system_config_8800dc samples the clock selector before the PMU sequence.
+ * Report the initial clock selection and factory PMU mask variant. Stop
+ * these optional reads on the first missing confirmation.
  */
 static void
 uaicfw_lyra_conditions(device_t self, struct uaicfw_softc *sc,
-    const struct usbif_attach_arg *a, const struct uaicfw_endpoints *eps)
+    const struct usbif_attach_arg *a, const struct uaicfw_endpoints *eps,
+    uint32_t chip)
 {
 	static const char * const boards[] = { "luckfox,lyra-zero-w", NULL };
 	const char *usb = "unknown", *pll = "unknown";
+	const char *clock_select = "unknown";
 	uint32_t val;
 
 	if (fdtbus_get_data() == NULL ||
@@ -579,15 +584,34 @@ uaicfw_lyra_conditions(device_t self, struct uaicfw_softc *sc,
 		pll = "skip (no CPU crystal)";
 	} else {
 		pll = "unknown (CPU crystal)";
-		if (uaicfw_read_field(sc, UAICFW_BBPLL, &val) ==
+		if (uaicfw_read_field(sc, UAICFW_BBPLL, &val) !=
 		    USBD_NORMAL_COMPLETION)
-			pll = (val >> 29) == 3 ?
-			    "skip (CPU crystal, setting present)" :
-			    "needed (CPU crystal)";
+			goto done;
+		pll = (val >> 29) == 3 ?
+		    "skip (CPU crystal, setting present)" : "needed (CPU crystal)";
+	}
+	if (uaicfw_read_field(sc, UAICFW_CLOCK_SELECT, &val) ==
+	    USBD_NORMAL_COMPLETION) {
+		switch (val) {
+		case 0:
+			clock_select = "zero";
+			break;
+		case 4:
+			clock_select = "factory first";
+			break;
+		case 6:
+			clock_select = "factory final";
+			break;
+		default:
+			clock_select = "other";
+			break;
+		}
 	}
 done:
-	aprint_normal_dev(self, "factory USB setup %s, BBPLL setup %s\n",
-	    usb, pll);
+	/* Identity bit 25 selects the extended factory PMU mask. */
+	aprint_normal_dev(self, "factory USB setup %s, BBPLL setup %s, "
+	    "clock select %s, PMU mask %s\n", usb, pll, clock_select,
+	    (chip & (1U << 25)) ? "extended" : "base");
 }
 #endif
 
@@ -953,7 +977,7 @@ uaicfw_attach(device_t parent, device_t self, void *aux)
 		return;
 	}
 #ifdef FDT
-	uaicfw_lyra_conditions(self, sc, uiaa, &eps);
+	uaicfw_lyra_conditions(self, sc, uiaa, &eps, chip);
 #endif
 	config_mountroot(self, uaicfw_mountroot);
 	return;

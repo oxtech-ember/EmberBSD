@@ -46,6 +46,17 @@ Missing files, changed bytes, and mixed releases cause a nonzero exit.
 This check establishes the identity of host files. Radio calibration and
 firmware readiness require separate observations on the device.
 
+## Read startup conditions on Lyra
+
+At USB attach, `uaicfw` reports the initial clock selector for the matched
+DC U02 station. The labels `factory first` and `factory final` mean that
+the selector matches the first or second factory setting. The driver reports
+zero separately. A different value gives `other`. An unavailable reading
+gives `unknown`. The PMU mask label comes from the chip identification
+reply. The factory driver samples the selector, then applies both clock
+settings. Clock frequency and completion of power setup require separate
+checks.
+
 ## How the factory station uses the files
 
 On USB DC U02, the normal station driver loads the WLAN patch and configures

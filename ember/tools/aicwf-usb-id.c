@@ -122,8 +122,7 @@ static void *device_private(device_t);
 static void report_error(const char *, ...);
 static const char *usbd_errstr(usbd_status status)
 { return status == USBD_TIMEOUT ? "timeout" : "USB error"; }
-#define aprint_normal_dev(dev, fmt, first, second) \
-	report((fmt), (first), (second))
+#define aprint_normal_dev(dev, ...) report(__VA_ARGS__)
 
 #define FDT 1
 static bool target_board;
@@ -139,6 +138,7 @@ static bool of_compatible(int node, const char * const *boards)
 static unsigned identified, versions, condition_reports;
 static unsigned int chip_id = 7, sub_id = 1;
 static uint32_t features = 0xb011fa5f;
+static uint32_t chip_flags;
 static char condition_line[128];
 
 static void
@@ -294,8 +294,9 @@ enum fault {
 static enum fault fault;
 static unsigned opens, allocs, writes, reads, errors;
 static uint32_t requested;
-static const uint32_t condition_fields[] = { 0x40200024, 0x40500148, 0x40505010 };
-static uint32_t field_values[3];
+static const uint32_t condition_fields[] = { 0x40200024, 0x40500148, 0x40505010, 0x40500010 };
+static uint32_t field_values[4];
+static unsigned current_field;
 static unsigned condition_reads, fail_at;
 enum condition_fault { CONDITION_OK, CONDITION_ECHO, CONDITION_LENGTH,
     CONDITION_TIMEOUT, CONDITION_OUT_STALL, CONDITION_PIPE, CONDITION_FW, CONDITION_FRAME,
@@ -492,10 +493,15 @@ emulate_transfer(struct usbd_xfer *x)
 			assert(x->len == sizeof(version_hdr));
 			assert(memcmp(b, version_hdr, sizeof(version_hdr)) == 0);
 		} else if (le16dec(b + 8) == AICWF_DBG_MEM_READ_REQ) {
-			assert(target_board && condition_reads < 3);
+			const bool has_bbpll = (field_values[1] & 1) != 0;
+			assert(target_board && condition_reads < (has_bbpll ? 4U : 3U));
 			assert(x->len == 20 && memcmp(b, hdr, sizeof(hdr)) == 0);
 			requested = le32dec(b + 16);
-			assert(requested == condition_fields[condition_reads++]);
+			current_field = condition_reads;
+			if (current_field == 2 && !has_bbpll)
+				current_field = 3; /* The clock selector follows XTAL. */
+			assert(requested == condition_fields[current_field]);
+			condition_reads++;
 			if (fail_at == condition_reads) {
 				switch (condition_fault) {
 				case CONDITION_OUT_IO:
@@ -565,9 +571,9 @@ emulate_transfer(struct usbd_xfer *x)
 		le16enc(b + 4, fault == OTHER ? 6 : 0x401);
 		le16enc(b + 10, fault == BAD_PARAM_LEN ? 7 : 8);
 		le32enc(b + 16, fault == BAD_ECHO ? 0xdead : requested);
-		le32enc(b + 20, requested == 0x20 ? sub_id : chip_id << 16);
+		le32enc(b + 20, requested == 0x20 ? sub_id : (chip_id << 16) | chip_flags);
 		if (condition_reads != 0) {
-			le32enc(b + 20, field_values[condition_reads - 1]);
+			le32enc(b + 20, field_values[current_field]);
 			if (fail_at == condition_reads && condition_fault == CONDITION_ECHO)
 				le32enc(b + 16, requested ^ 4);
 			if (fail_at == condition_reads && condition_fault == CONDITION_LENGTH)
@@ -1141,27 +1147,30 @@ static void
 condition_checks(struct usbif_attach_arg *a)
 {
 	static const struct {
-		uint32_t usb, crystal, pll;
+		uint32_t usb, crystal, pll, clock;
 		enum condition_fault fault;
 		unsigned at, expected;
 		usbd_status terminal;
 		const char *text;
 	} cases[] = {
-		{ 0xffff0119, 0, 0, CONDITION_OK, 0, 2, USBD_NORMAL_COMPLETION, "needed, BBPLL setup skip (no CPU crystal)" },
-		{ 0, 1, 3U << 29, CONDITION_OK, 0, 3, USBD_NORMAL_COMPLETION, "skip, BBPLL setup skip (CPU crystal, setting present)" },
-		{ 0, 1, 7U << 29, CONDITION_OK, 0, 3, USBD_NORMAL_COMPLETION, "skip, BBPLL setup needed (CPU crystal)" },
-		{ 0, 1, 0, CONDITION_ECHO, 1, 1, USBD_NORMAL_COMPLETION, "unknown, BBPLL setup unknown" },
-		{ 0, 1, 0, CONDITION_LENGTH, 2, 2, USBD_NORMAL_COMPLETION, "skip, BBPLL setup unknown" },
-		{ 0, 1, 0, CONDITION_TIMEOUT, 3, 3, USBD_NORMAL_COMPLETION, "skip, BBPLL setup unknown (CPU crystal)" },
-		{ 0, 1, 0, CONDITION_OUT_STALL, 2, 2, USBD_NORMAL_COMPLETION, "skip, BBPLL setup unknown" },
-		{ 0, 1, 0, CONDITION_PIPE, 2, 2, USBD_IOERROR, "skip, BBPLL setup unknown" },
-		{ 0, 1, 0, CONDITION_FW, 2, 2, USBD_IOERROR, "skip, BBPLL setup unknown" },
-		{ 0, 1, 0, CONDITION_FRAME, 2, 2, USBD_INVAL, "skip, BBPLL setup unknown" },
-		{ 0, 1, 0, CONDITION_CLEAR_FAIL, 2, 2, USBD_IOERROR, "skip, BBPLL setup unknown" },
-		{ 0, 1, 0, CONDITION_OUT_IO, 2, 2, USBD_IOERROR, "skip, BBPLL setup unknown" },
-		{ 0, 1, 0, CONDITION_OUT_CANCEL, 2, 2, USBD_CANCELLED, "skip, BBPLL setup unknown" },
-		{ 0, 1, 0, CONDITION_OUT_SHORT, 2, 2, USBD_SHORT_XFER, "skip, BBPLL setup unknown" },
-		{ 0, 1, 0, CONDITION_OUT_TIMEOUT, 2, 2, USBD_TIMEOUT, "skip, BBPLL setup unknown" },
+		{ 0xffff0119, 0, 0, 0, CONDITION_OK, 0, 3, USBD_NORMAL_COMPLETION, "needed, BBPLL setup skip (no CPU crystal), clock select zero" },
+		{ 0, 1, 3U << 29, 4, CONDITION_OK, 0, 4, USBD_NORMAL_COMPLETION, "skip, BBPLL setup skip (CPU crystal, setting present), clock select factory first" },
+		{ 0, 1, 7U << 29, 6, CONDITION_OK, 0, 4, USBD_NORMAL_COMPLETION, "skip, BBPLL setup needed (CPU crystal), clock select factory final" },
+		{ 0, 0, 0, 0x10006, CONDITION_OK, 0, 3, USBD_NORMAL_COMPLETION, "clock select other" },
+		{ 0, 0, 0, 0, CONDITION_ECHO, 3, 3, USBD_NORMAL_COMPLETION, "clock select unknown" },
+		{ 0, 1, 0, 0, CONDITION_TIMEOUT, 4, 4, USBD_NORMAL_COMPLETION, "clock select unknown" },
+		{ 0, 1, 0, 0, CONDITION_ECHO, 1, 1, USBD_NORMAL_COMPLETION, "unknown, BBPLL setup unknown" },
+		{ 0, 1, 0, 0, CONDITION_LENGTH, 2, 2, USBD_NORMAL_COMPLETION, "skip, BBPLL setup unknown" },
+		{ 0, 1, 0, 0, CONDITION_TIMEOUT, 3, 3, USBD_NORMAL_COMPLETION, "skip, BBPLL setup unknown (CPU crystal)" },
+		{ 0, 1, 0, 0, CONDITION_OUT_STALL, 2, 2, USBD_NORMAL_COMPLETION, "skip, BBPLL setup unknown" },
+		{ 0, 1, 0, 0, CONDITION_PIPE, 2, 2, USBD_IOERROR, "skip, BBPLL setup unknown" },
+		{ 0, 1, 0, 0, CONDITION_FW, 2, 2, USBD_IOERROR, "skip, BBPLL setup unknown" },
+		{ 0, 1, 0, 0, CONDITION_FRAME, 2, 2, USBD_INVAL, "skip, BBPLL setup unknown" },
+		{ 0, 1, 0, 0, CONDITION_CLEAR_FAIL, 2, 2, USBD_IOERROR, "skip, BBPLL setup unknown" },
+		{ 0, 1, 0, 0, CONDITION_OUT_IO, 2, 2, USBD_IOERROR, "skip, BBPLL setup unknown" },
+		{ 0, 1, 0, 0, CONDITION_OUT_CANCEL, 2, 2, USBD_CANCELLED, "skip, BBPLL setup unknown" },
+		{ 0, 1, 0, 0, CONDITION_OUT_SHORT, 2, 2, USBD_SHORT_XFER, "skip, BBPLL setup unknown" },
+		{ 0, 1, 0, 0, CONDITION_OUT_TIMEOUT, 2, 2, USBD_TIMEOUT, "skip, BBPLL setup unknown" },
 	};
 	target_board = true;
 	for (unsigned i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
@@ -1171,13 +1180,19 @@ condition_checks(struct usbif_attach_arg *a)
 		condition_fault = cases[i].fault;
 		clear_error = condition_fault == CONDITION_CLEAR_FAIL;
 		fail_at = cases[i].at;
+		chip_flags = i % 2 ? 1U << 25 : 0;
 		field_values[0] = cases[i].usb;
 		field_values[1] = cases[i].crystal;
 		field_values[2] = cases[i].pll;
+		field_values[3] = cases[i].clock;
 		fault = NONE;
 		uaicfw_attach(0, 0, a);
 		assert(condition_reads == cases[i].expected && condition_reports == 1);
 		assert(strstr(condition_line, cases[i].text) != NULL);
+		if (condition_fault != CONDITION_OK)
+			assert(strstr(condition_line, "clock select unknown") != NULL);
+		assert(strstr(condition_line, chip_flags ? "PMU mask extended" :
+		    "PMU mask base") != NULL);
 		assert(mountroot_hook != NULL);
 		if (cases[i].terminal != USBD_NORMAL_COMPLETION) {
 			assert(device.sc_error == cases[i].terminal);
@@ -1200,6 +1215,7 @@ condition_checks(struct usbif_attach_arg *a)
 		assert(uaicfw_detach(0, 0) == 0 && !opens && !allocs);
 	}
 	condition_fault = CONDITION_OK;
+	chip_flags = 0;
 	clear_error = false;
 	for (int i = 0; i < 6; i++) {
 		struct usbif_attach_arg other = *a;
