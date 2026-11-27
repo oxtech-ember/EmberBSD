@@ -15,6 +15,7 @@
 ./usr/libdata/debug/lib/libedit.so.3.2.debug			comp-sys-debug	debug,dynamicroot
 ./usr/libdata/debug/lib/libevent.so.5.1.debug			comp-sys-debug	debug,dynamicroot
 ./usr/libdata/debug/lib/libgcc_s.so.1.0.debug			comp-sys-debug	debug,dynamicroot,gcc
+./usr/libdata/debug/lib/libgcc_s.so.1.0.debug			comp-sys-debug	debug,dynamicroot,llvm_libgcc_s
 ./usr/libdata/debug/lib/libipsec.so.3.0.debug			comp-sys-debug	debug,dynamicroot
 ./usr/libdata/debug/lib/libisns.so.0.0.debug			comp-isns-debug	debug,dynamicroot
 ./usr/libdata/debug/lib/libkvm.so.6.0.debug			comp-sys-debug	debug,dynamicroot
@@ -123,6 +124,7 @@
 ./usr/libdata/debug/usr/lib/libfido2.so.5.2.debug		comp-sys-debug	debug,compatfile
 ./usr/libdata/debug/usr/lib/libform.so.8.0.debug		comp-sys-debug	debug,compatfile
 ./usr/libdata/debug/usr/lib/libgcc_s.so.1.0.debug		comp-sys-debug	debug,compatfile,gcc
+./usr/libdata/debug/usr/lib/libgcc_s.so.1.0.debug		comp-sys-debug	debug,compatfile,llvm_libgcc_s
 ./usr/libdata/debug/usr/lib/libgnuctf.so.0.0.debug		comp-sys-debug	debug,compatfile,binutils=234
 ./usr/libdata/debug/usr/lib/libgnuctf.so.1.0.debug		comp-sys-debug	debug,compatfile,binutils=239
 ./usr/libdata/debug/usr/lib/libgnuctf.so.2.0.debug		comp-sys-debug	debug,compatfile,binutils=242

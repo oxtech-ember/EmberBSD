@@ -7,6 +7,8 @@ SUBDIR=		csu .WAIT
 
 .if (${MKGCC} != "no")
 SUBDIR+=	../external/gpl3/${EXTERNAL_GCC_SUBDIR}/lib/libgcc .WAIT
+.elif ${HAVE_LLVM_LIBGCC_S} == "yes"
+SUBDIR+=	libgcc_s
 .endif
 
 SUBDIR+=	libc

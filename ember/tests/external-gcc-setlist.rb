@@ -29,7 +29,11 @@ runtime = %w[./lib/libgcc_s.so.1 ./usr/lib/libstdc++.so.9.1]
  'base/shl.mi' => ['./lib/libc.so.12'] + runtime,
  'etc/mi' => ['./etc/rc'], 'comp/mi' => ['./usr/lib/crt0.o']}.each do |list, paths|
   lines = File.readlines(root + '/distrib/sets/lists/' + list)
-  selected = lines.select { |line| paths.include?(line.split.first) }
+  # libgcc_s also has rows for the LLVM unwinder; keep only the GCC rows.
+  selected = lines.select do |line|
+    fields = line.split
+    paths.include?(fields.first) && !fields[2].to_s.split(',').include?('llvm_libgcc_s')
+  end
   abort 'missing source controls in ' + list unless selected.length == paths.length
   File.write(sets + '/lists/' + list, selected.join)
 end

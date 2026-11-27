@@ -1054,6 +1054,18 @@ MKGCC:= no
 MKGCC:= no
 .endif
 
+#
+# Without GCC, lib/libgcc_s supplies the GCC-versioned DWARF unwind interface
+# from the libunwind archive that libc embeds. ARM EHABI has a different
+# interface, so earm does not get this library.
+#
+.if ${MKGCC:Uno} == "no" && ${HAVE_LIBGCC_EH} == "no" && \
+    ${HAVE_LLVM_UNWIND} == "yes" && empty(MACHINE_ARCH:Mearm*)
+HAVE_LLVM_LIBGCC_S=	yes
+.else
+HAVE_LLVM_LIBGCC_S=	no
+.endif
+
 MKGDB.or1k=	no
 
 # No kernel modules for or1k (yet)
