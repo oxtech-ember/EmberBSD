@@ -46,6 +46,7 @@ Register only providers whose prerequisites the adapter can meet.
 | Station actions and connected scans | `ic_sta_mgmt`; `ieee80211_sta_scan_begin`, `ieee80211_sta_scan_report`, `ieee80211_sta_scan_release` | [Station management](station-management.md): selected security, action directions, peer/generation/cookie checks, and physical drain before scan replacement |
 | Strict STA QoS | `ic_wme.wme_sta_apply` | [WME](net80211-wme.md#synchronous-sta-apply), [TXOP](net80211-txop.md): validate all queues, apply synchronously, commit shared state only after success |
 | HT and VHT admission | `ic_ht20_admit`, `ic_vht_admit` | [HT provider header](../ieee80211_ht20.h), [VHT contract](net80211-vht-ies.md): current local readiness and channel profile; no capability from scan observations alone |
+| HE (802.11ax) admission | `ic_he_admit` | [HE contract](net80211-he-ies.md): a qualified local HE profile beside an HT offer; HE commits only from a complete response |
 | Raw BlockAck and aggregation | `ic_rxba_ops`, `ieee80211_txba_request`, `ieee80211_txba_window` | [RX/TX BA](net80211-rxba.md), [A-MSDU](net80211-amsdu.md): bounded scheduling, session lifetime, reordering before crypto replay, and explicit hardware aggregation |
 | Firmware-decapsulated reorder | `ieee80211_rxba_offload_*` | [Offload receiver](net80211-rxba.md#firmware-offload-receiver): complete packet chains, explicit session/key/association generations, and final current-generation delivery check |
 | Probe and transmit withdrawal | `ic_scan_probe_admit`, `ic_sta_quiet`, `ic_sta_csa` | [Probe policy](net80211-scan-probes.md), [TX quiet](../../dev/ic/docs/rtw88-tx-quiet.md): bound probe admission and close TX synchronously before deferred recovery |
@@ -82,7 +83,7 @@ Use the check commands documented with the affected contract; do not create a se
 | Station selection or event identity | [Association lifecycle fixtures](../tests/assoc-lifecycle.py), canonical prepared WPA source selected with `EMBER_WPA_SOURCE` |
 | Request validation, native SAE, key retirement | [SAE checks](sae.md), [crypto](net80211-crypto.md), [BIP](net80211-bip.md) |
 | Action transport or scan cancellation | [Station and adapter fixtures](station-management.md#software-checks) |
-| QoS, HT/VHT, aggregation | [WME checks](net80211-wme.md#host-source-contracts), [VHT checks](net80211-vht-ies.md#software-contracts), [BA checks](net80211-rxba.md#source-checks) |
+| QoS, HT/VHT/HE, aggregation | [WME checks](net80211-wme.md#host-source-contracts), [VHT checks](net80211-vht-ies.md#software-contracts), [HE checks](net80211-he-ies.md#source-checks), [BA checks](net80211-rxba.md#source-checks) |
 
 Review the selected adapter's actual callback and teardown path, not only a pure parser.
 Then build the affected kernel and matching modules with the selected SDK.

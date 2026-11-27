@@ -14,6 +14,8 @@ text=(src/'sys/net80211/ieee80211_rxba.c').read_text()
 (out/'net80211').mkdir(exist_ok=True)
 (out/'net80211/ieee80211_vht_ies.h').write_text(
  (src/'sys/net80211/ieee80211_vht_ies.h').read_text())
+(out/'net80211/ieee80211_he_ies.h').write_text(
+ (src/'sys/net80211/ieee80211_he_ies.h').read_text())
 parts=[text[:text.index('#include')]]
 for name in ['rxba_slot','ieee80211_rxba_tid']+(['ieee80211_rxba_candidate'] if response else []):
  parts.append(re.search(r'^struct '+name+r' \{.*?^};',text,re.M|re.S).group())

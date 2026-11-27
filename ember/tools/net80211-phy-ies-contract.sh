@@ -39,6 +39,8 @@ if [ -f "$src/sys/net80211/ieee80211_phy_ies.c" ]; then
     printf '#include <string.h>\n#include <stdint.h>\n' > "$work/sys/systm.h"
     ln -s "$src/sys/net80211/ieee80211_phy_ies.h" "$work/net80211/ieee80211_phy_ies.h"
     ln -s "$src/sys/net80211/ieee80211_beacon_ies.h" "$work/net80211/ieee80211_beacon_ies.h"
+    ln -s "$src/sys/net80211/ieee80211_he_ies.h" "$work/net80211/ieee80211_he_ies.h"
+    ln -s "$src/sys/net80211/ieee80211_vht_ies.h" "$work/net80211/ieee80211_vht_ies.h"
     extra="$src/sys/net80211/ieee80211_phy_ies.c $src/sys/net80211/ieee80211_beacon_ies.c"
 fi
 python3 "$src/ember/tools/net80211-phy-ies-extract.py" "$src" "$work"

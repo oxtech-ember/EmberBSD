@@ -81,6 +81,8 @@ parts.extend([
     "#define IEEE80211_ASSOC_EPOCH_UNLOCK(ic) ((void)(ic))",
     "#endif",
 ])
+(out / "net80211").mkdir(exist_ok=True)
+(out / "net80211" / "ieee80211_he_ies.h").write_text(read("sys/net80211/ieee80211_he_ies.h"))
 (out / "native-wme-types.inc").write_text("\n".join(parts))
 
 ht = read("sys/net80211/ieee80211_ht20.c")
@@ -92,6 +94,8 @@ parts.append(size_helper.replace("size_t\nieee80211_phy_ies_size",
                                  "static size_t\nieee80211_phy_ies_size", 1))
 vht = read("sys/net80211/ieee80211_vht_ies.c")
 parts.append(vht[vht.index("static uint16_t"):])
+he = read("sys/net80211/ieee80211_he_ies.c")
+parts.append(he[he.index("static uint16_t"):])
 proto_source = read("sys/net80211/ieee80211_proto.c")
 parts.append(proto_source[proto_source.index("typedef struct phyParamType"):proto_source.index("void\nieee80211_wme_initparams")])
 parts.append("#undef IEEE80211_NO_HOSTAP\n#define HIGH_PRI_SWITCH_THRESH 10\nvoid ieee80211_wme_reset(struct ieee80211_node *);\n")
@@ -140,6 +144,7 @@ for name, result in (("ieee80211_crypto_getucastkey", "struct ieee80211_key *"),
         parts.append(function(output, "ieee80211_ht20_request_offer", "static int"))
         parts.append(function(output, "ieee80211_vht_basic_rates_supported", "static int"))
         parts.append(function(output, "ieee80211_vht_request_prepare", "static int"))
+        parts.append(function(output, "ieee80211_he_request_prepare", "static int"))
         parts.append(function(output, "ieee80211_vht_request_offer", "static int"))
     parts.append(function(output, name, result))
 parts.append(re.search(r"^#define\s+IEEE80211_CHAN_PASSIVE\s+.*$", read("sys/net80211/_ieee80211.h"), re.M).group())

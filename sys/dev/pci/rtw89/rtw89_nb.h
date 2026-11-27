@@ -68,6 +68,16 @@ struct rtw89_nb_ht {
 	uint16_t	vht_map;	/* TX VHT-MCS map */
 	unsigned int	width;		/* 20, 40 or 80 MHz */
 	unsigned int	center;		/* center channel at 40 or 80 MHz */
+	/* HE (802.11ax): the words of the AP and the negotiated TX map. */
+	bool		he;
+	uint8_t		he_mac[6];
+	uint8_t		he_phy[11];
+	uint16_t	he_map;		/* TX HE-MCS map, VHT coding */
+	uint8_t		he_ppe_len;
+	uint8_t		he_ppe[25];
+	uint8_t		he_bss_color;	/* BSS Color Information octet */
+	uint32_t	he_params;	/* HE Operation Parameters */
+	uint16_t	he_basic_map;
 };
 
 struct rtw89_nb_bss {

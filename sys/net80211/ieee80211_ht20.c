@@ -28,6 +28,10 @@ ieee80211_ht20_optional(const void *data, size_t len)
 		if (len < 2 || p[1] > len - 2)
 			return 0;
 		size = (size_t)p[1] + 2;
+		/* A supplicant HE Capabilities element would duplicate ours. */
+		if (p[0] == IEEE80211_ELEMID_EXTENSION && p[1] >= 1 &&
+		    p[2] == IEEE80211_ELEMID_EXT_HE_CAP)
+			return EINVAL;
 		/* Legacy Broadcom HT vendor IEs. WME/RSN are unrelated. */
 		if (p[0] == 221 && p[1] >= 4 && p[2] == 0 && p[3] == 0x90 &&
 		    p[4] == 0x4c && (p[5] == 0x33 || p[5] == 0x34))
@@ -149,6 +153,7 @@ ieee80211_ht20_offer(struct ieee80211com *ic, struct ieee80211_node *ni,
 	h->offered = 1;
 	ic->ic_ht20_diag.offers++;
 	memset(&h->vht, 0, sizeof(h->vht));
+	memset(&h->he, 0, sizeof(h->he));
 	/* Bind the offer to the channel the request admitted. */
 	if (vht != NULL && vht_chan != NULL) {
 		h->vht.local = *vht;
@@ -156,6 +161,61 @@ ieee80211_ht20_offer(struct ieee80211com *ic, struct ieee80211_node *ni,
 		h->vht.offered = 1;
 		ic->ic_ht20_diag.vht_offers++;
 	}
+}
+
+void
+ieee80211_ht20_he_offer(struct ieee80211com *ic, struct ieee80211_node *ni,
+    const struct ieee80211_he_cap *cap, unsigned width_mhz)
+{
+	struct ieee80211_ht20_node *h = &ni->ni_ht20;
+
+	/* Only beside the HT offer of the same queued request. */
+	if (cap == NULL || !h->offered || h->offer_attempt != h->attempt ||
+	    ni != ic->ic_bss || ieee80211_he_local_check(cap) != 0)
+		return;
+	h->he.local = *cap;
+	h->he.width_mhz = width_mhz;
+	h->he.offered = 1;
+	ic->ic_ht20_diag.he_offers++;
+}
+
+/*
+ * Commit HE when the response carries complete HE Capabilities and HE
+ * Operation for a queued HE offer. A malformed or missing HE element keeps
+ * the HT/VHT result: HE is optional for the association.
+ */
+static void
+ht20_he_commit(struct ieee80211_ht20_node *candidate,
+    const struct ieee80211_ht20_node *offer, const uint8_t *p, size_t len,
+    unsigned smps)
+{
+	struct ieee80211_he_ies he;
+
+	memset(&candidate->he, 0, sizeof(candidate->he));
+	if (!offer->he.offered || ieee80211_he_ies_parse(&he, p, len) != 0 ||
+	    !he.cap_present || !he.operation_present)
+		return;
+	/* A 40/80 MHz offer is bound to the committed VHT channel. */
+	if (offer->he.width_mhz != 20 && (!candidate->vht.valid ||
+	    candidate->vht.channel.width_mhz != offer->he.width_mhz))
+		return;
+	candidate->he.local = offer->he.local;
+	candidate->he.peer = he.cap;
+	candidate->he.operation = he.operation;
+	candidate->he.width_mhz = offer->he.width_mhz;
+	candidate->he.maps.tx_map = ieee80211_vht_mcs_intersect(
+	    offer->he.local.tx_map80, he.cap.rx_map80);
+	candidate->he.maps.rx_map = ieee80211_vht_mcs_intersect(
+	    offer->he.local.rx_map80, he.cap.tx_map80);
+	/* As for HT-MCS: one stream unless the AP disabled SMPS. */
+	if (smps != 3)
+		candidate->he.maps.tx_map |= 0xfffc;
+	if ((candidate->he.maps.tx_map & 3) == 3 ||
+	    (candidate->he.maps.rx_map & 3) == 3) {
+		memset(&candidate->he, 0, sizeof(candidate->he));
+		return;
+	}
+	candidate->he.valid = 1;
 }
 
 /*
@@ -250,9 +310,9 @@ ieee80211_ht20_response(struct ieee80211com *ic, struct ieee80211_node *ni,
 	struct ieee80211_vht_cap local_vht;
 	struct ieee80211_vht_channel vht_chan;
 	uint8_t phy_ies[IEEE80211_PHY_IES_MAXLEN];
-	const uint8_t *cap = NULL, *op = NULL;
+	const uint8_t *cap = NULL, *op = NULL, *p0 = p;
 	uint16_t rx, basic, caps, tx;
-	size_t size, phy_len;
+	size_t size, phy_len, len0 = len;
 	unsigned i, smps;
 	int vht_phy_overflow;
 
@@ -359,7 +419,10 @@ ieee80211_ht20_response(struct ieee80211com *ic, struct ieee80211_node *ni,
 		    local_vht.rx_map, vht.cap.tx_map);
 		candidate.vht.valid = 1;
 	}
+	ht20_he_commit(&candidate, h, p0, len0, smps);
 	ni->ni_ht20 = candidate;
+	if (candidate.he.valid)
+		ic->ic_ht20_diag.he++;
 	ic->ic_ht20_diag.ht++;
 	if (candidate.vht.valid)
 		ic->ic_ht20_diag.vht++;

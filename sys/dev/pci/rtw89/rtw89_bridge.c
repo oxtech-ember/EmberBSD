@@ -75,6 +75,7 @@ struct rtw89_nb {
 static struct rtw89_nb *rtw89_nb_attaching;
 
 static void rtw89_nb_wme_work(struct work_struct *);
+static void rtw89_nb_fill_he(struct rtw89_nb *, const struct rtw89_nb_ht *);
 
 static inline struct rtw89_nb *
 hw_to_nb(struct ieee80211_hw *hw)
@@ -818,6 +819,7 @@ rtw89_nb_fill_ht(struct rtw89_nb *nb, const struct rtw89_nb_ht *ht)
 
 	memset(hc, 0, sizeof(*hc));
 	memset(vc, 0, sizeof(*vc));
+	rtw89_nb_fill_he(nb, ht);
 	if (!ht->ht)
 		return;
 	hc->ht_supported = true;
@@ -840,6 +842,11 @@ rtw89_nb_fill_ht(struct rtw89_nb *nb, const struct rtw89_nb_ht *ht)
 			if (((ht->vht_map >> (2 * i)) & 0x3) != 0x3)
 				nss = i + 1;
 	}
+	if (ht->he) {
+		for (nss = 0, i = 0; i < 8; i++)
+			if (((ht->he_map >> (2 * i)) & 0x3) != 0x3)
+				nss = i + 1;
+	}
 	sta->deflink.rx_nss = nss != 0 ? nss : 1;
 	switch (ht->width) {
 	case 80:
@@ -852,6 +859,48 @@ rtw89_nb_fill_ht(struct rtw89_nb *nb, const struct rtw89_nb_ht *ht)
 		sta->deflink.bandwidth = IEEE80211_STA_RX_BW_20;
 		break;
 	}
+}
+
+/*
+ * HE: the firmware rate adaptation reads the HE words of the AP, and the
+ * MAC reads the BSS color and HE Operation of the BSS.  Keep only the AP
+ * bits that this station uses with it: the width set, LDPC reception and
+ * the PPE Thresholds or nominal padding.  STBC, DCM and beamforming stay
+ * disabled.  The maps are the negotiated TX map in both directions.
+ */
+static void
+rtw89_nb_fill_he(struct rtw89_nb *nb, const struct rtw89_nb_ht *ht)
+{
+	struct ieee80211_sta_he_cap *he = &nb->sta->deflink.he_cap;
+	struct ieee80211_bss_conf *bss = &nb->vif->bss_conf;
+
+	memset(he, 0, sizeof(*he));
+	bss->he_support = false;
+	memset(&bss->he_bss_color, 0, sizeof(bss->he_bss_color));
+	memset(&bss->he_oper, 0, sizeof(bss->he_oper));
+	if (!ht->ht || !ht->he)
+		return;
+	he->has_he = true;
+	he->he_cap_elem.phy_cap_info[0] = ht->he_phy[0] & 0x1e;
+	he->he_cap_elem.phy_cap_info[1] = ht->he_phy[1] &
+	    IEEE80211_HE_PHY_CAP1_LDPC_CODING_IN_PAYLOAD;
+	he->he_cap_elem.phy_cap_info[6] = ht->he_phy[6] &
+	    IEEE80211_HE_PHY_CAP6_PPE_THRESHOLD_PRESENT;
+	he->he_cap_elem.phy_cap_info[9] = ht->he_phy[9] &
+	    IEEE80211_HE_PHY_CAP9_NOMINAL_PKT_PADDING_MASK;
+	he->he_mcs_nss_supp.rx_mcs_80 = cpu_to_le16(ht->he_map);
+	he->he_mcs_nss_supp.tx_mcs_80 = cpu_to_le16(ht->he_map);
+	he->he_mcs_nss_supp.rx_mcs_160 = cpu_to_le16(0xffff);
+	he->he_mcs_nss_supp.tx_mcs_160 = cpu_to_le16(0xffff);
+	he->he_mcs_nss_supp.rx_mcs_80p80 = cpu_to_le16(0xffff);
+	he->he_mcs_nss_supp.tx_mcs_80p80 = cpu_to_le16(0xffff);
+	memcpy(he->ppe_thres, ht->he_ppe,
+	    MIN(ht->he_ppe_len, sizeof(he->ppe_thres)));
+	bss->he_support = true;
+	bss->he_bss_color.color = ht->he_bss_color & 0x3f;
+	bss->he_bss_color.enabled = (ht->he_bss_color & 0x80) == 0;
+	bss->he_oper.params = ht->he_params;
+	bss->he_oper.nss_set = ht->he_basic_map;
 }
 
 /* Tune the current primary channel to the negotiated 40 or 80 MHz width. */
@@ -962,6 +1011,11 @@ rtw89_nb_bss_leave(struct rtw89_nb *nb)
 	hw->ops->bss_info_changed(hw, nb->vif, &nb->vif->bss_conf,
 	    BSS_CHANGED_BSSID);
 	nb->vif->bss_conf.bssid = NULL;
+	nb->vif->bss_conf.he_support = false;
+	memset(&nb->vif->bss_conf.he_bss_color, 0,
+	    sizeof(nb->vif->bss_conf.he_bss_color));
+	memset(&nb->vif->bss_conf.he_oper, 0,
+	    sizeof(nb->vif->bss_conf.he_oper));
 	/* The next BSS can be without WME: drop the EDCA of the old AP. */
 	spin_lock(&nb->wme_lock);
 	nb->wme_pending = false;

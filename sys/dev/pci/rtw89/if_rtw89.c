@@ -178,6 +178,8 @@ static int	rtw89_ht20_admit(struct ieee80211com *,
 		    struct ieee80211_ht20_profile *);
 static int	rtw89_vht_admit(struct ieee80211com *,
 		    const struct ieee80211_vht_channel *, struct ieee80211_vht_cap *);
+static int	rtw89_he_admit(struct ieee80211com *, unsigned,
+		    struct ieee80211_he_cap *);
 static int	rtw89_wme_apply(struct ieee80211com *,
 		    const struct chanAccParams *, unsigned);
 static uint64_t	rtw89_rxba_now(struct ieee80211com *);
@@ -392,6 +394,7 @@ rtw89_attach_hook(device_t self)
 	ic->ic_rxba_ops = &rtw89_rxba_ops;
 	ic->ic_ht20_admit = rtw89_ht20_admit;
 	ic->ic_vht_admit = rtw89_vht_admit;
+	ic->ic_he_admit = rtw89_he_admit;
 	ic->ic_wme.wme_sta_apply = rtw89_wme_apply;
 	ic->ic_caps |= IEEE80211_C_WME;
 	ic->ic_flags |= IEEE80211_F_WME;
@@ -867,6 +870,30 @@ rtw89_vht_admit(struct ieee80211com *ic,
 }
 
 /*
+ * HE (802.11ax) beside the HT offer: 20 MHz, or the 40/80 MHz VHT channel
+ * in 5 GHz.  MCS 0-11 on each stream, LDPC reception and a nominal packet
+ * padding of 16 us, since the station sends no PPE Thresholds.  No MAC
+ * capability: the station uses no TWT, +HTC reception or multi-user UL;
+ * rtw89 sends OM Control with UL MU disabled once HE is up.
+ */
+static int
+rtw89_he_admit(struct ieee80211com *ic, unsigned width,
+    struct ieee80211_he_cap *cap)
+{
+	struct rtw89_softc *sc = ic->ic_ifp->if_softc;
+
+	memset(cap, 0, sizeof(*cap));
+	if (sc == NULL || sc->sc_nb == NULL || !sc->sc_running ||
+	    sc->sc_csa_quiet || (width != 20 && width != 40 && width != 80))
+		return EOPNOTSUPP;
+	cap->phy[0] = width == 20 ? 0 : IEEE80211_HE_PHY0_CW_40_80_5G;
+	cap->phy[1] = IEEE80211_HE_PHY1_LDPC;
+	cap->phy[9] = IEEE80211_HE_PHY9_PADDING_16US;
+	cap->rx_map80 = cap->tx_map80 = sc->sc_nss == 2 ? 0xfffa : 0xfffe;
+	return 0;
+}
+
+/*
  * net80211 applies the EDCA parameters of the AP under its beacon lock.
  * The bridge keeps them and programs the MAC from its work queue.
  */
@@ -917,6 +944,17 @@ rtw89_fill_ht(struct rtw89_softc *sc, struct rtw89_nb_ht *ht)
 		ht->width = h->vht.channel.width_mhz;
 		ht->center = h->vht.channel.center;
 	}
+	if (h->he.valid && h->he.width_mhz == ht->width) {
+		ht->he = true;
+		memcpy(ht->he_mac, h->he.peer.mac, sizeof(ht->he_mac));
+		memcpy(ht->he_phy, h->he.peer.phy, sizeof(ht->he_phy));
+		ht->he_map = h->he.maps.tx_map;
+		ht->he_ppe_len = MIN(h->he.peer.ppe_len, sizeof(ht->he_ppe));
+		memcpy(ht->he_ppe, h->he.peer.ppe, ht->he_ppe_len);
+		ht->he_bss_color = h->he.operation.bss_color;
+		ht->he_params = h->he.operation.params;
+		ht->he_basic_map = h->he.operation.basic_map;
+	}
 }
 
 static void
@@ -928,6 +966,15 @@ rtw89_print_link(struct rtw89_softc *sc, const struct rtw89_nb_ht *ht)
 	if (!ht->ht)
 		aprint_normal_dev(sc->sc_dev, "legacy link on channel %u\n",
 		    chan);
+	else if (ht->he && ht->width == 20)
+		aprint_normal_dev(sc->sc_dev, "HE20 link on channel %u, "
+		    "TX map 0x%04x, BSS color %u, LDPC %u\n", chan, ht->he_map,
+		    ht->he_bss_color & 0x3f, (ht->he_phy[1] & 0x20) != 0);
+	else if (ht->he)
+		aprint_normal_dev(sc->sc_dev, "HE%u link on channel %u "
+		    "(center %u), TX map 0x%04x, BSS color %u, LDPC %u\n",
+		    ht->width, chan, ht->center, ht->he_map,
+		    ht->he_bss_color & 0x3f, (ht->he_phy[1] & 0x20) != 0);
 	else if (!ht->vht)
 		aprint_normal_dev(sc->sc_dev,
 		    "HT20 link on channel %u, TX MCS 0x%04x, SGI %u\n", chan,
@@ -1715,12 +1762,14 @@ rtw89_sysctl_link(SYSCTLFN_ARGS)
 		if (len < RTW89_SYSCTL_LINK_LEN)
 			len += snprintf(buf + len, RTW89_SYSCTL_LINK_LEN - len,
 			    " hw 0x%03x rx_hw 0x%03x rssi %d;"
-			    " ht20 offers %u vht_offers %u ht %u vht %u legacy %u"
+			    " ht20 offers %u vht_offers %u he_offers %u ht %u vht %u"
+			    " he %u legacy %u"
 			    " bad %u resets %u reset %u/%u state_fail %u/%u"
 			    " fail %u/%u;"
 			    " txba req %u acc %u ref %u tmo %u delba %u inv %u",
 			    lk.tx_hw_rate, lk.rx_hw_rate, lk.rssi,
-			    d.offers, d.vht_offers, d.ht, d.vht, d.legacy, d.bad,
+			    d.offers, d.vht_offers, d.he_offers, d.ht, d.vht, d.he,
+			    d.legacy, d.bad,
 			    d.resets, d.reset_reason, d.reset_clause,
 			    d.state_fail, d.state_reason, d.failures,
 			    d.failure_reason, t.requests, t.accepts,

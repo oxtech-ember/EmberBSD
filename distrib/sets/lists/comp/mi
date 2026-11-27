@@ -2765,6 +2765,7 @@
 ./usr/include/net80211/ieee80211_beacon_ies.h	comp-c-include
 ./usr/include/net80211/ieee80211_bip.h	comp-c-include
 ./usr/include/net80211/ieee80211_crypto.h	comp-c-include
+./usr/include/net80211/ieee80211_he_ies.h	comp-c-include
 ./usr/include/net80211/ieee80211_ht20.h	comp-c-include
 ./usr/include/net80211/ieee80211_ioctl.h	comp-c-include
 ./usr/include/net80211/ieee80211_netbsd.h	comp-c-include
