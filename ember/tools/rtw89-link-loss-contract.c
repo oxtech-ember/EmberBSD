@@ -141,6 +141,8 @@ struct rtw89_softc {
 	struct callout sc_scan_to;
 	struct callout sc_rxba_to;
 	bool sc_scanning;
+	struct mutex sc_tunelock;
+	bool sc_offchan;
 	void *sc_tx_sih;
 	uint8_t *sc_txbuf;
 };
@@ -444,6 +446,17 @@ rtw89_nb_tx_quiet(void *nb, bool quiet)
 	resume_calls++;
 	event(7);
 	return resume_error;
+}
+
+static unsigned onchan_calls;
+
+static int
+rtw89_nb_onchan(void *nb, bool restore)
+{
+	(void)nb;
+	(void)restore;
+	onchan_calls++;
+	return 0;
 }
 
 static void

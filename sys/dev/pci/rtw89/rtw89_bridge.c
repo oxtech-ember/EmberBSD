@@ -62,6 +62,10 @@ struct rtw89_nb {
 	struct ieee80211_channel chan;
 	unsigned int		 filter;
 	uint32_t		 quiet_tx_en;
+	/* Operating channel saved for a connected-scan listen period. */
+	struct ieee80211_channel oper_chan;
+	struct cfg80211_chan_def oper_def;
+	bool			 offchan;
 	bool			 started;
 	bool			 vif_added;
 	bool			 tx_quiet;
@@ -726,6 +730,7 @@ rtw89_nb_stop(struct rtw89_nb *nb)
 	}
 	hw->ops->stop(hw);
 	nb->started = false;
+	nb->offchan = false;
 	nb->tx_quiet = false;
 	nb->quiet_tx_en = 0;
 }
@@ -770,6 +775,47 @@ rtw89_nb_scan_end(struct rtw89_nb *nb)
 		return;
 	nb->hw->ops->sw_scan_complete(nb->hw, nb->vif);
 	rtw89_nb_configure_filter(nb, 0, FIF_BCN_PRBRESP_PROMISC);
+}
+
+/*
+ * Connected scan: listen on a 20 MHz channel and keep the association.
+ * mac80211 does the same for a software scan: the scan hooks first, then
+ * the channel. The first call saves the operating channel and width.
+ */
+int
+rtw89_nb_offchan(struct rtw89_nb *nb, unsigned int chan, unsigned int freq)
+{
+
+	if (!nb->started)
+		return ENXIO;
+	if (!nb->offchan) {
+		nb->oper_chan = nb->chan;
+		nb->oper_def = nb->hw->conf.chandef;
+		rtw89_nb_scan_start(nb);
+		nb->offchan = true;
+	}
+	return rtw89_nb_set_channel(nb, chan, freq);
+}
+
+/* Restore the saved operating channel and width if asked, then end the scan. */
+int
+rtw89_nb_onchan(struct rtw89_nb *nb, bool restore)
+{
+	struct ieee80211_hw *hw = nb->hw;
+	int error = 0;
+
+	if (!nb->started || !nb->offchan)
+		return 0;
+	nb->offchan = false;
+	if (restore) {
+		nb->chan = nb->oper_chan;
+		hw->conf.chandef = nb->oper_def;
+		hw->conf.chandef.chan = &nb->chan;
+		nb->vif->bss_conf.chandef = hw->conf.chandef;
+		error = -hw->ops->config(hw, IEEE80211_CONF_CHANGE_CHANNEL);
+	}
+	rtw89_nb_scan_end(nb);
+	return error;
 }
 
 static void

@@ -112,6 +112,16 @@ Local capabilities:
   the AP. The MAC then answers the NDP sounding of the AP with a compressed
   beamforming report, and the AP can steer its downlink to the station.
   The link line shows `BFee 1` in this case.
+- BSS Transition Management (802.11v) through the net80211
+  [host-MLME station management owner](../../../net80211/docs/station-management.md#host-mlme-station-management).
+  net80211 forwards the BTM Request of the AP to the supplicant, sends the
+  BTM Response and runs the passive connected scan. `rtwx` supplies
+  `sso_tune`: it holds TX in the send queues, pauses beacon supervision,
+  calls the rtw89 software-scan hooks and tunes a 20 MHz channel; on return
+  it restores the saved operating channel and width. `sc_tunelock`
+  serializes the tune with the state work and the hardware stop. The
+  receive path gives net80211 the signal in dBm (`ieee80211_input_dbm()`)
+  and passes frames of the listen channel to `ieee80211_sta_soft_rx_scan()`.
 - HT20 with MCS 0-15 on a 2T2R chip (MCS 0-7 on 1T1R), long GI and BCC
   reception, maximum RX A-MPDU 65535 bytes, no MPDU start spacing.
 - VHT at the 40 or 80 MHz channel that the AP announces, MCS 0-9 on each
@@ -213,6 +223,42 @@ events recovered without loss of the link, as with the kernel before the
 change. The peer limited TCP to about 80 Mbit/s in this hour, also to the
 wired interface of the laptop, so the TCP gain is not measured.
 
+### BSS transition, 2026-11-27
+
+The test AP steers dual-band stations from 2.4 GHz to 5 GHz. Before
+this change it sent the station on 2.4 GHz a protected deauthentication
+with reason 4 after 60 seconds. With the change, about 30 seconds after
+the station joined the 2.4 GHz BSS, the supplicant reported
+`WNM: Preferred List Available`, ran a connected scan of about 5 seconds
+and joined the 5 GHz BSS of the same AP as `HE80 link on channel 52`.
+There was no `CTRL-EVENT-DISCONNECTED`. In three runs, ping every 0.2 s
+lost 3.8-4.3 % in 120 s, all in the 6 seconds of scan and transition; the
+longest gap was 1.2 s.
+
+A connected scan of all channels takes about 7 seconds and keeps the
+association. Ping every 0.1 s lost about 11 % during the scan and none
+after it.
+
+A connected scan during a TCP stream to the station stopped the stream,
+and later TCP to the station on TID 0 did not pass. The AP did not
+hold its frames during the absence, and the RX block-ack window of the
+station fell 2^11 or more behind. net80211 now starts the window again
+from the first MPDU after each absence (`ieee80211_rxba_resync()`). With
+this fix a scan in the middle of a 256 MB TCP stream did not stop it, and
+TCP to the station passed after it.
+
+A 16-minute run with a connected scan every 30 seconds alternated one TCP
+connection in each direction over the Wi-Fi link for 15 rounds: 40-92
+Mbit/s to the station and 48-94 Mbit/s from it, lower in the rounds with
+a scan. All 32 scans ended with the association kept, there was no
+disconnection, and ping lost none of 960 replies; its round-trip time
+under load reached 3.1 s. Three L1 SER events recovered.
+
+The AP sent BTM Requests in both directions within 40 seconds after a
+media mode change. One of four transitions failed: the association
+request for the 5 GHz BSS returned `EINVAL`, and the station joined it
+again after a disconnection. The cause is not known yet.
+
 ### HE, 2026-11-27
 
 A kernel with the HE change associated as `HE80 link on channel 52
@@ -241,10 +287,11 @@ at MCS 13-15. One TCP connection moved 74-76 Mbit/s from the laptop and
 43 Mbit/s to it.
 
 This AP refuses several association attempts on 2.4 GHz before it answers
-the 4-way handshake, and 60 seconds after each association it sends a
-protected deauthentication with reason 4 (inactivity), also during TCP
-traffic. The station then joins the 5 GHz BSS. This is AP policy for a
-dual-band station; a long 2.4 GHz run needs an AP without it.
+the 4-way handshake. It steers a dual-band station to 5 GHz with a BSS
+Transition Management Request; see [BSS transition](#bss-transition-2026-11-27).
+Without 802.11v support the station received a protected deauthentication
+with reason 4 after 60 seconds. A long 2.4 GHz run needs an AP without
+band steering.
 
 Roaming and Bluetooth coexistence under load are not tested.
 
@@ -301,7 +348,10 @@ It does not replace kernel or physical-device testing.
 - Software crypto only. WPA3-Personal uses the opt-in common net80211
   SAE/PMF owner; its new software integration has not yet completed physical
   acceptance. See the [consumer matrix](../../../net80211/docs/wpa3-consumers.md).
-- No power save. ASPM, CLKREQ and L1 substates are disabled.
+- No power save. ASPM, CLKREQ and L1 substates are disabled. The
+  connected scan uses the Power Management bit only during its absences.
+- The connected scan is passive and uses the host. The installed firmware
+  has no scan offload. No Neighbor Report or Radio Measurement.
 - Link supervision uses a software watchdog independent of firmware beacon
   reports. Only a complete, structurally valid beacon from the associated AP
   on the selected channel refreshes the deadline; expiry calls

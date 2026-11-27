@@ -140,6 +140,8 @@ void	rtw89_nb_stop(struct rtw89_nb *);
 int	rtw89_nb_set_channel(struct rtw89_nb *, unsigned int, unsigned int);
 void	rtw89_nb_scan_start(struct rtw89_nb *);
 void	rtw89_nb_scan_end(struct rtw89_nb *);
+int	rtw89_nb_offchan(struct rtw89_nb *, unsigned int, unsigned int);
+int	rtw89_nb_onchan(struct rtw89_nb *, bool);
 int	rtw89_nb_bss_join(struct rtw89_nb *, const struct rtw89_nb_bss *);
 int	rtw89_nb_bss_assoc(struct rtw89_nb *, const struct rtw89_nb_bss *);
 void	rtw89_nb_bss_leave(struct rtw89_nb *);

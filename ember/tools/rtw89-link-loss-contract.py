@@ -59,6 +59,8 @@ def main() -> int:
 		"rtw89_nb_queues": "static void\n",
 		"rtw89_sta_quiet": "static void\n",
 		"rtw89_newstate": "static int\n",
+		"rtw89_offchan_end": "static void\n",
+		"rtw89_newstate_locked": "static void\n",
 		"rtw89_newstate_task": "static void\n",
 		"rtw89_tx": "static int\n",
 		"rtw89_stop": "static void\n",

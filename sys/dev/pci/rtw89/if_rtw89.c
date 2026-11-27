@@ -68,6 +68,7 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #include <net80211/ieee80211_beacon_ies.h>
 #include <net80211/ieee80211_var.h>
 #include <net80211/ieee80211_sae.h>
+#include <net80211/ieee80211_sta_soft.h>
 
 #include <dev/pci/pcireg.h>
 #include <dev/pci/pcivar.h>
@@ -130,6 +131,9 @@ struct rtw89_softc {
 	uint64_t		 sc_nsserial;
 	struct callout		 sc_scan_to;
 	bool			 sc_scanning;
+	/* Radio tuning: state work, connected-scan listen and stop. */
+	kmutex_t		 sc_tunelock;
+	bool			 sc_offchan;
 
 	/* HT/VHT provider for net80211 (see rtw89_ht20_admit()). */
 	uint32_t		 sc_ht_generation;
@@ -159,6 +163,11 @@ static void	rtw89_sta_quiet(struct ieee80211com *);
 static void	rtw89_beacon_observe(struct rtw89_softc *, const void *, size_t,
 		    unsigned int);
 static void	rtw89_beacon_state(struct rtw89_softc *, enum ieee80211_state);
+static int	rtw89_sta_tune(struct ieee80211com *, struct ieee80211_channel *);
+
+static const struct ieee80211_sta_soft_ops rtw89_sta_soft_ops = {
+	.sso_tune = rtw89_sta_tune,
+};
 static void	rtw89_csa_scan_resume(struct rtw89_softc *,
 		    enum ieee80211_state);
 static int	rtw89_csa_restart(struct rtw89_softc *);
@@ -267,6 +276,7 @@ rtw89_attach(device_t parent, device_t self, void *aux)
 
 	sc->sc_txbuf = kmem_alloc(RTW89_TXBUF_SIZE, KM_SLEEP);
 	mutex_init(&sc->sc_nslock, MUTEX_DEFAULT, IPL_NET);
+	mutex_init(&sc->sc_tunelock, MUTEX_DEFAULT, IPL_NONE);
 	callout_init(&sc->sc_scan_to, 0);
 	callout_setfunc(&sc->sc_scan_to, rtw89_next_scan, sc);
 	sc->sc_tx_sih = softint_establish(SOFTINT_NET, rtw89_tx_softint, sc);
@@ -398,6 +408,8 @@ rtw89_attach_hook(device_t self)
 	ic->ic_wme.wme_sta_apply = rtw89_wme_apply;
 	ic->ic_caps |= IEEE80211_C_WME;
 	ic->ic_flags |= IEEE80211_F_WME;
+	if (ieee80211_sta_soft_attach(ic, &rtw89_sta_soft_ops) != 0)
+		aprint_error_dev(self, "no station management\n");
 	ieee80211_media_init(ic, ieee80211_media_change,
 	    ieee80211_media_status);
 	ieee80211_wme_initparams(ic);
@@ -425,6 +437,7 @@ rtw89_detach(device_t self, int flags)
 		if (ifp->if_softc != NULL) {
 			rtw89_stop(ifp, 1);
 			pmf_device_deregister(self);
+			ieee80211_sta_soft_detach(ic);
 			ieee80211_ifdetach(ic);
 			if_detach(ifp);
 			ifp->if_softc = NULL;
@@ -451,6 +464,7 @@ rtw89_detach(device_t self, int flags)
 		mutex_destroy(&sc->sc_rxba_lock);
 		kmem_free(sc->sc_txbuf, RTW89_TXBUF_SIZE);
 		mutex_destroy(&sc->sc_nslock);
+		mutex_destroy(&sc->sc_tunelock);
 	}
 	if (sc->sc_ih != NULL)
 		rtw89_nb_free_irq(self);
@@ -634,6 +648,10 @@ rtw89_nb_rx(void *arg, const void *frame, size_t len, int rssi,
 		if_statinc(ifp, if_ierrors);
 		return;
 	}
+	/* A connected-scan listen period consumes frames of its channel. */
+	if (ieee80211_sta_soft_rx_scan(ic, frame, len, freq, MAX(rssi + 100, 0),
+	    rssi))
+		return;
 	rtw89_beacon_observe(sc, frame, len, freq);
 	MGETHDR(m, M_DONTWAIT, MT_DATA);
 	if (m != NULL && len > MHLEN) {
@@ -655,7 +673,7 @@ rtw89_nb_rx(void *arg, const void *frame, size_t len, int rssi,
 	m_set_rcvif(m, ifp);
 	s = splnet();
 	ni = ieee80211_find_rxnode(ic, mtod(m, struct ieee80211_frame_min *));
-	ieee80211_input(ic, m, ni, MAX(rssi + 100, 0), 0);
+	ieee80211_input_dbm(ic, m, ni, MAX(rssi + 100, 0), rssi, 0);
 	ieee80211_free_node(ni);
 	splx(s);
 }
@@ -715,8 +733,10 @@ rtw89_nb_queues(void *arg, bool wake)
 	struct rtw89_softc *sc = arg;
 
 	sc->sc_txqueue_stopped = !wake;
-	sc->sc_txstopped = sc->sc_txqueue_stopped || sc->sc_csa_quiet;
-	if (wake && sc->sc_running)
+	/* A connected-scan listen period keeps station TX in the queues. */
+	sc->sc_txstopped = sc->sc_txqueue_stopped || sc->sc_csa_quiet ||
+	    sc->sc_offchan;
+	if (wake && sc->sc_running && !sc->sc_offchan)
 		softint_schedule(sc->sc_tx_sih);
 }
 
@@ -1253,10 +1273,87 @@ rtw89_csa_restart(struct rtw89_softc *sc)
 	return 0;
 }
 
+/*
+ * End a connected-scan listen period. Return to the BSS channel and width
+ * while the station is still in RUN. The caller holds sc_tunelock.
+ */
+static void
+rtw89_offchan_end(struct rtw89_softc *sc)
+{
+	struct ieee80211com *ic = &sc->sc_ic;
+	int error, s;
+
+	if (!sc->sc_offchan)
+		return;
+	error = rtw89_nb_onchan(sc->sc_nb,
+	    sc->sc_running && ic->ic_state == IEEE80211_S_RUN);
+	if (error)
+		aprint_error_dev(sc->sc_dev,
+		    "can't return to the BSS channel (%d)\n", error);
+	s = splnet();
+	sc->sc_offchan = false;
+	sc->sc_txstopped = sc->sc_txqueue_stopped || sc->sc_csa_quiet;
+	/* A new beacon period starts on the BSS channel. */
+	rtw89_beacon_state(sc, ic->ic_state);
+	splx(s);
+	if (sc->sc_running)
+		softint_schedule(sc->sc_tx_sih);
+}
+
+/* net80211 connected scan (ieee80211_sta_soft_ops). */
+static int
+rtw89_sta_tune(struct ieee80211com *ic, struct ieee80211_channel *c)
+{
+	struct rtw89_softc *sc = ic->ic_ifp->if_softc;
+	bool busy;
+	int error, s;
+
+	mutex_enter(&sc->sc_tunelock);
+	if (c == NULL) {
+		rtw89_offchan_end(sc);
+		mutex_exit(&sc->sc_tunelock);
+		return 0;
+	}
+	mutex_enter(&sc->sc_nslock);
+	busy = sc->sc_nspending || sc->sc_stopping;
+	mutex_exit(&sc->sc_nslock);
+	/* A queued state change owns the radio first. */
+	if (busy || !sc->sc_running || sc->sc_nb == NULL || sc->sc_csa_quiet ||
+	    ic->ic_state != IEEE80211_S_RUN) {
+		mutex_exit(&sc->sc_tunelock);
+		return EBUSY;
+	}
+	if (!sc->sc_offchan) {
+		s = splnet();
+		sc->sc_offchan = true;
+		sc->sc_txstopped = true;
+		sc->sc_beacon_active = false;
+		splx(s);
+	}
+	error = rtw89_nb_offchan(sc->sc_nb, ieee80211_chan2ieee(ic, c),
+	    c->ic_freq);
+	mutex_exit(&sc->sc_tunelock);
+	return error;
+}
+
+static void rtw89_newstate_locked(struct rtw89_softc *);
+
+/* State work and the connected scan tune the radio one at a time. */
 static void
 rtw89_newstate_task(struct work *wk, void *arg)
 {
 	struct rtw89_softc *sc = arg;
+
+	(void)wk;
+	mutex_enter(&sc->sc_tunelock);
+	rtw89_offchan_end(sc);
+	rtw89_newstate_locked(sc);
+	mutex_exit(&sc->sc_tunelock);
+}
+
+static void
+rtw89_newstate_locked(struct rtw89_softc *sc)
+{
 	struct ieee80211com *ic = &sc->sc_ic;
 	struct ifnet *ifp = &sc->sc_ec.ec_if;
 	struct rtw89_nb_bss bss;
@@ -1264,7 +1361,6 @@ rtw89_newstate_task(struct work *wk, void *arg)
 	uint64_t serial;
 	int nsarg, s, error;
 
-	(void)wk;
 	mutex_enter(&sc->sc_nslock);
 	nstate = sc->sc_nsstate;
 	nsarg = sc->sc_nsarg;
@@ -1650,7 +1746,11 @@ rtw89_stop(struct ifnet *ifp, int disable)
 	ifp->if_timer = 0;
 	rtw89_rxba_cancel(ic);
 	callout_halt(&sc->sc_rxba_to, NULL);
+	/* A connected-scan tune cannot run while the hardware stops. */
+	mutex_enter(&sc->sc_tunelock);
+	sc->sc_offchan = false;
 	rtw89_nb_stop(sc->sc_nb);
+	mutex_exit(&sc->sc_tunelock);
 	mutex_enter(&sc->sc_nslock);
 	sc->sc_stopping = false;
 	mutex_exit(&sc->sc_nslock);
