@@ -190,18 +190,24 @@ ATF_TC_BODY(telldir_leak, tc)
  * Origin: EmberBSD (AI-assisted).  getdents(2) resumes at the position
  * of the next entry.  A remove or rename of that entry before the next
  * call must not make the call fail.  FFS and tmpfs returned EINVAL.
+ * ext2fs returned the removed entry.  Run the test cases in a work
+ * directory on each file system to check.
  */
 
 #define	GD_NFILES	64
+#define	GD_BIGNFILES	300
+#define	GD_RUN		100
 #define	GD_SMALLBUF	512
 #define	GD_BIGBUF	65536
+#define	GD_PAGEBUF	4096
+#define	GD_EDGEBUF	4864
 #define	GD_RACE_FILES	300
 #define	GD_RACE_WRITERS	4
 #define	GD_RACE_LOOPS	2000
 
 struct gd_names {
 	size_t	n;
-	char	name[GD_NFILES + 4][MAXNAMLEN + 1];
+	char	name[GD_BIGNFILES + 4][MAXNAMLEN + 1];
 };
 
 static void
@@ -263,25 +269,42 @@ gd_count(const struct gd_names *gn, const char *name)
 	return n;
 }
 
+static void
+gd_remove(const char *dir, const struct gd_names *gn)
+{
+	char path[MAXPATHLEN];
+	size_t i;
+
+	for (i = 0; i < gn->n; i++) {
+		snprintf(path, sizeof(path), "%s/%s", dir, gn->name[i]);
+		(void)unlink(path);
+	}
+	snprintf(path, sizeof(path), "%s/source", dir);
+	(void)unlink(path);
+	ATF_REQUIRE_MSG(rmdir(dir) == 0, "rmdir(%s): %s", dir,
+	    strerror(errno));
+}
+
 /*
- * Read part of the directory with a FIRSTBUF byte buffer, then remove
- * the entry at the position of the next getdents(2) call: unlink it,
- * or rename another file over it.  Read the rest and check that each
- * other entry is returned once.
+ * Read part of a directory of NFILES files with a FIRSTBUF byte buffer.
+ * Then remove the NREMOVE entries from the position of the next
+ * getdents(2) call: unlink them, or rename another file over the first.
+ * Read the rest with a RESTBUF byte buffer and check that each other
+ * entry is returned once.
  */
 static void
-gd_modify_one(const char *dir, bool rename_over, size_t firstbuf)
+gd_modify_one(const char *dir, int nfiles, size_t firstbuf,
+    bool rename_over, size_t nremove, size_t restbuf)
 {
 	static struct gd_names before, all, after;
 	char path[MAXPATHLEN], src[MAXPATHLEN];
-	char next[MAXNAMLEN + 1];
-	size_t i, n;
+	size_t i, j, n, first;
 	int fd;
 
 	memset(&before, 0, sizeof(before));
 	memset(&all, 0, sizeof(all));
 	memset(&after, 0, sizeof(after));
-	gd_create(dir, GD_NFILES);
+	gd_create(dir, nfiles);
 	snprintf(src, sizeof(src), "%s/source", dir);
 	if (rename_over)
 		gd_touch(src);
@@ -297,39 +320,46 @@ gd_modify_one(const char *dir, bool rename_over, size_t firstbuf)
 	for (i = 0; i < all.n; i++)
 		if (strcmp(all.name[i], before.name[before.n - 1]) == 0)
 			break;
-	ATF_REQUIRE_MSG(i + 2 < all.n, "first read returned too much");
-	strlcpy(next, all.name[i + 1], sizeof(next));
+	first = i + 1;
+	ATF_REQUIRE_MSG(first + nremove < all.n,
+	    "first read returned too much");
 
-	snprintf(path, sizeof(path), "%s/%s", dir, next);
-	if (rename_over)
-		ATF_REQUIRE_MSG(rename(src, path) == 0, "rename: %s",
-		    strerror(errno));
-	else
-		ATF_REQUIRE_MSG(unlink(path) == 0, "unlink: %s",
-		    strerror(errno));
+	for (j = first; j < first + nremove; j++) {
+		snprintf(path, sizeof(path), "%s/%s", dir, all.name[j]);
+		if (rename_over)
+			ATF_REQUIRE_MSG(rename(src, path) == 0, "rename: %s",
+			    strerror(errno));
+		else
+			ATF_REQUIRE_MSG(unlink(path) == 0, "unlink: %s",
+			    strerror(errno));
+	}
 
-	while (gd_read(fd, GD_SMALLBUF, &after) > 0)
+	while (gd_read(fd, restbuf, &after) > 0)
 		continue;
 	(void)close(fd);
 
 	for (i = 0; i < all.n; i++) {
-		if (strcmp(all.name[i], next) == 0 ||
-		    strcmp(all.name[i], "source") == 0)
+		if (strcmp(all.name[i], "source") == 0)
 			continue;
 		n = gd_count(&before, all.name[i]) +
 		    gd_count(&after, all.name[i]);
-		ATF_CHECK_MSG(n == 1, "%s returned %zu times (first read "
-		    "%zu bytes)", all.name[i], n, firstbuf);
+		if (i >= first && i < first + nremove)
+			ATF_CHECK_MSG(n <= (rename_over ? 1 : 0),
+			    "removed %s returned %zu times (first read %zu "
+			    "bytes)", all.name[i], n, firstbuf);
+		else
+			ATF_CHECK_MSG(n == 1, "%s returned %zu times (first "
+			    "read %zu bytes)", all.name[i], n, firstbuf);
 	}
 	ATF_CHECK_MSG(gd_count(&after, "source") == 0,
 	    "renamed source returned");
-	ATF_CHECK_MSG(gd_count(&after, next) <= (rename_over ? 1 : 0),
-	    "%s returned %zu times", next, gd_count(&after, next));
+	gd_remove(dir, &all);
 }
 
 /*
  * Vary the first buffer, so that the next entry is also the last entry
- * of a directory block.
+ * of a directory block.  A first buffer of a page or more stops in, at
+ * the end of, or after the first 4 KB ext2fs block.
  */
 static void
 gd_modify_next(const char *base, bool rename_over)
@@ -340,7 +370,39 @@ gd_modify_next(const char *base, bool rename_over)
 	for (firstbuf = GD_SMALLBUF; firstbuf < 2 * GD_SMALLBUF;
 	    firstbuf += 8) {
 		snprintf(dir, sizeof(dir), "%s/d%zu", base, firstbuf);
-		gd_modify_one(dir, rename_over, firstbuf);
+		gd_modify_one(dir, GD_NFILES, firstbuf, rename_over, 1,
+		    GD_SMALLBUF);
+	}
+	for (firstbuf = GD_PAGEBUF; firstbuf < GD_PAGEBUF + GD_SMALLBUF;
+	    firstbuf += 64) {
+		snprintf(dir, sizeof(dir), "%s/d%zu", base, firstbuf);
+		gd_modify_one(dir, GD_BIGNFILES, firstbuf, rename_over, 1,
+		    GD_SMALLBUF);
+	}
+	for (firstbuf = GD_EDGEBUF; firstbuf < GD_EDGEBUF + 80;
+	    firstbuf += 8) {
+		snprintf(dir, sizeof(dir), "%s/d%zu", base, firstbuf);
+		gd_modify_one(dir, GD_BIGNFILES, firstbuf, rename_over, 1,
+		    GD_SMALLBUF);
+	}
+}
+
+/*
+ * Remove a run of entries from the read position to a later block and
+ * read the rest with a small buffer.  The file system must read the
+ * next blocks when it skips all entries of the blocks read.
+ */
+static void
+gd_unlink_run(const char *base)
+{
+	char dir[MAXPATHLEN];
+	size_t firstbuf;
+
+	for (firstbuf = GD_SMALLBUF; firstbuf < GD_PAGEBUF + GD_SMALLBUF;
+	    firstbuf += 256) {
+		snprintf(dir, sizeof(dir), "%s/r%zu", base, firstbuf);
+		gd_modify_one(dir, GD_BIGNFILES, firstbuf, false, GD_RUN,
+		    GD_SMALLBUF);
 	}
 }
 
@@ -412,6 +474,7 @@ ATF_TC_HEAD(getdents_unlink_next, tc)
 
 	atf_tc_set_md_var(tc, "descr", "Check getdents(2) after unlink(2) "
 	    "of the entry at the read position");
+	atf_tc_set_md_var(tc, "timeout", "300");
 }
 
 ATF_TC_BODY(getdents_unlink_next, tc)
@@ -426,12 +489,28 @@ ATF_TC_HEAD(getdents_rename_next, tc)
 
 	atf_tc_set_md_var(tc, "descr", "Check getdents(2) after rename(2) "
 	    "over the entry at the read position");
+	atf_tc_set_md_var(tc, "timeout", "300");
 }
 
 ATF_TC_BODY(getdents_rename_next, tc)
 {
 
 	gd_modify_next(".", true);
+}
+
+ATF_TC(getdents_unlink_run);
+ATF_TC_HEAD(getdents_unlink_run, tc)
+{
+
+	atf_tc_set_md_var(tc, "descr", "Check getdents(2) after unlink(2) "
+	    "of a run of entries from the read position");
+	atf_tc_set_md_var(tc, "timeout", "300");
+}
+
+ATF_TC_BODY(getdents_unlink_run, tc)
+{
+
+	gd_unlink_run(".");
 }
 
 ATF_TC(readdir_race);
@@ -485,6 +564,7 @@ ATF_TC_BODY(getdents_tmpfs, tc)
 	gd_modify_next(GD_TMPFS "/unlink", false);
 	ATF_REQUIRE(mkdir(GD_TMPFS "/rename", 0755) == 0);
 	gd_modify_next(GD_TMPFS "/rename", true);
+	gd_unlink_run(GD_TMPFS);
 	gd_race(GD_TMPFS);
 }
 
@@ -501,6 +581,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, telldir_leak);
 	ATF_TP_ADD_TC(tp, getdents_unlink_next);
 	ATF_TP_ADD_TC(tp, getdents_rename_next);
+	ATF_TP_ADD_TC(tp, getdents_unlink_run);
 	ATF_TP_ADD_TC(tp, readdir_race);
 	ATF_TP_ADD_TC(tp, getdents_tmpfs);
 

@@ -154,7 +154,7 @@ ext2fs_readdir(void *v)
 	} */ *ap = v;
 	struct uio *uio = ap->a_uio;
 	int error;
-	size_t e2fs_count, readcnt;
+	size_t e2fs_count, readcnt, rem;
 	struct vnode *vp = ap->a_vp;
 	struct m_ext2fs *fs = VTOI(vp)->i_e2fs;
 
@@ -163,28 +163,51 @@ ext2fs_readdir(void *v)
 	struct uio auio;
 	struct iovec aiov;
 	void *dirbuf;
-	off_t off = uio->uio_offset;
+	off_t off, startoff, endoff;
 	off_t *cookies = NULL;
 	int nc = 0, ncookies = 0;
 	int e2d_reclen;
+	bool copied;
 
 	if (vp->v_type != VDIR)
 		return ENOTDIR;
-
-	e2fs_count = uio->uio_resid;
-	/* Make sure we don't return partial entries. */
-	e2fs_count -= (uio->uio_offset + e2fs_count) & (fs->e2fs_bsize -1);
-	if (e2fs_count <= 0)
+	if (uio->uio_offset < 0 || uio->uio_resid == 0)
 		return EINVAL;
+	if (uio->uio_offset >= ext2fs_size(VTOI(vp))) {
+		/* The NFS server needs a cookie array also at EOF. */
+		*ap->a_eofflag = 1;
+		if (ap->a_ncookies) {
+			*ap->a_cookies = malloc(sizeof(off_t), M_TEMP,
+			    M_WAITOK);
+			*ap->a_ncookies = 0;
+		}
+		return 0;
+	}
+
+	dstd = kmem_zalloc(sizeof(struct dirent), KM_SLEEP);
+	startoff = uio->uio_offset;
+again:
+	/*
+	 * Origin: EmberBSD (AI-assisted).  Read whole blocks from the
+	 * start of the block that holds the position, as FreeBSD does.
+	 * A remove can merge the entry at the position into the previous
+	 * entry, and an add can move the entries of the block.  Only the
+	 * chain of entries from the block start is valid.
+	 */
+	off = startoff & ~(off_t)(fs->e2fs_bsize - 1);
+	endoff = roundup2(startoff + (off_t)MIN(uio->uio_resid, MAXBSIZE),
+	    (off_t)fs->e2fs_bsize);
+	e2fs_count = endoff - off;
+	copied = false;
 
 	auio = *uio;
+	auio.uio_offset = off;
 	auio.uio_iov = &aiov;
 	auio.uio_iovcnt = 1;
 	aiov.iov_len = e2fs_count;
 	auio.uio_resid = e2fs_count;
 	UIO_SETUP_SYSSPACE(&auio);
 	dirbuf = kmem_alloc(e2fs_count, KM_SLEEP);
-	dstd = kmem_zalloc(sizeof(struct dirent), KM_SLEEP);
 	if (ap->a_ncookies) {
 		nc = e2fs_count / _DIRENT_MINSIZE((struct dirent *)0);
 		ncookies = nc;
@@ -198,10 +221,29 @@ ext2fs_readdir(void *v)
 		readcnt = e2fs_count - auio.uio_resid;
 		for (dp = (struct ext2fs_direct *)dirbuf;
 			(char *)dp < (char *)dirbuf + readcnt;) {
-			e2d_reclen = fs2h16(dp->e2d_reclen);
-			if (e2d_reclen == 0) {
+			rem = (char *)dirbuf + readcnt - (char *)dp;
+			if (rem < EXT2FS_DIRSIZ(0)) {
 				error = EIO;
 				break;
+			}
+			e2d_reclen = fs2h16(dp->e2d_reclen);
+			if (e2d_reclen < EXT2FS_DIRSIZ(dp->e2d_namlen) ||
+			    (e2d_reclen & 3) != 0 ||
+			    (size_t)e2d_reclen > rem ||
+			    (off & (fs->e2fs_bsize - 1)) + e2d_reclen >
+			    fs->e2fs_bsize) {
+				error = EIO;
+				break;
+			}
+			if (off < startoff) {
+				/*
+				 * Origin: EmberBSD (AI-assisted).  This
+				 * entry starts before the position.  Skip it.
+				 */
+				off += e2d_reclen;
+				dp = (struct ext2fs_direct *)
+				    ((char *)dp + e2d_reclen);
+				continue;
 			}
 			ext2fs_dirconv2ffs(fs, dp, dstd);
 			if(dstd->d_reclen > uio->uio_resid) {
@@ -211,6 +253,7 @@ ext2fs_readdir(void *v)
 			if (error != 0) {
 				break;
 			}
+			copied = true;
 			off = off + e2d_reclen;
 			if (cookies != NULL) {
 				*cookies++ = off;
@@ -221,8 +264,26 @@ ext2fs_readdir(void *v)
 			/* advance dp */
 			dp = (struct ext2fs_direct *) ((char *)dp + e2d_reclen);
 		}
+		if (error == 0 && !copied &&
+		    (char *)dp >= (char *)dirbuf + readcnt &&
+		    off < ext2fs_size(VTOI(vp))) {
+			/*
+			 * Origin: EmberBSD (AI-assisted).  The skipped
+			 * entries ended the blocks read.  Read the next
+			 * blocks, because an empty result means the end of
+			 * the directory.
+			 */
+			kmem_free(dirbuf, e2fs_count);
+			if (ap->a_ncookies)
+				free(*ap->a_cookies, M_TEMP);
+			startoff = off;
+			goto again;
+		}
+		if (error == 0 && !copied && (char *)dp <
+		    (char *)dirbuf + readcnt)
+			error = EINVAL;	/* the next entry does not fit */
 		/* we need to correct uio_offset */
-		uio->uio_offset = off;
+		uio->uio_offset = MAX(off, startoff);
 	}
 	kmem_free(dirbuf, e2fs_count);
 	kmem_free(dstd, sizeof(*dstd));
