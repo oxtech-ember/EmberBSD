@@ -189,10 +189,14 @@ struct aicwf_usb_softc { struct uaicfw_attach_args bus; };
 
 enum data_out_test {
 	OUT_IDLE, OUT_ORDINARY, OUT_ACK, OUT_NACK, OUT_LATE, OUT_STALE,
-	OUT_MISSING, OUT_SHORT, OUT_STALL, OUT_ALLOC_FAIL
+	OUT_MISSING, OUT_SHORT, OUT_STALL, OUT_ALLOC_FAIL, OUT_WAKE
 };
 static enum data_out_test data_test;
 static unsigned data_writes;
+static uint32_t clock_ticks;
+static bool stopping_on_alloc;
+static void cancel_data_open(void);
+static int getticks(void) { return (int)clock_ticks; }
 static uint8_t data_wire[2048];
 static size_t data_len;
 static uint32_t previous_token;
@@ -294,6 +298,8 @@ usbd_create_xfer(struct usbd_pipe *p, size_t n, int flags, int frames,
 		return ENOMEM;
 	*out = calloc(1, sizeof(**out));
 	assert(*out && n <= sizeof((*out)->buf));
+	if (p->addr == 1 && stopping_on_alloc)
+		cancel_data_open();
 	(*out)->pipe = p;
 	allocs++;
 	return 0;
@@ -477,7 +483,14 @@ deliver(void)
 static int
 cv_timedwait(kcondvar_t *cv, kmutex_t *m, int ticks)
 {
-	assert(ticks == 500 && *m);
+	assert(ticks > 0 && ticks <= 500 && *m);
+	if (data_test == OUT_WAKE) {
+		static unsigned wakes;
+		assert(ticks == 500 - (int)(100 * wakes++));
+		clock_ticks += 100;
+		return 0; /* A different condition used this condition variable. */
+	}
+	assert(ticks == 500);
 	if (data_test == OUT_MISSING || data_test == OUT_STALE)
 		return EWOULDBLOCK;
 	if (data_test == OUT_LATE) {
@@ -503,6 +516,17 @@ usbd_get_xfer_status(
 
 static struct uaicfw_softc device;
 static void *device_private(device_t self) { return &device; }
+
+/* Stop may mark the device while the sender sleeps in xfer allocation. */
+static void
+cancel_data_open(void)
+{
+	assert(mutex_owned(&device.sc_cmd_lock));
+	mutex_enter(&device.sc_rx_lock);
+	device.sc_stopping = true;
+	cv_broadcast(&device.sc_cv);
+	mutex_exit(&device.sc_rx_lock);
+}
 
 static void
 ignore_input(void *cookie, const uint8_t *p, size_t len, uint64_t serial)
@@ -738,6 +762,9 @@ ethernet_checks(void)
 	assert(aicwf_usb_write(&sc, hdr + 1, 0, &attempted) == EIO && attempted);
 	data_test = OUT_LATE;
 	assert(aicwf_usb_write(&sc, hdr + 1, 0, &attempted) == 0 && attempted);
+	clock_ticks = UINT32_MAX - 200;
+	data_test = OUT_WAKE;
+	assert(aicwf_usb_write(&sc, hdr + 1, 0, &attempted) == ETIMEDOUT && attempted);
 	data_test = OUT_MISSING;
 	assert(aicwf_usb_write(&sc, hdr + 1, 0, &attempted) == ETIMEDOUT && attempted);
 	data_test = OUT_STALE;
@@ -747,11 +774,11 @@ ethernet_checks(void)
 	data_test = OUT_STALL;
 	unsigned saved_clears = clears;
 	assert(aicwf_usb_write(&sc, hdr + 1, 0, &attempted) == EIO && attempted);
-	assert(clears == saved_clears + 1 && data_writes == 9 && opens == base + 1);
+	assert(clears == saved_clears + 1 && data_writes == 10 && opens == base + 1);
 	clears = saved_clears;
 	device.sc_data_sequence = AICWF_DC_DATA_TOKEN - 1;
 	assert(aicwf_usb_write(&sc, hdr + 1, 0, &attempted) == EOVERFLOW && !attempted);
-	assert(device.sc_data_reply == NULL && data_writes == 9 && writes == 4);
+	assert(device.sc_data_reply == NULL && data_writes == 10 && writes == 4);
 	data_test = OUT_IDLE;
 }
 
@@ -834,6 +861,18 @@ main(void)
 			stall_input(inputs[1]);
 			assert(!device.sc_recover_task.pending && device.sc_error == USBD_STALLED);
 		} else if (children && fault == EARLY_REPLY) {
+			uint8_t p[AICWF_HDR_LEN + AICWF_TXDESC_LEN] = { 0 };
+			bool attempted = true;
+			le16enc(p, AICWF_TXDESC_LEN);
+			p[2] = AICWF_TYPE_DATA;
+			stopping_on_alloc = true;
+			unsigned before = data_writes;
+			assert(radio.ethernet(radio.cookie, p, sizeof(p), &attempted)
+			    == ENXIO && !attempted && data_writes == before);
+			stopping_on_alloc = false;
+			assert(device.sc_data.xfer != NULL && !device.sc_data_reply);
+			/* The disconnect interleave ended. Exercise IN recovery too. */
+			device.sc_stopping = false;
 			radio.listen(radio.cookie, ignore_input, NULL, NULL);
 			stall_input(inputs[1]);
 			clear_error = true;

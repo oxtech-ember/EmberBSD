@@ -636,6 +636,7 @@ uaicfw_ethernet(void *arg, const uint8_t *packet, size_t len, bool *attempted)
 	const uint8_t *desc;
 	uint8_t *buf;
 	size_t wire;
+	uint32_t start, timeout;
 	usbd_status status;
 
 	if (attempted != NULL)
@@ -659,6 +660,8 @@ uaicfw_ethernet(void *arg, const uint8_t *packet, size_t len, bool *attempted)
 	if (sc->sc_data.xfer == NULL) {
 		status = uaicfw_open(sc->sc_iface, sc->sc_data_ep,
 		    UAICFW_RX_SIZE, &sc->sc_data);
+		if (status == USBD_NORMAL_COMPLETION)
+			status = uaicfw_out_state(sc);
 		if (status != USBD_NORMAL_COMPLETION)
 			goto out;
 	}
@@ -680,15 +683,20 @@ uaicfw_ethernet(void *arg, const uint8_t *packet, size_t len, bool *attempted)
 		sc->sc_data_reply = &reply;
 		mutex_exit(&sc->sc_rx_lock);
 	}
+	timeout = mstohz(UAICFW_TIMEOUT_MS);
+	start = getticks();
 	status = uaicfw_send(sc, &sc->sc_data, wire, attempted);
 	if (eapol) {
 		mutex_enter(&sc->sc_rx_lock);
 		while (status == USBD_NORMAL_COMPLETION && !sc->sc_stopping &&
 		    sc->sc_error == USBD_NORMAL_COMPLETION &&
 		    reply.status == USBD_IN_PROGRESS) {
-			if (cv_timedwait(&sc->sc_cv, &sc->sc_rx_lock,
-			    mstohz(UAICFW_TIMEOUT_MS)) == EWOULDBLOCK &&
-			    reply.status == USBD_IN_PROGRESS)
+			const uint32_t elapsed = (uint32_t)getticks() - start;
+			if (elapsed >= timeout ||
+			    (cv_timedwait(&sc->sc_cv, &sc->sc_rx_lock,
+			    timeout - elapsed) == EWOULDBLOCK &&
+			    reply.status == USBD_IN_PROGRESS && !sc->sc_stopping &&
+			    sc->sc_error == USBD_NORMAL_COMPLETION))
 				status = USBD_TIMEOUT;
 		}
 		if (status == USBD_NORMAL_COMPLETION) {
