@@ -46,6 +46,7 @@ struct usbif_attach_arg {
 	unsigned uiaa_class, uiaa_subclass, uiaa_proto;
 	struct usbd_interface *uiaa_iface;
 	void *uiaa_device;
+	unsigned uiaa_port, uiaa_ifaceno;
 };
 
 struct usbd_pipe {
@@ -124,16 +125,41 @@ static const char *usbd_errstr(usbd_status status)
 #define aprint_normal_dev(dev, fmt, first, second) \
 	report((fmt), (first), (second))
 
-static unsigned identified, versions;
+#define FDT 1
+static bool target_board;
+static int board_tree;
+static const void *fdtbus_get_data(void) { return &board_tree; }
+static int OF_finddevice(const char *name) { assert(strcmp(name, "/") == 0); return 1; }
+static bool of_compatible(int node, const char * const *boards)
+{
+	assert(node == 1 && strcmp(boards[0], "luckfox,lyra-zero-w") == 0);
+	return target_board;
+}
+
+static unsigned identified, versions, condition_reports;
+static unsigned int chip_id = 7, sub_id = 1;
+static uint32_t features = 0xb011fa5f;
+static char condition_line[128];
 
 static void
-report(const char *fmt, uint32_t first, uint32_t second)
+report(const char *fmt, ...)
 {
+	va_list ap;
+	va_start(ap, fmt);
+	if (strncmp(fmt, "factory", 7) == 0) {
+		vsnprintf(condition_line, sizeof(condition_line), fmt, ap);
+		condition_reports++;
+		va_end(ap);
+		return;
+	}
+	unsigned int first = va_arg(ap, unsigned int);
+	unsigned int second = va_arg(ap, unsigned int);
+	va_end(ap);
 	if (strncmp(fmt, "FullMAC", 7) == 0) {
-		assert(first == 0x06040301 && second == 0xb011fa5f);
+		assert(first == 0x06040301 && second == features);
 		versions++;
 	} else {
-		assert(first == 7 && second == 1);
+		assert(first == chip_id && second == sub_id);
 		identified++;
 	}
 }
@@ -268,6 +294,14 @@ enum fault {
 static enum fault fault;
 static unsigned opens, allocs, writes, reads, errors;
 static uint32_t requested;
+static const uint32_t condition_fields[] = { 0x40200024, 0x40500148, 0x40505010 };
+static uint32_t field_values[3];
+static unsigned condition_reads, fail_at;
+enum condition_fault { CONDITION_OK, CONDITION_ECHO, CONDITION_LENGTH,
+    CONDITION_TIMEOUT, CONDITION_OUT_STALL, CONDITION_PIPE, CONDITION_FW, CONDITION_FRAME,
+    CONDITION_CLEAR_FAIL, CONDITION_OUT_IO, CONDITION_OUT_CANCEL,
+    CONDITION_OUT_SHORT, CONDITION_OUT_TIMEOUT };
+static enum condition_fault condition_fault;
 static unsigned children;
 static bool child_present = true;
 static int station_error, ifattach_error;
@@ -457,8 +491,35 @@ emulate_transfer(struct usbd_xfer *x)
 		} else if (writes == 2) {
 			assert(x->len == sizeof(version_hdr));
 			assert(memcmp(b, version_hdr, sizeof(version_hdr)) == 0);
+		} else if (le16dec(b + 8) == AICWF_DBG_MEM_READ_REQ) {
+			assert(target_board && condition_reads < 3);
+			assert(x->len == 20 && memcmp(b, hdr, sizeof(hdr)) == 0);
+			requested = le32dec(b + 16);
+			assert(requested == condition_fields[condition_reads++]);
+			if (fail_at == condition_reads) {
+				switch (condition_fault) {
+				case CONDITION_OUT_IO:
+					writes++;
+					return USBD_IOERROR;
+				case CONDITION_OUT_CANCEL:
+					writes++;
+					return USBD_CANCELLED;
+				case CONDITION_OUT_TIMEOUT:
+					writes++;
+					return USBD_TIMEOUT;
+				default:
+					break;
+				}
+			}
+			if ((condition_fault == CONDITION_OUT_STALL ||
+			    condition_fault == CONDITION_CLEAR_FAIL) &&
+			    fail_at == condition_reads) {
+				writes++;
+				return USBD_STALLED;
+			}
 		} else {
-			assert(writes == 3 && x->len == 20 && le16dec(b + 8) == AICWF_MM_GET_MAC_ADDR_REQ);
+			assert(writes == 3 + condition_reads && x->len == 20 &&
+			    le16dec(b + 8) == AICWF_MM_GET_MAC_ADDR_REQ);
 			assert(b[16] == 1 && !b[17] && !b[18] && !b[19]);
 		}
 		assert(inputs[0] && inputs[0]->pending && inputs[1] && inputs[1]->pending);
@@ -467,7 +528,10 @@ emulate_transfer(struct usbd_xfer *x)
 			deliver();
 		if (fault == TX_ERROR)
 			return USBD_INVAL;
-		x->actual = fault == SHORT_TX ? 19 : x->len;
+		x->actual = fault == SHORT_TX ||
+		    (condition_fault == CONDITION_OUT_SHORT &&
+		     condition_reads != 0 && condition_reads == fail_at) ?
+		    x->len - 1 : x->len;
 	} else {
 		assert(writes && x->len == 2048);
 		reads++;
@@ -492,7 +556,7 @@ emulate_transfer(struct usbd_xfer *x)
 			le16enc(b + 4, 5);
 			le16enc(b + 10, fault == VERSION_SHORT ? 27 : 28);
 			le32enc(b + 16, 0x06040301);
-			le32enc(b + 36, 0xb011fa5f);
+			le32enc(b + 36, features);
 			x->actual = 63 + 60;
 			return USBD_NORMAL_COMPLETION;
 		}
@@ -501,7 +565,14 @@ emulate_transfer(struct usbd_xfer *x)
 		le16enc(b + 4, fault == OTHER ? 6 : 0x401);
 		le16enc(b + 10, fault == BAD_PARAM_LEN ? 7 : 8);
 		le32enc(b + 16, fault == BAD_ECHO ? 0xdead : requested);
-		le32enc(b + 20, requested == 0x20 ? 1 : 0x00070000);
+		le32enc(b + 20, requested == 0x20 ? sub_id : chip_id << 16);
+		if (condition_reads != 0) {
+			le32enc(b + 20, field_values[condition_reads - 1]);
+			if (fail_at == condition_reads && condition_fault == CONDITION_ECHO)
+				le32enc(b + 16, requested ^ 4);
+			if (fail_at == condition_reads && condition_fault == CONDITION_LENGTH)
+				le16enc(b + 10, 4);
+		}
 		x->actual = fault == EMPTY_RX ? 0 : 63 + 40;
 		if (fault == SHORT_TAIL || fault == DUPLICATE) {
 			memcpy(b + 24, b, 24);
@@ -528,8 +599,15 @@ deliver(void)
 	assert(x != NULL && x->pending);
 	x->pending = false;
 	usbd_status st = emulate_transfer(x);
-	if (fault == FW_ERROR)
+	if (condition_reads != 0 && condition_fault == CONDITION_PIPE &&
+	    condition_reads == fail_at)
+		st = USBD_IOERROR;
+	if (fault == FW_ERROR || (condition_reads != 0 &&
+	    condition_fault == CONDITION_FW && condition_reads == fail_at))
 		le16enc(x->buf + 67, 0x0408);
+	if (condition_reads != 0 && condition_fault == CONDITION_FRAME &&
+	    condition_reads == fail_at)
+		le16enc(x->buf + 67 + 6, 0xffff); /* Unrelated malformed record. */
 	x->cb(x, x->arg, st);
 }
 
@@ -557,6 +635,9 @@ cv_timedwait(kcondvar_t *cv, kmutex_t *m, int ticks)
 		return 0; /* A different condition used this condition variable. */
 	}
 	assert(ticks == 500);
+	if (condition_fault == CONDITION_TIMEOUT && condition_reads != 0 &&
+	    condition_reads == fail_at)
+		return EWOULDBLOCK;
 	if (data_test == OUT_MISSING || data_test == OUT_STALE)
 		return EWOULDBLOCK;
 	if (data_test == OUT_LATE) {
@@ -696,7 +777,7 @@ static void
 survey_queue_checks(void)
 {
 	struct uaicfw_softc sc = { 0 };
-	struct uaicfw_request req = { AICWF_MM_ADD_IF_CFM, 2, USBD_IN_PROGRESS };
+	struct uaicfw_request req = { AICWF_MM_ADD_IF_CFM, 2, USBD_IN_PROGRESS, false };
 	uint8_t records[240] = { 0 };
 	uint8_t first[UAICFW_RX_SIZE];
 	uint8_t rest[24];
@@ -1056,6 +1137,95 @@ command_deadline_checks(struct usbif_attach_arg *a)
 	command_timing = CMD_NORMAL;
 }
 
+static void
+condition_checks(struct usbif_attach_arg *a)
+{
+	static const struct {
+		uint32_t usb, crystal, pll;
+		enum condition_fault fault;
+		unsigned at, expected;
+		usbd_status terminal;
+		const char *text;
+	} cases[] = {
+		{ 0xffff0119, 0, 0, CONDITION_OK, 0, 2, USBD_NORMAL_COMPLETION, "needed, BBPLL setup skip (no CPU crystal)" },
+		{ 0, 1, 3U << 29, CONDITION_OK, 0, 3, USBD_NORMAL_COMPLETION, "skip, BBPLL setup skip (CPU crystal, setting present)" },
+		{ 0, 1, 7U << 29, CONDITION_OK, 0, 3, USBD_NORMAL_COMPLETION, "skip, BBPLL setup needed (CPU crystal)" },
+		{ 0, 1, 0, CONDITION_ECHO, 1, 1, USBD_NORMAL_COMPLETION, "unknown, BBPLL setup unknown" },
+		{ 0, 1, 0, CONDITION_LENGTH, 2, 2, USBD_NORMAL_COMPLETION, "skip, BBPLL setup unknown" },
+		{ 0, 1, 0, CONDITION_TIMEOUT, 3, 3, USBD_NORMAL_COMPLETION, "skip, BBPLL setup unknown (CPU crystal)" },
+		{ 0, 1, 0, CONDITION_OUT_STALL, 2, 2, USBD_NORMAL_COMPLETION, "skip, BBPLL setup unknown" },
+		{ 0, 1, 0, CONDITION_PIPE, 2, 2, USBD_IOERROR, "skip, BBPLL setup unknown" },
+		{ 0, 1, 0, CONDITION_FW, 2, 2, USBD_IOERROR, "skip, BBPLL setup unknown" },
+		{ 0, 1, 0, CONDITION_FRAME, 2, 2, USBD_INVAL, "skip, BBPLL setup unknown" },
+		{ 0, 1, 0, CONDITION_CLEAR_FAIL, 2, 2, USBD_IOERROR, "skip, BBPLL setup unknown" },
+		{ 0, 1, 0, CONDITION_OUT_IO, 2, 2, USBD_IOERROR, "skip, BBPLL setup unknown" },
+		{ 0, 1, 0, CONDITION_OUT_CANCEL, 2, 2, USBD_CANCELLED, "skip, BBPLL setup unknown" },
+		{ 0, 1, 0, CONDITION_OUT_SHORT, 2, 2, USBD_SHORT_XFER, "skip, BBPLL setup unknown" },
+		{ 0, 1, 0, CONDITION_OUT_TIMEOUT, 2, 2, USBD_TIMEOUT, "skip, BBPLL setup unknown" },
+	};
+	target_board = true;
+	for (unsigned i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+		memset(&device, 0, sizeof(device));
+		opens = allocs = reads = writes = errors = children = condition_reports = 0;
+		condition_reads = 0;
+		condition_fault = cases[i].fault;
+		clear_error = condition_fault == CONDITION_CLEAR_FAIL;
+		fail_at = cases[i].at;
+		field_values[0] = cases[i].usb;
+		field_values[1] = cases[i].crystal;
+		field_values[2] = cases[i].pll;
+		fault = NONE;
+		uaicfw_attach(0, 0, a);
+		assert(condition_reads == cases[i].expected && condition_reports == 1);
+		assert(strstr(condition_line, cases[i].text) != NULL);
+		assert(mountroot_hook != NULL);
+		if (cases[i].terminal != USBD_NORMAL_COMPLETION) {
+			assert(device.sc_error == cases[i].terminal);
+			mountroot_hook(0);
+			assert(children == 0 && device.sc_stopping);
+			assert(uaicfw_detach(0, 0) == 0 && !opens && !allocs);
+			continue;
+		}
+		assert(device.sc_error == USBD_NORMAL_COMPLETION);
+		mountroot_hook(0);
+		if (condition_fault == CONDITION_TIMEOUT)
+			deliver(); /* The station discards the late DBG CFM. */
+		assert(children == 1 && device.sc_input != NULL && !errors);
+		uint8_t ether_query[20];
+		uint8_t query[4] = { 1, 0, 0, 0 };
+		size_t n = aicwf_command_encode(ether_query, sizeof(ether_query),
+		    AICWF_MM_GET_MAC_ADDR_REQ, query, sizeof(query));
+		bool attempted = false;
+		assert(n != 0 && radio.write(radio.cookie, ether_query, n, &attempted) == 0 && attempted);
+		assert(uaicfw_detach(0, 0) == 0 && !opens && !allocs);
+	}
+	condition_fault = CONDITION_OK;
+	clear_error = false;
+	for (int i = 0; i < 6; i++) {
+		struct usbif_attach_arg other = *a;
+		target_board = i != 0;
+		if (i == 1)
+			other.uiaa_port++;
+		if (i == 2)
+			other.uiaa_ifaceno++;
+		chip_id = i == 3 ? 0xc7 : 7;
+		sub_id = i == 4 ? 2 : 1;
+		features = i == 5 ? 0xb011fa5e : 0xb011fa5f;
+		memset(&device, 0, sizeof(device));
+		opens = allocs = reads = writes = errors = children = condition_reports = 0;
+		condition_reads = 0;
+		uaicfw_attach(0, 0, &other);
+		assert(condition_reads == 0 && condition_reports == 0);
+		assert(writes == 3);
+		assert((mountroot_hook == NULL) == (i == 3 || i == 4));
+		assert(uaicfw_detach(0, 0) == 0 && !opens && !allocs);
+	}
+	chip_id = 7;
+	sub_id = 1;
+	features = 0xb011fa5f;
+	target_board = false;
+}
+
 int
 main(void)
 {
@@ -1063,7 +1233,7 @@ main(void)
 	struct usbd_interface iface = {
 	    {0, 4}, {{1, 2, 512}, {0x81, 2, 512}, {2, 2, 512}, {0x82, 2, 512}}};
 	struct usbif_attach_arg a = {
-	    0xa69c, 0x88dc, 1, 0xff, 0xff, 0xff, &iface, NULL};
+	    0xa69c, 0x88dc, 1, 0xff, 0xff, 0xff, &iface, NULL, 1, 2};
 	assert(uaicfw_match(0, 0, &a) == UMATCH_VENDOR_PRODUCT_CONF_IFACE);
 	iface.desc.bAlternateSetting = 1;
 	assert(uaicfw_match(0, 0, &a) == UMATCH_NONE);
@@ -1172,6 +1342,7 @@ main(void)
 		assert(uaicfw_detach(0, 0) == 0 && !opens && !allocs);
 	}
 	mountroot_failure_checks(&a);
+	condition_checks(&a);
 	command_deadline_checks(&a);
 	writes = errors = 0;
 	iface.eps[2].bEndpointAddress = 1;
