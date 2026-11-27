@@ -131,8 +131,8 @@ eu_target_match(const struct eu_json *a, const struct eu_json *b)
 	return true;
 }
 
-bool
-eu_channel(const struct eu_json *o, const char *channel, time_t now,
+const char *
+eu_channel_error(const struct eu_json *o, const char *channel, time_t now,
 	   struct snapshot_ref *ref)
 {
 	const struct eu_json *r = eu_get(o, "release");
@@ -141,7 +141,7 @@ eu_channel(const struct eu_json *o, const char *channel, time_t now,
 	    !eu_fields(r, "id path size sha256") ||
 	    !eu_equal(field(o, "schema"), "emberbsd.channel.v2") || !eu_slug(channel) ||
 	    !eu_equal(field(o, "channel"), channel))
-		return false;
+		return "invalid signed channel";
 	ref->id = field(r, "id");
 	ref->path = field(r, "path");
 	ref->sha = field(r, "sha256");
@@ -149,12 +149,16 @@ eu_channel(const struct eu_json *o, const char *channel, time_t now,
 	ref->issued = number(o, "issued_at");
 	ref->expires = number(o, "expires_at");
 	if (!eu_slug(ref->id) || !eu_hash(ref->sha, 64) || ref->size < 1 ||
-	    ref->size > EU_MAX_CMS || ref->issued <= 0 || now < ref->issued ||
-	    now >= ref->expires ||
+	    ref->size > EU_MAX_CMS || ref->issued <= 0 || ref->expires <= ref->issued ||
 	    snprintf(canonical, sizeof(canonical), "%s/metadata/%s/release.p7m",
-		     channel, ref->sha) >= (int)sizeof(canonical))
-		return false;
-	return eu_equal(ref->path, canonical);
+		     channel, ref->sha) >= (int)sizeof(canonical) ||
+	    !eu_equal(ref->path, canonical))
+		return "invalid signed channel";
+	if (now < ref->issued)
+		return "signed channel is not yet valid. Check the system clock.";
+	if (now >= ref->expires)
+		return "signed channel has expired. Check the system clock and the channel.";
+	return NULL;
 }
 
 static bool

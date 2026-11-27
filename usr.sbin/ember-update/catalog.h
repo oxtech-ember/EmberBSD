@@ -35,7 +35,7 @@ bool eu_equal(const char *, const char *);
 bool eu_slug(const char *);
 bool eu_hash(const char *, size_t);
 bool eu_target_match(const struct eu_json *, const struct eu_json *);
-bool eu_channel(const struct eu_json *, const char *, time_t, struct snapshot_ref *);
+const char *eu_channel_error(const struct eu_json *, const char *, time_t, struct snapshot_ref *);
 bool eu_release(const struct eu_json *, const struct snapshot_ref *, struct release *);
 struct artifact *eu_artifact(const struct release *, const char *);
 bool eu_os_update(const struct eu_json *, const struct artifact *,

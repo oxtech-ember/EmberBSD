@@ -23,6 +23,15 @@ input(const char *path, size_t *len)
 	return data;
 }
 
+static struct eu_json *
+member(struct eu_json *object, const char *name)
+{
+	for (struct eu_json *p = object->child; p != NULL; p = p->next)
+		if (eu_equal(p->key, name))
+			return p;
+	abort();
+}
+
 int
 main(int argc, char **argv)
 {
@@ -38,10 +47,14 @@ main(int argc, char **argv)
 	time_t issued = (time_t)eu_get(channel, "issued_at")->integer;
 	time_t expires = (time_t)eu_get(channel, "expires_at")->integer;
 	struct snapshot_ref s;
-	assert(!eu_channel(channel, "different", issued, &s));
-	assert(!eu_channel(channel, "current", issued - 1, &s));
-	assert(!eu_channel(channel, "current", expires, &s));
-	assert(eu_channel(channel, "current", issued, &s));
+	assert(eu_equal(eu_channel_error(channel, "different", issued - 1, &s),
+	    "invalid signed channel"));
+	assert(eu_equal(eu_channel_error(channel, "current", issued - 1, &s),
+	    "signed channel is not yet valid. Check the system clock."));
+	assert(eu_equal(eu_channel_error(channel, "current", expires, &s),
+	    "signed channel has expired. Check the system clock and the channel."));
+	assert(eu_channel_error(channel, "current", issued, &s) == NULL);
+	assert(eu_channel_error(channel, "current", expires - 1, &s) == NULL);
 	char hash[65];
 	assert(eu_digest(r, rn, hash) == 0 && eu_equal(hash, s.sha) &&
 	       s.size == (int64_t)rn);
@@ -52,6 +65,16 @@ main(int argc, char **argv)
 	struct snapshot_ref wrong = s;
 	wrong.id = "other";
 	assert(!eu_release(doc, &wrong, &release));
+	/* Invalid metadata takes precedence over a clock diagnosis. */
+	struct eu_json *path = member(member(channel, "release"), "path");
+	char first = path->text[0];
+	path->text[0] = '/';
+	assert(eu_equal(eu_channel_error(channel, "current", issued - 1, &s),
+	    "invalid signed channel"));
+	path->text[0] = first;
+	member(channel, "expires_at")->integer = issued;
+	assert(eu_equal(eu_channel_error(channel, "current", issued, &s),
+	    "invalid signed channel"));
 	assert(!eu_cms_json(c, cn + 1, argv[1]) && !eu_cms_json(r, rn - 1, argv[1]));
 	c[cn - 1] ^= 1;
 	r[rn - 1] ^= 1;
