@@ -10,7 +10,13 @@
 .if empty(HOST_SH:M/*)
 .error EMBER_NATIVE_TOOLS requires an absolute HOST_SH
 .endif
+.if ${.MAKE.OS:U} == "NetBSD" && (${HOST_SH:T:Mmksh} || ${HOST_SH:T:Mksh})
+# NetBSD's native make passes -q to a shell named sh, and only the NetBSD
+# /bin/sh accepts it. A ksh-family shell takes the ksh specification.
+.SHELL: name=ksh path=${HOST_SH}
+.else
 .SHELL: name=sh path=${HOST_SH}
+.endif
 .endif
 
 unix?=		We run NetBSD.
