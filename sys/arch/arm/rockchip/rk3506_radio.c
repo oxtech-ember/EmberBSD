@@ -31,12 +31,17 @@ rk3506_radio_match(device_t parent, cfdata_t cf, void *aux)
 		{ .compat = "rfkill-gpio" }, DEVICE_COMPAT_EOL
 	};
 	const struct fdt_attach_args *faa = aux;
-	const char *type = fdtbus_get_string(faa->faa_phandle, "radio-type");
+	const int match = of_compatible_match(faa->faa_phandle, compat);
+	const char *type;
+	int len;
 
-	if (!of_compatible(OF_finddevice("/"), boards) ||
-	    type == NULL || strcmp(type, "wlan") != 0)
+	if (!match || !of_compatible(OF_finddevice("/"), boards))
 		return 0;
-	return of_compatible_match(faa->faa_phandle, compat);
+	type = fdtbus_get_prop(faa->faa_phandle, "radio-type", &len);
+	if (type == NULL || len != sizeof("wlan") ||
+	    memcmp(type, "wlan", sizeof("wlan")) != 0)
+		return 0;
+	return match;
 }
 
 #if NRK_GPIO > 0

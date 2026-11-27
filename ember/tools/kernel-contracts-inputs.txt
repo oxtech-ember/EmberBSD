@@ -448,6 +448,12 @@ ember/tools/drm-syncobj-flatten-contract.sh sys/external/bsd/drm2/dist/drm/
 ember/tools/drm-syncobj-flatten-contract.sh sys/external/bsd/drm2/linux/
 ember/tools/drm-syncobj-wait-contract.sh ember/tools/drm-syncobj-wait-contract.c
 ember/tools/drm-syncobj-wait-contract.sh sys/external/bsd/drm2/dist/drm/
+ember/tests/rk3506-radio.sh sys/arch/arm/dts/rk3506.dtsi
+ember/tests/rk3506-radio.sh sys/arch/arm/dts/rk3506b-luckfox-lyra-zero-w.dts
+ember/tests/rk3506-radio.sh sys/arch/arm/rockchip/files.rockchip
+ember/tests/rk3506-radio.sh sys/arch/arm/rockchip/rk3506_iomux.c
+ember/tests/rk3506-radio.sh sys/arch/arm/rockchip/rk_gpiovar.h
+ember/tests/rk3506-radio.sh sys/arch/evbarm/conf/GENERIC
 ember/tests/rk3506-radio.sh ember/tests/rk3506-radio.c
 ember/tests/rk3506-radio.sh sys/arch/arm/rockchip/rk3506_radio.c
 ember/tests/rk3506-radio.sh sys/arch/arm/rockchip/rk_gpio.c
