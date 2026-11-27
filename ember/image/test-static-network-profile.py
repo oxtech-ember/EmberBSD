@@ -172,6 +172,13 @@ else:
     sftp_requires_ssh = False
 ssh_install_paths = {dest for _, dest in ssh_toolset['install_map']}
 ssh_nodes = profile.network_device_selection(ssh_toolset, 'md0', 'a')[0]
+check({'bin/df', 'sbin/rndctl', 'usr.bin/logger'} <= set(ssh_toolset['crunch_programs']) and
+      {'sbin/shutdown', 'usr/bin/wall'} <= ssh_install_paths and
+      {'random', 'urandom'} <= set(ssh_nodes),
+      'OpenSSH includes the native seed and orderly shutdown programs')
+all_services = profile.network('earmv7hf', ('ssh', 'system', 'logging'))['crunch_programs']
+check(all_services.count('bin/df') == all_services.count('usr.bin/logger') == 1,
+      'shared system and logging commands have one crunch entry')
 check(not {'usr/sbin/sshd', 'usr/sbin/syslogd', 'usr/bin/newsyslog'} &
       {dest for _, dest in selected['install_map']} and
       {'usr/sbin/sshd', 'usr/libexec/sshd-auth', 'usr/libexec/sshd-session',
@@ -921,6 +928,11 @@ with tempfile.TemporaryDirectory(prefix='static-network-') as temporary:
     service_scripts = services / 'etc/rc.network.d'
     service_rc = (services / 'etc/rc.conf').read_text()
     service_provides, service_requires, service_missing = staged_rc_dependencies(services)
+    check((services / 'etc/rc.network.d/random_seed').read_bytes() ==
+          (source / 'etc/rc.d/random_seed').read_bytes() and
+          (services / 'etc/rc.shutdown').read_bytes() == (source / 'etc/rc.shutdown').read_bytes() and
+          not (services / 'var/db/entropy-file').exists(),
+          'OpenSSH stages the native seed and shutdown scripts and supplies no shared seed')
     sshd_config = (services / 'etc/ssh/sshd_config').read_text()
     check(not service_missing and
           {'sshd', 'sysdb', 'wscons', 'newsyslog', 'syslogd', 'network_logfs'} <=
@@ -1006,7 +1018,8 @@ with tempfile.TemporaryDirectory(prefix='static-network-') as temporary:
               'actual rcorder accepts the logging profile: ' + rc_result.stderr)
         rc_names = [Path(item).name for item in rc_result.stdout.splitlines()]
         rc_order = {name: index for index, name in enumerate(rc_names)}
-        constraints = (('network', 'network_logfs'),
+        constraints = (('CRITLOCALMOUNTED', 'random_seed'), ('random_seed', 'bootconf.sh'),
+                       ('bootconf.sh', 'sshd'), ('network', 'network_logfs'),
                        ('network_logfs', 'newsyslog'),
                        ('newsyslog', 'syslogd'),
                        ('syslogd', 'wpa_supplicant'),

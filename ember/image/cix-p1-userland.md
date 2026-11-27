@@ -386,6 +386,20 @@ subsystem. The `sftp` toolset adds that subsystem when selected with `ssh`.
 The generic root has no authorized user key or host key. Supply
 `/root/.ssh/authorized_keys` in a private overlay; the standard rc script
 generates host keys on the device in its writable private root.
+
+The OpenSSH profile loads the device seed before the server starts.
+For the first installation, prepare a unique seed with `rndctl -S`
+on a trusted EmberBSD system that reports zero for `kern.entropy.needed`.
+Place it at `var/db/entropy-file` in the private overlay for that device.
+Set the file mode to `0600`. The installed owner is root.
+Use a separate seed for each device and installation.
+Keep this file out of shared images and source control.
+
+On first boot without a provisioned seed, `random_seed` creates a seed with
+the entropy available on the device. Check `sysctl kern.entropy.needed`
+before using its SSH host keys. Follow entropy(7) if the system needs entropy.
+An orderly `shutdown -r now` saves the current seed through `/etc/rc.shutdown`.
+Direct `reboot` and `halt` skip the shutdown scripts.
 `logging` adds stock `syslogd`, `logger`, `tail`, and `newsyslog` to
 `console-tools`. Its profile-owned rc hook mounts `/var/log` as a 1 MiB tmpfs before the logging
 services start, creates only `messages` and private `authlog`, and applies

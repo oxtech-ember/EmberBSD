@@ -645,13 +645,15 @@ def network(target, toolsets=(), spi_units=(), root_filesystem='ffs',
             'lib/libwrap',
             'crypto/external/bsd/openssh/lib',
             'lib/libcrypt')
-        selected['crunch_programs'] += ('usr.bin/cmp/cmp',)
+        selected['crunch_programs'] += ('usr.bin/cmp/cmp', 'bin/df', 'sbin/rndctl', 'usr.bin/logger')
         selected['programs'] += (
+            'sbin/shutdown', 'usr.bin/wall',
             'crypto/external/bsd/openssh/bin/sshd',
             'crypto/external/bsd/openssh/libexec/sshd-auth',
             'crypto/external/bsd/openssh/libexec/sshd-session',
             'crypto/external/bsd/openssh/bin/ssh-keygen')
         install_map += [
+            ('sbin/shutdown', 'sbin/shutdown'), ('usr.bin/wall', 'usr/bin/wall'),
             ('crypto/external/bsd/openssh/bin/sshd', 'usr/sbin/sshd'),
             ('crypto/external/bsd/openssh/libexec/sshd-auth', 'usr/libexec/sshd-auth'),
             ('crypto/external/bsd/openssh/libexec/sshd-session', 'usr/libexec/sshd-session'),
@@ -671,6 +673,7 @@ def network(target, toolsets=(), spi_units=(), root_filesystem='ffs',
         selected['device_nodes'] += ('ttyE0',)
         selected['device_make_groups'] += ('wscons',)
     selected['libraries'] = tuple(dict.fromkeys(selected['libraries']))
+    selected['crunch_programs'] = tuple(dict.fromkeys(selected['crunch_programs']))
     selected['install_map'] = tuple(install_map)
     return selected
 
@@ -913,7 +916,8 @@ def stage_network(root, source, overlay, interface, pwd_mkdb, dhcpcd_dest,
     if mdns_enabled:
         scripts += ('mdnsd',)
     if openssh_enabled:
-        scripts += ('sshd',)
+        scripts += ('random_seed', 'sshd')
+        copy_if_different(source / 'etc/rc.shutdown', root / 'etc/rc.shutdown')
     if logging_enabled:
         scripts += ('sysdb', 'wscons', 'newsyslog', 'syslogd')
     for name in scripts:
