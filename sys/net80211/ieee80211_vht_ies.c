@@ -278,7 +278,12 @@ ieee80211_vht_assoc_candidate(const struct ieee80211_vht_cap *local,
 	const uint8_t *htcap, *htop;
 
 	if (local == NULL || chan == NULL || ies == NULL || len == 0 ||
-	    len > 73 || (local->info & ~0x03800030U) != 0 ||
+	    len > 73 || (local->info & ~(IEEE80211_VHT_INFO_RXLDPC |
+	    IEEE80211_VHT_INFO_SGI80 | IEEE80211_VHT_INFO_SU_BFEE |
+	    IEEE80211_VHT_INFO_BFEE_STS | IEEE80211_VHT_INFO_AMPDU_EXP)) != 0 ||
+	    /* SU beamformee and its STS field are present together. */
+	    ((local->info & IEEE80211_VHT_INFO_SU_BFEE) != 0) !=
+	    ((local->info & IEEE80211_VHT_INFO_BFEE_STS) != 0) ||
 	    local->rx_map != local->tx_map ||
 	    (local->rx_map != 0xfffc && local->rx_map != 0xfffe &&
 	     local->rx_map != 0xfffa) ||

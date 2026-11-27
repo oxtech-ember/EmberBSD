@@ -105,7 +105,12 @@ every primary from 169 to 177; Linux treats such odd values as plain
 `ieee80211_vht_assoc_candidate(local, ies, len, chan)` accepts only a
 qualified local profile: one spatial stream with MCS0-7 or MCS0-9, or two
 streams with MCS0-9; equal RX and TX maps; and no capability bits other
-than RX LDPC, short GI for 80 MHz and the maximum A-MPDU length exponent.
+than RX LDPC, short GI for 80 MHz, the maximum A-MPDU length exponent and
+SU beamformee with a nonzero Beamformee STS field. SU beamformee and the
+STS field are present together or not at all. The provider that offers SU
+beamformee answers the sounding of a beamformer AP itself; net80211 keeps
+the AP's beamformer bit and sounding dimensions in the committed peer
+capabilities.
 The provider selects the exponent, as it selects the HT A-MPDU factor
 and spacing of its HT20 profile. It also needs a 73-byte or
 smaller window, NSS1 in both intersections with the peer's maps (the

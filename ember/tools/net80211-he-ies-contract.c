@@ -177,7 +177,8 @@ test_encode_and_local(void)
 	cap = local(0xfffa, 0);
 	cap.tx_map80 = 0xfffe;
 	CHECK(ieee80211_he_local_check(&cap) == -1);
-	/* Only the width, LDPC and padding bits are qualified. */
+	/* Single width, LDPC and padding bits are qualified; a single
+	 * beamformee, STS or Nc bit is inconsistent. */
 	for (unsigned octet = 0; octet < 6 + 11; octet++) {
 		for (unsigned bit = 0; bit < 8; bit++) {
 			int want;
@@ -196,6 +197,37 @@ test_encode_and_local(void)
 			CHECK(ieee80211_he_local_check(&cap) == want);
 		}
 	}
+	/* SU beamformee: STS field 3-7 and Nc below the stream count. */
+	for (unsigned sts = 0; sts < 8; sts++) {
+		for (unsigned nc = 0; nc < 8; nc++) {
+			for (unsigned bfee = 0; bfee < 2; bfee++) {
+				for (unsigned two = 0; two < 2; two++) {
+					int want;
+
+					cap = local(two ? 0xfffa : 0xfffe,
+					    IEEE80211_HE_PHY0_CW_40_80_5G);
+					cap.phy[4] = (bfee ?
+					    IEEE80211_HE_PHY4_SU_BFEE : 0) |
+					    sts << 2;
+					cap.phy[7] = nc << 3;
+					want = bfee ? (sts >= 3 &&
+					    nc < (two ? 2U : 1U) ? 0 : -1) :
+					    (sts == 0 && nc == 0 ? 0 : -1);
+					CHECK(ieee80211_he_local_check(&cap) ==
+					    want);
+				}
+			}
+		}
+	}
+	/* The beamformee profile is encoded and parsed back unchanged. */
+	cap = local(0xfffa, IEEE80211_HE_PHY0_CW_40_80_5G);
+	cap.phy[4] = IEEE80211_HE_PHY4_SU_BFEE | 3 << 2;
+	cap.phy[7] = 1 << 3;
+	n = ieee80211_he_cap_encode(buf, sizeof(buf), &cap);
+	CHECK(n == 2 + IEEE80211_HE_CAP_MINLEN && buf[3 + 6 + 4] == 0x0d &&
+	    buf[3 + 6 + 7] == 0x08);
+	CHECK(ieee80211_he_ies_parse(&he, buf, (size_t)n) == 0 &&
+	    memcmp(&he.cap, &cap, sizeof(cap)) == 0);
 	cap = local(0xfffa, 0);
 	cap.phy[9] = IEEE80211_HE_PHY9_PADDING_MASK;	/* Reserved value. */
 	CHECK(ieee80211_he_local_check(&cap) == -1);

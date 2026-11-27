@@ -172,9 +172,11 @@ ieee80211_he_local_check(const struct ieee80211_he_cap *cap)
 	static const uint8_t phy_allowed[IEEE80211_HE_PHY_CAP_LEN] = {
 		[0] = IEEE80211_HE_PHY0_CW_40_2G | IEEE80211_HE_PHY0_CW_40_80_5G,
 		[1] = IEEE80211_HE_PHY1_LDPC,
+		[4] = IEEE80211_HE_PHY4_SU_BFEE | IEEE80211_HE_PHY4_BFEE_STS80,
+		[7] = IEEE80211_HE_PHY7_MAX_NC,
 		[9] = IEEE80211_HE_PHY9_PADDING_MASK,
 	};
-	unsigned i;
+	unsigned i, sts, nc, nss;
 
 	if (cap == NULL || cap->ppe_len != 0 || cap->rx_map80 != cap->tx_map80)
 		return -1;
@@ -191,9 +193,18 @@ ieee80211_he_local_check(const struct ieee80211_he_cap *cap)
 	/* NSS1 alone or NSS1 and NSS2 with the same support, MCS 0-7/9/11. */
 	switch (cap->rx_map80) {
 	case 0xfffc: case 0xfffd: case 0xfffe:
+		nss = 1;
+		break;
 	case 0xfff0: case 0xfff5: case 0xfffa:
-		return 0;
+		nss = 2;
+		break;
 	default:
 		return -1;
 	}
+	/* SU beamformee: at least 4 STS (§9.4.2.248.3) and Nc <= NSS. */
+	sts = (cap->phy[4] & IEEE80211_HE_PHY4_BFEE_STS80) >> 2;
+	nc = (cap->phy[7] & IEEE80211_HE_PHY7_MAX_NC) >> 3;
+	if (cap->phy[4] & IEEE80211_HE_PHY4_SU_BFEE)
+		return sts >= 3 && nc < nss ? 0 : -1;
+	return sts == 0 && nc == 0 ? 0 : -1;
 }

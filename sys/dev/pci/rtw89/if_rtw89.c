@@ -865,7 +865,16 @@ rtw89_vht_admit(struct ieee80211com *ic,
 	 * RX LDPC (bit 4), short GI reception at 80 MHz (bit 5) and the
 	 * maximum A-MPDU length exponent 7 (bits 23-25, 1048575 bytes).
 	 */
-	cap->info = 0x03800030;
+	cap->info = IEEE80211_VHT_INFO_RXLDPC | IEEE80211_VHT_INFO_SGI80 |
+	    IEEE80211_VHT_INFO_AMPDU_EXP;
+	/*
+	 * SU beamformee with 4 STS: the MAC answers the NDP sounding of a
+	 * beamformer AP with a compressed beamforming report of two columns
+	 * (rtw89_mac_bf_assoc()).
+	 */
+	if (sc->sc_nss == 2)
+		cap->info |= IEEE80211_VHT_INFO_SU_BFEE |
+		    3 << 13;	/* Beamformee STS - 1 */
 	return 0;
 }
 
@@ -890,6 +899,12 @@ rtw89_he_admit(struct ieee80211com *ic, unsigned width,
 	cap->phy[1] = IEEE80211_HE_PHY1_LDPC;
 	cap->phy[9] = IEEE80211_HE_PHY9_PADDING_16US;
 	cap->rx_map80 = cap->tx_map80 = sc->sc_nss == 2 ? 0xfffa : 0xfffe;
+	/* SU beamformee with 4 STS and a two-column report, as for VHT. */
+	if (sc->sc_nss == 2) {
+		cap->phy[4] = IEEE80211_HE_PHY4_SU_BFEE |
+		    3 << 2;	/* Beamformee STS (<= 80 MHz) - 1 */
+		cap->phy[7] = 1 << 3;	/* Max Nc - 1 */
+	}
 	return 0;
 }
 
@@ -943,6 +958,10 @@ rtw89_fill_ht(struct rtw89_softc *sc, struct rtw89_nb_ht *ht)
 		ht->vht_map = h->vht.maps.tx_map;
 		ht->width = h->vht.channel.width_mhz;
 		ht->center = h->vht.channel.center;
+		/* The association offered SU beamformee to a beamformer. */
+		ht->vht_bfee = (h->vht.local.info &
+		    IEEE80211_VHT_INFO_SU_BFEE) != 0 &&
+		    (h->vht.peer.info & IEEE80211_VHT_INFO_SU_BFER) != 0;
 	}
 	if (h->he.valid && h->he.width_mhz == ht->width) {
 		ht->he = true;
@@ -954,6 +973,9 @@ rtw89_fill_ht(struct rtw89_softc *sc, struct rtw89_nb_ht *ht)
 		ht->he_bss_color = h->he.operation.bss_color;
 		ht->he_params = h->he.operation.params;
 		ht->he_basic_map = h->he.operation.basic_map;
+		ht->he_bfee = (h->he.local.phy[4] &
+		    IEEE80211_HE_PHY4_SU_BFEE) != 0 &&
+		    (h->he.peer.phy[3] & IEEE80211_HE_PHY3_SU_BFER) != 0;
 	}
 }
 
@@ -972,19 +994,21 @@ rtw89_print_link(struct rtw89_softc *sc, const struct rtw89_nb_ht *ht)
 		    ht->he_bss_color & 0x3f, (ht->he_phy[1] & 0x20) != 0);
 	else if (ht->he)
 		aprint_normal_dev(sc->sc_dev, "HE%u link on channel %u "
-		    "(center %u), TX map 0x%04x, BSS color %u, LDPC %u\n",
-		    ht->width, chan, ht->center, ht->he_map,
-		    ht->he_bss_color & 0x3f, (ht->he_phy[1] & 0x20) != 0);
+		    "(center %u), TX map 0x%04x, BSS color %u, LDPC %u, "
+		    "BFee %u\n", ht->width, chan, ht->center, ht->he_map,
+		    ht->he_bss_color & 0x3f, (ht->he_phy[1] & 0x20) != 0,
+		    ht->he_bfee);
 	else if (!ht->vht)
 		aprint_normal_dev(sc->sc_dev,
 		    "HT20 link on channel %u, TX MCS 0x%04x, SGI %u\n", chan,
 		    ht->ht_mcs, (ht->ht_cap & 0x0020) != 0);
 	else
 		aprint_normal_dev(sc->sc_dev, "VHT%u link on channel %u "
-		    "(center %u), TX map 0x%04x, SGI %u, LDPC %u\n", ht->width,
-		    chan, ht->center, ht->vht_map,
+		    "(center %u), TX map 0x%04x, SGI %u, LDPC %u, BFee %u\n",
+		    ht->width, chan, ht->center, ht->vht_map,
 		    ht->width == 80 ? (ht->vht_cap & 0x20) != 0 :
-		    (ht->ht_cap & 0x40) != 0, (ht->vht_cap & 0x10) != 0);
+		    (ht->ht_cap & 0x40) != 0, (ht->vht_cap & 0x10) != 0,
+		    ht->vht_bfee);
 }
 
 /*

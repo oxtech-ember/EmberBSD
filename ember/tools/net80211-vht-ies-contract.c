@@ -494,9 +494,11 @@ assoc_candidate(void)
 		}
 		CHECK(ieee80211_vht_assoc_candidate(&other, p, n, &c) == want);
 	}
-	/* The qualified receive capabilities: RX LDPC (bit4), SGI80 (bit5)
-	 * and the maximum A-MPDU length exponent (bits 23-25). Every other
-	 * capability bit stays unqualified. */
+	/* The qualified receive capabilities: RX LDPC (bit4), SGI80 (bit5),
+	 * the maximum A-MPDU length exponent (bits 23-25) and SU beamformee
+	 * (bit12) with its STS field (bits 13-15). A single beamformee or
+	 * STS bit is inconsistent. Every other capability bit stays
+	 * unqualified. */
 	for (unsigned bit = 0; bit < 32; bit++) {
 		struct ieee80211_vht_cap caps = {
 			.info = 1U << bit, .rx_map = 0xfffe, .rx_highest = 0,
@@ -509,6 +511,20 @@ assoc_candidate(void)
 		    (bit == 4 || bit == 5 || (bit >= 23 && bit <= 25) ? 0 : -1));
 		caps.info = 0x30;
 		CHECK(ieee80211_vht_assoc_candidate(&caps, p, n, &c) == 0);
+	}
+	for (unsigned sts = 0; sts < 8; sts++) {
+		struct ieee80211_vht_cap caps = {
+			.info = 0x03800030 | sts << 13, .rx_map = 0xfffa,
+			.rx_highest = 0, .tx_map = 0xfffa, .tx_highest = 0
+		};
+
+		n = phy_window(p, 64, 3, 1, 58, 0);
+		CHECK(ieee80211_vht_channel_derive(p, n, 64, &c) == 0);
+		CHECK(ieee80211_vht_assoc_candidate(&caps, p, n, &c) ==
+		    (sts == 0 ? 0 : -1));
+		caps.info |= IEEE80211_VHT_INFO_SU_BFEE;
+		CHECK(ieee80211_vht_assoc_candidate(&caps, p, n, &c) ==
+		    (sts == 0 ? -1 : 0));
 	}
 }
 

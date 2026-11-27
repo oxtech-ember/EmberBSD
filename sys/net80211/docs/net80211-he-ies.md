@@ -44,8 +44,11 @@ of the VHT channel (40 or 80 MHz) that the same request offers.
 - one or two streams with MCS 0-7, 0-9 or 0-11, with equal RX and TX maps;
 - no MAC capability;
 - PHY capabilities limited to the width bit (none at 20 MHz, the 5 GHz
-  40/80 MHz bit at 40 or 80 MHz), LDPC reception and the nominal packet
-  padding;
+  40/80 MHz bit at 40 or 80 MHz), LDPC reception, the nominal packet
+  padding and SU beamformee;
+- for an SU beamformee, a Beamformee STS (up to 80 MHz) field of 3 or more
+  (4 or more STS) and a Max Nc field below the stream count; without SU
+  beamformee, both fields are zero;
 - no PPE Thresholds.
 
 The request then carries the HE Capabilities element after the VHT

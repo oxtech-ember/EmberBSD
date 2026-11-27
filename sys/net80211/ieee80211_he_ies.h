@@ -24,7 +24,12 @@
 #define IEEE80211_HE_PHY0_CW_160_5G	0x08	/* B3: 160 MHz in 5 GHz */
 #define IEEE80211_HE_PHY0_CW_80P80_5G	0x10	/* B4: 80+80 MHz in 5 GHz */
 #define IEEE80211_HE_PHY1_LDPC		0x20	/* B13: LDPC in payload */
+#define IEEE80211_HE_PHY3_SU_BFER	0x80	/* B31: SU Beamformer */
+#define IEEE80211_HE_PHY4_SU_BFEE	0x01	/* B32: SU Beamformee */
+#define IEEE80211_HE_PHY4_BFEE_STS80	0x1c	/* B34-B36: STS - 1 */
+#define IEEE80211_HE_PHY5_SOUND80	0x07	/* B40-B42 */
 #define IEEE80211_HE_PHY6_PPE_PRESENT	0x80	/* B55: PPE Thresholds */
+#define IEEE80211_HE_PHY7_MAX_NC	0x38	/* B59-B61: Nc - 1 */
 #define IEEE80211_HE_PHY9_PADDING_MASK	0xc0	/* B78-B79: nominal padding */
 #define IEEE80211_HE_PHY9_PADDING_16US	0x80
 
@@ -78,8 +83,10 @@ int ieee80211_he_cap_encode(uint8_t *, size_t, const struct ieee80211_he_cap *);
 /*
  * Qualified local station profile: one or two streams with MCS 0-7, 0-9 or
  * 0-11 and equal maps; no MAC capability; PHY capabilities limited to the
- * 2.4 GHz 40 MHz or 5 GHz 40/80 MHz width bit, LDPC and the nominal
- * packet padding; no PPE Thresholds. Return 0 or -1.
+ * 2.4 GHz 40 MHz or 5 GHz 40/80 MHz width bit, LDPC, the nominal packet
+ * padding and SU beamformee; no PPE Thresholds. An SU beamformee has a
+ * Beamformee STS (<= 80 MHz) field of at least 3 and a Max Nc below its
+ * stream count; without it both fields are zero. Return 0 or -1.
  */
 int ieee80211_he_local_check(const struct ieee80211_he_cap *);
 
