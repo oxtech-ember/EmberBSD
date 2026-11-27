@@ -8,6 +8,15 @@
 #define IEEE80211_VHT_CAP_LEN		12
 #define IEEE80211_VHT_OPERATION_LEN	5
 
+/* VHT Capabilities Information bits of the qualified local profile. */
+#define IEEE80211_VHT_INFO_RXLDPC	0x00000010	/* B4 */
+#define IEEE80211_VHT_INFO_SGI80	0x00000020	/* B5 */
+#define IEEE80211_VHT_INFO_SU_BFER	0x00000800	/* B11: SU Beamformer */
+#define IEEE80211_VHT_INFO_SU_BFEE	0x00001000	/* B12: SU Beamformee */
+#define IEEE80211_VHT_INFO_BFEE_STS	0x0000e000	/* B13-B15: STS - 1 */
+#define IEEE80211_VHT_INFO_SOUND_DIM	0x00070000	/* B16-B18 */
+#define IEEE80211_VHT_INFO_AMPDU_EXP	0x03800000	/* B23-B25 */
+
 /* Raw wire values. Highest fields retain all reserved/extended-NSS bits. */
 struct ieee80211_vht_cap {
 	uint32_t info;
