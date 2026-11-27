@@ -10,6 +10,7 @@ name: Native net80211 crypto, scan, aggregation and WME contracts
       - 'sys/dev/ic/aicwf_*.h'
       - 'sys/dev/sdmmc/if_aicwf.c'
       - 'sys/dev/ic/aicwfvar.h'
+      - 'sbin/ifconfig/ieee80211.c'
       - 'sys/dev/ic/aicwf.c'
       - 'sys/dev/sdmmc/if_aicwf_*.h'
       - 'ember/tests/aicwf-vht.sh'
@@ -80,6 +81,7 @@ name: Native net80211 crypto, scan, aggregation and WME contracts
       - 'sys/dev/ic/aicwf_*.h'
       - 'sys/dev/sdmmc/if_aicwf.c'
       - 'sys/dev/ic/aicwfvar.h'
+      - 'sbin/ifconfig/ieee80211.c'
       - 'sys/dev/ic/aicwf.c'
       - 'sys/dev/sdmmc/if_aicwf_*.h'
       - 'ember/tests/aicwf-vht.sh'
@@ -170,6 +172,7 @@ jobs:
             /sys/dev/ic/aicwf_*.h
             /sys/dev/sdmmc/if_aicwf.c
             /sys/dev/ic/aicwfvar.h
+            /sbin/ifconfig/ieee80211.c
             /sys/dev/ic/aicwf.c
             /sys/dev/sdmmc/if_aicwf_*.h
             /ember/tests/aicwf-vht.sh
