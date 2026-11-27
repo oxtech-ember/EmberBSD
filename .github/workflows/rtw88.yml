@@ -59,6 +59,8 @@ name: Native rtw88 source contracts
       - 'sys/net80211/ieee80211_phy_ies.c'
       - 'sys/net80211/ieee80211_vht_ies.c'
       - 'sys/net80211/ieee80211_vht_ies.h'
+      - 'sys/net80211/ieee80211_he_ies.c'
+      - 'sys/net80211/ieee80211_he_ies.h'
       - 'ember/tools/net80211-phy-ies-contract.c'
       - 'ember/tools/net80211-phy-ies-extract.py'
       - 'sys/net80211/files.net80211'
@@ -120,6 +122,8 @@ name: Native rtw88 source contracts
       - 'sys/net80211/ieee80211_phy_ies.c'
       - 'sys/net80211/ieee80211_vht_ies.c'
       - 'sys/net80211/ieee80211_vht_ies.h'
+      - 'sys/net80211/ieee80211_he_ies.c'
+      - 'sys/net80211/ieee80211_he_ies.h'
       - 'ember/tools/net80211-phy-ies-contract.c'
       - 'ember/tools/net80211-phy-ies-extract.py'
       - 'sys/net80211/files.net80211'
@@ -171,6 +175,8 @@ jobs:
             /sys/net80211/ieee80211_phy_ies.c
             /sys/net80211/ieee80211_vht_ies.c
             /sys/net80211/ieee80211_vht_ies.h
+            /sys/net80211/ieee80211_he_ies.c
+            /sys/net80211/ieee80211_he_ies.h
             /ember/tools/net80211-phy-ies-contract.c
             /ember/tools/net80211-phy-ies-extract.py
             /sys/net80211/ieee80211_ht20.h

@@ -81,6 +81,7 @@ interface_inputs = (
     "sys/net80211/ieee80211_sae.c",
     "sys/net80211/ieee80211_var.h", "sys/net80211/ieee80211_vht_ies.c",
     "sys/net80211/ieee80211_vht_ies.h",
+    "sys/net80211/ieee80211_he_ies.c", "sys/net80211/ieee80211_he_ies.h",
 )
 
 required = (
