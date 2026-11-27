@@ -448,6 +448,9 @@ ember/tools/drm-syncobj-flatten-contract.sh sys/external/bsd/drm2/dist/drm/
 ember/tools/drm-syncobj-flatten-contract.sh sys/external/bsd/drm2/linux/
 ember/tools/drm-syncobj-wait-contract.sh ember/tools/drm-syncobj-wait-contract.c
 ember/tools/drm-syncobj-wait-contract.sh sys/external/bsd/drm2/dist/drm/
+ember/tests/rk3506-radio.sh ember/tests/rk3506-radio.c
+ember/tests/rk3506-radio.sh sys/arch/arm/rockchip/rk3506_radio.c
+ember/tests/rk3506-radio.sh sys/arch/arm/rockchip/rk_gpio.c
 ember/tests/dwc2-port-reset.sh ember/tests/dwc2-port-reset.c
 ember/tests/dwc2-port-reset.sh sys/external/bsd/dwc2/dist/dwc2_hcdintr.c
 ember/tests/dwc2-port-reset.sh sys/external/bsd/dwc2/dist/dwc2_hw.h

@@ -229,7 +229,9 @@ rk3506_iomux_attach(device_t parent, device_t self, void *aux)
 		cfaa.faa_phandle = child;
 		cfaa.faa_name = fdtbus_get_string(child, "name");
 		cfaa.faa_quiet = false;
-		bank = config_found(self, &cfaa, NULL, CFARGS_NONE);
+		bank = config_found(self, &cfaa, NULL,
+		    CFARGS(.devhandle =
+		    devhandle_from_of(device_handle(self), child)));
 		if (child == gpio1)
 			sc->sc_gpio1 = bank;
 	}

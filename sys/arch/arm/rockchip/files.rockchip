@@ -72,6 +72,11 @@ device	rkgpio: gpiobus
 attach	rkgpio at rkiomux with rk_gpio
 file	arch/arm/rockchip/rk_gpio.c		rk_gpio	needs-flag
 
+# Early onboard radio enable
+device	rk3506radio
+attach	rk3506radio at fdt
+file	arch/arm/rockchip/rk3506_radio.c		rk3506radio
+
 # I2C
 device	rkiic: i2cbus, i2cexec
 attach	rkiic at fdt with rk_i2c

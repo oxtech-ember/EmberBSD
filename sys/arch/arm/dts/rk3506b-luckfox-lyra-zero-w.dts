@@ -28,6 +28,15 @@
 		reg = <0 0x20000000>;
 	};
 
+	/* U10 pin 12 (WL_DIS#) enables the onboard USB radio. */
+	rfkill-wlan {
+		compatible = "rfkill-gpio";
+		radio-type = "wlan";
+		shutdown-gpios = <&gpio1 RK_PC5 GPIO_ACTIVE_HIGH>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&wifi_enable>;
+	};
+
 	vcc_3v3: regulator-3v3 {
 		compatible = "regulator-fixed";
 		regulator-name = "vcc_3v3";
@@ -60,6 +69,10 @@
 	};
 
 	wifi {
+		wifi_enable: wifi-enable {
+			rockchip,pins = <1 RK_PC5 RK_FUNC_GPIO &pcfg_pull_none>;
+		};
+
 		/* U9 connects the onboard antenna when GPIO1_C7 is high. */
 		wifi_antenna: wifi-antenna {
 			rockchip,pins = <1 RK_PC7 RK_FUNC_GPIO &pcfg_output_high>;

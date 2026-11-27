@@ -162,7 +162,13 @@ The vendor SDK uses different IDs for the same CRU compatible string.
 The driver uses the upstream binding's required `xin` input to identify it.
 
 OTG1 at `0xff780000` connects to the onboard CH334F USB hub. The DTB selects
-host mode. The USB2 PHY uses the 24 MHz reference and its internal 480 MHz
+host mode. The board DTB assigns GPIO1_C5 to the onboard radio (U10 WL_DIS#).
+Before USB enumeration, the kernel drives this line low for 20 ms, then high
+for 20 ms. It preserves an existing high output. A pulled-up input still
+requires the sequence. GPIO1_C7 selects the onboard antenna.
+The delays follow the [Rockchip BSP power-key sequence](https://github.com/EliSofke/LuckfoxLyraSDK/blob/6dcbca0d8a517d79bd8fb4205ca4966b136604bc/kernel-6.1/net/rfkill/rfkill-bt.c#L334-L345).
+
+The USB2 PHY uses the 24 MHz reference and its internal 480 MHz
 output. U-Boot must leave the system bus clocks running and the USB resets
 released. On the serial console, check for the DWC2 host and the downstream
 hub. On the radio's vendor WLAN interface, `uaicfw` reads the chip ID and

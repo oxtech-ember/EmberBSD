@@ -5,6 +5,7 @@
 
 #include <sys/device.h>
 
+int	rk_gpio_v2_output_state(device_t, u_int, bool *, bool *);
 int	rk_gpio_config_output(device_t, u_int, int, bool);
 
 #endif /* _ARM_ROCKCHIP_RK_GPIOVAR_H_ */

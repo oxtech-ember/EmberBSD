@@ -294,6 +294,23 @@ rk_gpio_v2_pin_read(void *priv, int pin)
 	return val;
 }
 
+/* Read the existing drive state without changing the pad or the latch. */
+int
+rk_gpio_v2_output_state(device_t dev, u_int pin, bool *driving_high, bool *level)
+{
+	struct rk_gpio_softc * const sc = device_private(dev);
+
+	if (pin >= __arraycount(sc->sc_pins) ||
+	    sc->sc_gp.gp_pin_read != rk_gpio_v2_pin_read)
+		return ENXIO;
+
+	const uint32_t mask = GPIOV2_DATA_MASK(pin);
+	*driving_high = (RD4(sc, GPIOV2_SWPORT_DDR_REG(pin)) & mask) != 0 &&
+	    (RD4(sc, GPIOV2_SWPORT_DR_REG(pin)) & mask) != 0;
+	*level = rk_gpio_v2_pin_read(sc, pin) != 0;
+	return 0;
+}
+
 static void
 rk_gpio_v2_pin_write(void *priv, int pin, int val)
 {

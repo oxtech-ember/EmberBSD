@@ -284,6 +284,7 @@ gpio* 		at gpiobus?
 pinctrl* 	at fdt? pass 2		# Generic pinctrl driver
 imxiomux* 	at fdt? pass 2		# i.MX IOMUX
 rkiomux*	at fdt? pass 3		# Rockchip IOMUX
+rk3506radio*	at fdt? pass 8		# Lyra Zero W radio before USB PHY
 tegrapinmux* 	at fdt?			# NVIDIA Tegra MPIO
 
 # PWM controller
