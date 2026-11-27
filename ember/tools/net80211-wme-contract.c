@@ -1301,9 +1301,11 @@ he_assoc_response(unsigned variant, unsigned vht_variant)
 	};
 	static const uint8_t op[] = { 255, 7, 36, 0x04, 0x00, 0x00, 0x21,
 	    0xfc, 0xff };
-	uint8_t ies[64];
+	static uint8_t ies[64];	/* Static and zeroed, as vht_assoc_response(). */
 	size_t len = 0;
 	struct mbuf *m = vht_assoc_response(vht_variant);
+
+	memset(ies, 0, sizeof(ies));
 
 	if (variant != 1) {
 		memcpy(ies + len, cap, sizeof(cap));
@@ -1335,7 +1337,7 @@ test_he_assoc(void)
 	prepare_vht_request();
 	CHECK(request(IEEE80211_FC0_SUBTYPE_ASSOC_REQ) == 0);
 	he = request_ie(IEEE80211_FC0_SUBTYPE_ASSOC_REQ, 255, &count);
-	CHECK(count == 0 && test_ic.ic_ht20_diag.he_offers == 0);
+	CHECK(count == 0 && he == NULL && test_ic.ic_ht20_diag.he_offers == 0);
 	release_capture();
 
 	/* VHT80 offer: HE at the same 80 MHz channel, committed on response. */
@@ -1380,7 +1382,7 @@ test_he_assoc(void)
 		test_ic.ic_he_admit = he_local_admit;
 		CHECK(request(IEEE80211_FC0_SUBTYPE_ASSOC_REQ) == 0);
 		he = request_ie(IEEE80211_FC0_SUBTYPE_ASSOC_REQ, 255, &count);
-		CHECK(count == 0 && !test_node.ni_ht20.he.offered);
+		CHECK(count == 0 && he == NULL && !test_node.ni_ht20.he.offered);
 		CHECK(test_ic.ic_ht20_diag.he_offers == 0);
 		release_capture();
 		test_ic.ic_he_admit = NULL;
