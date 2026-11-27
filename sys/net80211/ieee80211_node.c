@@ -654,6 +654,21 @@ ieee80211_cancel_scan(struct ieee80211com *ic)
 }
 
 /*
+ * Stop an unfinished foreground scan. Its requester still gets one scan
+ * completion event: the BSD supplicant waits for it without a timeout and
+ * refuses a new scan until then. It reads the partial results.
+ */
+void
+ieee80211_abort_scan(struct ieee80211com *ic)
+{
+
+	if ((ic->ic_flags & IEEE80211_F_SCAN) == 0)
+		return;
+	ieee80211_cancel_scan(ic);
+	ieee80211_notify_scan_done(ic);
+}
+
+/*
  * Complete a scan of potential channels.
  */
 void

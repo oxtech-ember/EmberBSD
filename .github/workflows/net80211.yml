@@ -296,6 +296,7 @@ jobs:
           mkdir -p "$RUNNER_TEMP/ioctl" "$RUNNER_TEMP/rtw89-link-loss"
           python3 sys/net80211/tests/ioctl.py --cc gcc --build-dir "$RUNNER_TEMP/ioctl"
           python3 sys/net80211/tests/sta-left.py --cc gcc --build-dir "$RUNNER_TEMP/sta-left"
+          python3 sys/net80211/tests/scan-abort.py --cc gcc --build-dir "$RUNNER_TEMP/scan-abort"
           CC=gcc python3 ember/tests/rtwx-watchdog.py . "$RUNNER_TEMP/rtwx-watchdog"
           python3 ember/tools/rtw89-link-loss-contract.py --source-root "$PWD" \
             --work-dir "$RUNNER_TEMP/rtw89-link-loss" --cc "$(command -v gcc)"

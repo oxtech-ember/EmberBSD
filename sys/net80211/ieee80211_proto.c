@@ -1110,7 +1110,8 @@ ieee80211_newstate(struct ieee80211com *ic, enum ieee80211_state nstate, int arg
 			}
 			goto reset;
 		case IEEE80211_S_SCAN:
-			ieee80211_cancel_scan(ic);
+			/* A stop or reset can end a scan before its last channel. */
+			ieee80211_abort_scan(ic);
 			goto reset;
 		case IEEE80211_S_AUTH:
 		reset:

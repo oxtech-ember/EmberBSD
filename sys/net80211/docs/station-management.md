@@ -139,6 +139,12 @@ single native scan busy until the firmware completion indication.
 
 ## Foreground scan requests
 
+A stop or reset can move the station from SCAN to INIT before the last
+channel. `ieee80211_abort_scan()` then still sends one
+`RTM_IEEE80211_SCAN`, because the BSD supplicant waits for it without a
+timeout and refuses each new scan until it arrives.
+`tests/scan-abort.py` checks this rule.
+
 A station scan request (`IEEE80211_IOC_SCAN_REQ` and the `wi` scan requests)
 returns `EBUSY` in AUTH and ASSOC. These states normally hold an exchange: a
 frame waits for its reply, or the driver firmware runs the join. With manual
