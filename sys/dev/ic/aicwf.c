@@ -2996,6 +2996,7 @@ aicwf_rx_fence_locked(struct aicwf_softc *sc,
 	KASSERT(mutex_owned(&sc->sc_epoch_lock));
 	ieee80211_rxba_offload_retire(&sc->sc_rxba, out);
 	sc->sc_rx_active = false;
+	sc->sc_port_serial = 0;
 	sc->sc_rx_join = 0;
 	if (sc->sc_rx_serial < UINT64_MAX)
 		sc->sc_rx_serial++;
@@ -3053,6 +3054,8 @@ aicwf_rx_resume(struct aicwf_softc *sc, uint64_t serial)
 		sc->sc_rx_active = ieee80211_rxba_offload_configure(&sc->sc_rxba,
 		    sc->sc_rx_assoc, sc->sc_rx_serial, AICWF_REORDER_WAIT_MS,
 		    aicwf_rx_now(), &out) == 0;
+		if (sc->sc_rx_active && sc->sc_rx_serial != UINT64_MAX)
+			sc->sc_port_serial = sc->sc_rx_serial;
 	}
 	mutex_spin_exit(&sc->sc_epoch_lock);
 	aicwf_rx_discard(&out);

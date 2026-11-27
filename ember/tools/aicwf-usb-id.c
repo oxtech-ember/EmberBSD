@@ -182,10 +182,15 @@ struct aicwf_softc {
 	void *sc_bus;
 	uint8_t *sc_txbuf;
 	struct { unsigned ic_flags; } sc_ic;
-	bool sc_receive_only, sc_connected, sc_ptk_valid;
+	bool sc_receive_only, sc_connected, sc_ptk_valid, sc_rx_active;
+	kmutex_t sc_epoch_lock;
+	uint64_t sc_port_serial, sc_rx_serial;
 };
 struct aicwf_usb_softc { struct uaicfw_attach_args bus; };
+#define mutex_spin_enter mutex_enter
+#define mutex_spin_exit mutex_exit
 #include "station-write.h"
+static struct aicwf_softc *revoke_on_open;
 
 enum data_out_test {
 	OUT_IDLE, OUT_ORDINARY, OUT_ACK, OUT_NACK, OUT_LATE, OUT_STALE,
@@ -298,6 +303,11 @@ usbd_create_xfer(struct usbd_pipe *p, size_t n, int flags, int frames,
 		return ENOMEM;
 	*out = calloc(1, sizeof(**out));
 	assert(*out && n <= sizeof((*out)->buf));
+	if (p->addr == 1 && revoke_on_open != NULL) {
+		revoke_on_open->sc_port_serial = 0;
+		revoke_on_open->sc_rx_serial++;
+		revoke_on_open = NULL;
+	}
 	if (p->addr == 1 && stopping_on_alloc)
 		cancel_data_open();
 	(*out)->pipe = p;
@@ -723,7 +733,12 @@ ethernet_checks(void)
 	sc.sc_connected = true;
 	sc.sc_ic.ic_flags = IEEE80211_F_WPA;
 	assert(aicwf_usb_write(&sc, hdr + 1, 0, &attempted) == EACCES && !attempted);
-	sc.sc_ptk_valid = true;
+	sc.sc_ptk_valid = sc.sc_rx_active = true;
+	sc.sc_rx_serial = 4;
+	assert(aicwf_usb_write(&sc, hdr + 1, 0, &attempted) == EACCES && !attempted);
+	sc.sc_port_serial = 3;
+	assert(aicwf_usb_write(&sc, hdr + 1, 0, &attempted) == EACCES && !attempted);
+	sc.sc_port_serial = 4;
 	data_test = OUT_ALLOC_FAIL;
 	assert(aicwf_usb_write(&sc, hdr + 1, 0, &attempted) == ENOMEM && !attempted);
 	assert(opens == base && !data_writes);
@@ -738,6 +753,10 @@ ethernet_checks(void)
 	assert(aicwf_usb_write(&sc, hdr, 0, &attempted) == EINVAL && !attempted);
 	assert(aicwf_usb_write(&sc, sizeof(packet), 0, &attempted) == EMSGSIZE && !attempted);
 	assert(opens == base && !data_writes);
+	revoke_on_open = &sc;
+	assert(aicwf_usb_write(&sc, hdr + 1, 0, &attempted) == EACCES && !attempted);
+	assert(opens == base + 1 && !data_writes && sc.sc_port_serial == 0);
+	sc.sc_port_serial = sc.sc_rx_serial; /* A later port CFM. */
 	assert(aicwf_usb_write(&sc, hdr + 1, 0, &attempted) == 0 && attempted);
 	assert(opens == base + 1 && data_writes == 1 && data_len == hdr + 1);
 	assert(le16dec(data_wire) == data_len && data_wire[2] == 1 && data_wire[3] == 0);
@@ -867,7 +886,7 @@ main(void)
 			p[2] = AICWF_TYPE_DATA;
 			stopping_on_alloc = true;
 			unsigned before = data_writes;
-			assert(radio.ethernet(radio.cookie, p, sizeof(p), &attempted)
+			assert(radio.ethernet(radio.cookie, p, sizeof(p), NULL, &attempted)
 			    == ENXIO && !attempted && data_writes == before);
 			stopping_on_alloc = false;
 			assert(device.sc_data.xfer != NULL && !device.sc_data_reply);

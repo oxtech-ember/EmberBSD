@@ -628,7 +628,8 @@ uaicfw_write(void *arg, const uint8_t *packet, size_t len, bool *attempted)
 
 /* The common station supplies an Ethernet descriptor and its MSDU payload. */
 static int
-uaicfw_ethernet(void *arg, const uint8_t *packet, size_t len, bool *attempted)
+uaicfw_ethernet(void *arg, const uint8_t *packet, size_t len,
+    const struct uaicfw_port *port, bool *attempted)
 {
 	struct uaicfw_softc * const sc = arg;
 	struct uaicfw_data_reply reply = { .status = USBD_IN_PROGRESS };
@@ -664,6 +665,12 @@ uaicfw_ethernet(void *arg, const uint8_t *packet, size_t len, bool *attempted)
 			status = uaicfw_out_state(sc);
 		if (status != USBD_NORMAL_COMPLETION)
 			goto out;
+	}
+	/* Already admitted OUT transfers can complete across a key change.
+	 * Recheck after every sleep preceding submission of protected data. */
+	if (port != NULL && port->current(port->cookie) != port->serial) {
+		mutex_exit(&sc->sc_cmd_lock);
+		return EACCES;
 	}
 	buf = usbd_get_buffer(sc->sc_data.xfer);
 	memcpy(buf, packet, len);

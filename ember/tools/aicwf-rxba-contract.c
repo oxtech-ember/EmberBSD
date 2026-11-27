@@ -46,6 +46,7 @@ struct aicwf_softc {
  uint64_t sc_rx_serial,sc_rx_assoc,sc_rx_join,sc_sae_epoch,sc_join_serial,sc_configure_serial;
  uint64_t sc_pmf_rx_pn;
  uint8_t sc_rx_vif,sc_rx_ap,sc_rx_bssid[6],sc_vif,sc_ap,sc_ptk[16],sc_hwkey[5];
+ uint64_t sc_port_serial;
  bool sc_rx_active,sc_if_attached,sc_connected,sc_ptk_valid;
  bool sc_connecting,sc_sae_enabled,sc_sae_pending,sc_sae_authenticated,sc_qos;
  uint8_t sc_sae_bssid[6],sc_igtk[2];
@@ -58,7 +59,8 @@ static struct ieee80211_node aic_peer;
 static bool aic_node_lock;
 static void (*aic_unlock_hook)(void), (*aic_command_hook)(void);
 static unsigned aic_delivered,aic_ids[512],aic_key_adds,aic_ports;
-static int aic_command_error;
+static int aic_command_error, aic_port_error;
+static void (*aic_port_hook)(void);
 static struct aicwf_task *aic_queued;
 static struct aicwf_task *aic_acquired;
 static void mutex_enter(int *p) {assert(!aic_node_lock && !*p);*p=1;}
@@ -133,7 +135,11 @@ aicwf_cmd_reply(struct aicwf_softc *sc,unsigned id,const void *p,size_t n,
  if(aic_command_error)return aic_command_error;
  if(id==AICWF_MM_KEY_ADD_REQ) {
   assert(n==44 && len==2);aic_key_adds++;memset(reply,0,len);((uint8_t *)reply)[1]=3;
- } else if(id==AICWF_ME_SET_CONTROL_PORT_REQ) {assert(n==2);aic_ports++;}
+ } else if(id==AICWF_ME_SET_CONTROL_PORT_REQ) {
+  assert(n==2 && !aic.sc_port_serial && aic.sc_ptk_valid);aic_ports++;
+  if(aic_port_hook) {void (*hook)(void)=aic_port_hook;aic_port_hook=NULL;hook();}
+  if(aic_port_error)return aic_port_error;
+ }
  else {assert(id==AICWF_MM_KEY_DEL_REQ && n==1);}
  return 0;
 }
@@ -155,7 +161,7 @@ aic_reset(void)
  aic.sc_vif=2;aic.sc_ap=3;aic.sc_sae_epoch=7;
  aic.sc_if_attached=aic.sc_connected=true;
  unit_now=1000;unit_mgt_alloc_fail=unit_prepend_fail=0;unit_mgt_headroom=64;
- aic_unlock_hook=aic_command_hook=NULL;aic_command_error=0;
+ aic_unlock_hook=aic_command_hook=NULL;aic_command_error=0;aic_port_error=0;aic_port_hook=NULL;
  aic_delivered=aic_key_adds=aic_ports=0;
  aic_begin();CHECK(aic.sc_rx_active);
 }
@@ -230,7 +236,7 @@ test_aic_key_stop_and_batch_fences(void)
  aic_node_lock=true;CHECK(aicwf_key_task(&aic.sc_ic,&key,AICWF_TASK_KEY_SET)==1);aic_node_lock=false;
  CHECK(!aic.sc_rx_active && aic.sc_rxba.bytes==0);
  aic_receive(11,2,true,false);CHECK(aic_delivered==1);
- aic_key_run();CHECK(aic.sc_rx_active && aic.sc_ptk_valid && aic_key_adds==1 && aic_ports==1);
+ aic_key_run();CHECK(aic.sc_rx_active && aic.sc_port_serial==aic.sc_rx_serial && aic.sc_ptk_valid && aic_key_adds==1 && aic_ports==1);
  aic_receive(11,4,true,false);CHECK(aic_delivered==2);
  aic.sc_pmf_rx_pn=99;
  CHECK(aicwf_key_task(&aic.sc_ic,&key,AICWF_TASK_KEY_SET)==1);aic_key_run();
@@ -259,6 +265,27 @@ static void aic_delete_pending(void)
 {
  CHECK(!aic.sc_rx_active);
  CHECK(aicwf_key_task(&aic.sc_ic,&aic_pending_key,AICWF_TASK_KEY_DELETE)==1);
+}
+static void
+test_controlled_port_confirmation(void)
+{
+ aic_reset();memset(&aic_pending_key,0,sizeof(aic_pending_key));
+ aic_pending_key.wk_cipher=&ccmp;aic_pending_key.wk_keylen=16;aic_pending_key.wk_key[0]=4;
+ CHECK(aic.sc_rx_active && aic.sc_port_serial==0);
+ CHECK(aicwf_key_task(&aic.sc_ic,&aic_pending_key,AICWF_TASK_KEY_SET)==1);
+ aic_port_error=EPROTO;aic_key_run();
+ CHECK(aic.sc_ptk_valid && !aic.sc_rx_active && aic.sc_port_serial==0);
+ aic_port_error=0;
+ CHECK(aicwf_key_task(&aic.sc_ic,&aic_pending_key,AICWF_TASK_KEY_SET)==1);
+ aic_port_hook=aic_delete_pending;aic_key_run();
+ CHECK(aic.sc_port_serial==0 && aic_queued!=NULL);
+ aic_key_run();CHECK(!aic.sc_ptk_valid && aic.sc_port_serial==0);
+ CHECK(aicwf_key_task(&aic.sc_ic,&aic_pending_key,AICWF_TASK_KEY_SET)==1);aic_key_run();
+ CHECK(aic.sc_port_serial!=0 && aic.sc_port_serial==aic.sc_rx_serial);
+ const uint64_t previous=aic.sc_port_serial;
+ CHECK(aicwf_key_task(&aic.sc_ic,&aic_pending_key,AICWF_TASK_KEY_DELETE)==1);
+ CHECK(aic.sc_ptk_valid && aic.sc_port_serial==0 && aic.sc_rx_serial!=previous);
+ aic_key_run();aicwf_rx_retire(&aic);
 }
 static void
 test_aic_delete_during_key_install(void)
@@ -307,7 +334,7 @@ test_aic_old_ap_departure_preserves_join(void)
 int main(void)
 {
  test_aic_actual_reorder_lifetime();test_aic_key_stop_and_batch_fences();
- test_aic_delete_during_key_install();test_aic_old_ap_departure_preserves_join();
+ test_controlled_port_confirmation();test_aic_delete_during_key_install();test_aic_old_ap_departure_preserves_join();
  CHECK(aic.sc_rxba.bytes==0 && rxba_kmem_live==0 && !aic.sc_epoch_lock && !aic.sc_rx_lock);
  CHECK(aic_queued==NULL && aic_acquired==NULL);
  printf("AIC actual offload RX/BA/lifetime: %u checks, %u failures\n",checks,failures);

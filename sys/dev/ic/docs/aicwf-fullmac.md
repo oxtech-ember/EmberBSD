@@ -17,7 +17,9 @@ The USB header counts the entire transfer. EAPOL requests a firmware
 confirmation with a 30-bit host index and pads the transfer to four bytes.
 A short transfer, a missing confirmation, or a negative acknowledgement
 fails the packet. The driver does not replay an uncertain submission.
-In a secured network, only EAPOL can pass before the pairwise key is installed.
+In a secured network, EAPOL can pass before key setup. Other packets require
+the controlled-port confirmation for the current key generation. A queued
+pairwise key change retires permission before its firmware command runs.
 The passive survey attachment keeps the data OUT endpoint closed.
 
 ## DC passive survey

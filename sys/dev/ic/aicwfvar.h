@@ -157,6 +157,7 @@ struct aicwf_softc {
 	uint64_t		sc_rx_serial, sc_rx_assoc; /* sc_epoch_lock */
 	uint64_t		sc_rx_join; /* Host CONNECT request eligible for indication. */
 	bool			sc_rx_active;
+	uint64_t		sc_port_serial; /* confirmed controlled port, sc_epoch_lock */
 	uint8_t			sc_rx_vif, sc_rx_ap, sc_rx_bssid[ETHER_ADDR_LEN];
 	struct evcnt		sc_ev_ampdu;	/* frames of an A-MPDU */
 	struct evcnt		sc_ev_amsdu;	/* frames with several packets */

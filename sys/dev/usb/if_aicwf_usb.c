@@ -39,6 +39,21 @@ static int aicwf_usb_detach(device_t, int);
 CFATTACH_DECL_NEW(aicwf_usb, sizeof(struct aicwf_usb_softc),
     aicwf_usb_match, aicwf_usb_attach, aicwf_usb_detach, NULL);
 
+/* Key admission and the port CFM update this lifetime at IPL_NET. */
+static uint64_t
+aicwf_usb_port(void *cookie)
+{
+	struct aicwf_softc * const sc = cookie;
+	uint64_t serial = 0;
+
+	mutex_spin_enter(&sc->sc_epoch_lock);
+	if (sc->sc_ptk_valid && sc->sc_rx_active &&
+	    sc->sc_port_serial == sc->sc_rx_serial)
+		serial = sc->sc_port_serial;
+	mutex_spin_exit(&sc->sc_epoch_lock);
+	return serial;
+}
+
 static int
 aicwf_usb_write(struct aicwf_softc *sc, size_t len, u_int reserve,
     bool *attempted)
@@ -46,16 +61,21 @@ aicwf_usb_write(struct aicwf_softc *sc, size_t len, u_int reserve,
 	struct aicwf_usb_softc * const usc = sc->sc_bus;
 
 	if (len >= AICWF_HDR_LEN && sc->sc_txbuf[2] == AICWF_TYPE_DATA) {
+		struct uaicfw_port port = { .current = aicwf_usb_port, .cookie = sc };
+
 		if (attempted != NULL)
 			*attempted = false;
 		if (sc->sc_receive_only || !sc->sc_connected)
 			return ENETDOWN;
 		if (len >= AICWF_HDR_LEN + AICWF_TXDESC_LEN &&
-		    (sc->sc_ic.ic_flags & IEEE80211_F_WPA) != 0 && !sc->sc_ptk_valid &&
-		    be16dec(sc->sc_txbuf + AICWF_HDR_LEN + 20) != ETHERTYPE_PAE)
-			return EACCES;
+		    (sc->sc_ic.ic_flags & IEEE80211_F_WPA) != 0 &&
+		    be16dec(sc->sc_txbuf + AICWF_HDR_LEN + 20) != ETHERTYPE_PAE) {
+			port.serial = aicwf_usb_port(sc);
+			if (port.serial == 0)
+				return EACCES;
+		}
 		return usc->bus.ethernet(usc->bus.cookie, sc->sc_txbuf, len,
-		    attempted);
+		    port.serial != 0 ? &port : NULL, attempted);
 	}
 	return usc->bus.write(usc->bus.cookie, sc->sc_txbuf, len, attempted);
 }
