@@ -39,6 +39,7 @@ ember/tests/aicwf-command.sh sys/dev/ic/aicwf.c
 ember/tests/aicwf-command.sh sys/dev/ic/aicwfvar.h
 ember/tests/aicwf-usb-id.sh ember/tools/aicwf-usb-id.c
 ember/tests/aicwf-usb-id.sh sys/dev/ic/aicwf_command.h
+ember/tests/aicwf-usb-id.sh sys/dev/ic/aicwf_sae.h
 ember/tests/aicwf-usb-id.sh sys/dev/usb/files.usb
 ember/tests/aicwf-usb-id.sh sys/arch/evbarm/conf/GENERIC
 ember/tests/aicwf-usb-id.sh sys/dev/usb/if_aicwf_usb.c

@@ -884,6 +884,11 @@ security_checks(void)
 	frame[16] ^= 1; frame[26] = 3;
 	assert(aicwf_usb_write(&sc, hdr + 35, 0, &attempted) == EINVAL && !attempted);
 	frame[26] = 1; data_test = OUT_ORDINARY;
+	uaicfw_close(&device.sc_data);
+	revoke_on_open = &sc;
+	assert(aicwf_usb_write(&sc, hdr + 35, 0, &attempted) == EACCES && !attempted);
+	assert(!revoke_on_open);
+	sc.sc_rx_join = sc.sc_rx_serial;
 	assert(aicwf_usb_write(&sc, hdr + 35, 0, &attempted) == 0 && attempted);
 	assert(data_len == hdr + 35 && le32dec(data_wire + 8) == 0);
 	assert(data_writes == previous + 1);
@@ -904,6 +909,11 @@ security_checks(void)
 	sc.sc_join_open = false; frame[24] = 10;
 	assert(aicwf_usb_write(&sc, hdr + 28, 0, &attempted) == EINVAL && !attempted);
 	frame[24] = 8; data_test = OUT_ACK;
+	uaicfw_close(&device.sc_data);
+	revoke_on_open = &sc;
+	assert(aicwf_usb_write(&sc, hdr + 28, 0, &attempted) == EACCES && !attempted);
+	assert(!revoke_on_open);
+	sc.sc_port_serial = sc.sc_rx_serial;
 	assert(aicwf_usb_write(&sc, hdr + 28, 0, &attempted) == 0 && attempted);
 	assert((le32dec(data_wire + 8) & AICWF_STA_CFM_REQUEST) != 0);
 	data_test = OUT_STALE;
