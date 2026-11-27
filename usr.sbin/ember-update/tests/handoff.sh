@@ -5,15 +5,19 @@
 # and control.json, the signed base's seal.json, and the expected shell
 # sysctl outputs buildinfo and version. Supply a profile name as argument 3.
 set -eu
-[ "$#" -eq 4 ] || { echo 'usage: handoff.sh CLIENT INPUT PROFILE RC_SCRIPT' >&2; exit 2; }
+case "$#:${5:-}" in 4:|5:--rc-start) ;; *)
+	echo 'usage: handoff.sh CLIENT INPUT PROFILE RC_SCRIPT [--rc-start]' >&2; exit 2 ;;
+esac
 [ "$(id -u)" -eq 0 ] && [ "$(uname -s)" = NetBSD ] || exit 2
 client=$1 input=$2 profile=$3 script=$4
 case "$profile" in *[!a-z0-9._-]*|'') exit 2;; esac
 root=$(mktemp -d /var/tmp/test-update-handoff.XXXXXXXX)
 updater=
+watcher=
 cleanup()
 {
 	if [ -n "$updater" ]; then kill -TERM "$updater" 2>/dev/null || :; wait "$updater" || :; fi
+	if [ -n "$watcher" ]; then kill -TERM "$watcher" 2>/dev/null || :; fi
 	rm -rf "$root"
 }
 trap cleanup EXIT
@@ -37,6 +41,7 @@ ldd "$client" 2>/dev/null | awk '$2 == "=>" && $3 ~ /^\// { print $3 }' | while 
 cp /etc/rc.subr "$root/etc/rc.subr"
 cp /etc/defaults/rc.conf "$root/etc/defaults/rc.conf"
 printf '. /etc/defaults/rc.conf\nember_update_reboot=ask\n' >"$root/etc/rc.conf"
+cp "$root/etc/rc.conf" "$root/initial-rc.conf"
 printf 'ember_os_update=YES\n' >"$root/etc/rc.conf.d/ember_os_update"
 printf 'ember_pkg_update=NO\n' >"$root/etc/rc.conf.d/ember_pkg_update"
 printf 'ember_update_reboot=ask\n' >"$root/etc/rc.conf.d/ember_update"
@@ -79,6 +84,7 @@ cat >"$root/usr/libexec/ember-os-slot" <<'SH'
 #!/bin/sh
 case "$1" in
 status)
+	[ -f /etc/ember-os-update.json ] || echo status >>/native-status
 	read -r running confirmed next trial slot sha </model
 	printf '{"running":"%s","confirmed":"%s","next":%s,"trial":%s,"prepared":{"slot":"%s","sha256":"%s"}}\n' \
 	    "$running" "$confirmed" "$next" "$trial" "$slot" "$sha"
@@ -129,6 +135,51 @@ check_reaped()
 	for delay in 1 2 3 4 5; do kill -0 "$sleeper" 2>/dev/null || return 0; sleep 1; done
 	echo 'Hook child survived' >&2; return 1
 }
+rc_start_cases()
+{
+	pidfile=$root/var/run/ember_update.pid
+	for policy in inherited rc.conf drop-in; do
+		cp "$input/control.json" "$root/etc/ember-os-update.json"
+		cp "$input/seal.json" "$root/usr/share/ember-update/handoff/$profile.json"
+		rm -f "$root/etc/ember-os-update.migrated.json" "$root/var/db/ember-update/handoff.json" \
+		    "$root/native-status" "$root/health-mode"
+		cp "$root/initial-rc.conf" "$root/etc/rc.conf"
+		printf 'ember_update_reboot=ask\n' >"$root/etc/rc.conf.d/ember_update"
+		case "$policy" in
+		rc.conf) echo ember_update=NO >>"$root/etc/rc.conf" ;;
+		drop-in) echo ember_update=NO >>"$root/etc/rc.conf.d/ember_update" ;;
+		esac
+		model B A null true B "$sha"
+		# Reproduce the shell and cached defaults that /etc/rc passes to the service.
+		/usr/sbin/chroot "$root" /bin/sh -ec '
+		    . /etc/rc.subr
+		    . /etc/rc.conf
+		    _rc_conf_loaded=true
+		    rc_fast=yes
+		    checkyesno ember_update && exit 1
+		    run_rc_script /etc/rc.d/ember_update start
+		' >"$root/rc-start.log" 2>&1 || { cat "$root/rc-start.log" >&2; return 1; }
+		grep -Fxq "B B null true B $sha" "$root/model"
+		test ! -e "$root/etc/ember-os-update.json"
+		if [ "$policy" = inherited ]; then
+			grep -Fq 'Starting ember_update.' "$root/rc-start.log"
+			await_probe "$pidfile"
+			read -r watcher <"$pidfile"
+			kill -0 "$watcher"
+			ps -p "$watcher" -o args= | grep -Fq '/usr/sbin/ember-update watch'
+			await_probe "$root/native-status"
+			kill -TERM "$watcher"
+			for delay in 1 2 3 4 5; do [ -f "$pidfile" ] || break; sleep 1; done
+			test ! -e "$pidfile"; watcher=
+		else
+			test ! -e "$pidfile"
+			test -s "$root/native-status"	# boot reconciled the slot.
+			if grep -Fq 'Starting ember_update.' "$root/rc-start.log"; then return 1; fi
+		fi
+	done
+	echo 'First rc start applied inherited and explicit site policies.'
+}
+if [ "${5:-}" = --rc-start ]; then rc_start_cases; exit; fi
 model B A null true B "$sha"
 for former in ember_os_update ember_pkg_update; do
 	refused "a legacy update service is active" /usr/bin/flock "$root/var/run/$former.pid"
@@ -228,3 +279,4 @@ test ! -e "$root/etc/ember-os-update.json"
 cmp "$root/var/db/ember-update/os-release.json" "$input/release.json"
 test ! -e "$root/usr/share/ember-update/handoff/$profile.json"
 echo 'Confirmed the legacy cohort, including interruption recovery and exact defaults.'
+rc_start_cases

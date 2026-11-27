@@ -176,7 +176,10 @@ that has already started, such as DHCP installing a route. Start services
 needed by this check before the handoff in the rc order. The handoff then
 verifies the archive of the former controller configuration. It imports the
 original rc flags immediately after the system defaults are sourced. Later site
-settings in rc.conf and rc.conf.d keep their priority. A durable journal
+settings in rc.conf and rc.conf.d keep their priority. During that same boot,
+the rc script reads the migrated settings before starting the native watcher.
+With an explicit `ember_update=NO`, it runs the local boot check once.
+A durable journal
 identifies the confirmed bytes if power fails during the firmware commit.
 The private journal also keeps the verified transition record. Confirmation
 consumes its public copy, including on a retry. Success retires the old configuration as `/etc/ember-os-update.migrated.json`.
@@ -226,3 +229,4 @@ desktop binding. Set `CC`, `CPPFLAGS`, and `LDFLAGS` to select the host SDK.
 On NetBSD, run `tests/handoff.sh CLIENT INPUT PROFILE RC_SCRIPT` as root for
 the offline transition test. Use the artifacts listed in the test header.
 The test creates and removes a chroot with a boot-adapter model.
+Add `--rc-start` to test just the first boot through the system rc framework.

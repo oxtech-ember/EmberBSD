@@ -53,6 +53,9 @@ handoff-policy) handoff_policy; exit $? ;;
 start)
 	if [ -f /etc/ember-os-update.json ]; then
 		"$command" handoff && [ ! -f /etc/ember-os-update.json ] || exit 1
+		# Handoff wrote rc.conf after /etc/rc loaded it. Read the new
+		# policy and the service overrides before choosing watch or boot.
+		_rc_conf_loaded=false
 	fi
 	;;
 esac
