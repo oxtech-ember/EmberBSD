@@ -5,18 +5,18 @@
 # Do not put conditionals that are set on different files here and
 # expect them to work.
 
+# The make shell specification for ${HOST_SH}. NetBSD's native make passes
+# -q to a shell named sh, and only the NetBSD /bin/sh accepts it. A
+# ksh-family shell takes the ksh specification. Every .SHELL line uses this
+# value; it is evaluated when a .SHELL line uses it.
+_HOST_SH_SPEC=	${"${.MAKE.OS:U}" == "NetBSD" && "${HOST_SH:U:T:Mmksh}${HOST_SH:U:T:Mksh}" != "":?ksh:sh}
+
 # Select the qualified recipe shell before any shell query can run.
 .if defined(EMBER_NATIVE_TOOLS)
 .if empty(HOST_SH:M/*)
 .error EMBER_NATIVE_TOOLS requires an absolute HOST_SH
 .endif
-.if ${.MAKE.OS:U} == "NetBSD" && (${HOST_SH:T:Mmksh} || ${HOST_SH:T:Mksh})
-# NetBSD's native make passes -q to a shell named sh, and only the NetBSD
-# /bin/sh accepts it. A ksh-family shell takes the ksh specification.
-.SHELL: name=ksh path=${HOST_SH}
-.else
-.SHELL: name=sh path=${HOST_SH}
-.endif
+.SHELL: name=${_HOST_SH_SPEC} path=${HOST_SH}
 .endif
 
 unix?=		We run NetBSD.

@@ -67,7 +67,7 @@ _GNU_HOST_CONTEXT+= ${GNU_HOST_MAKE_TARGETS.${_GNU_DIR}:Uall:Q}
 .endif
 
 # Do not let bmake or nested GNU make select the host's default shell.
-.SHELL: name=sh path=${HOST_SH}
+.SHELL: name=${_HOST_SH_SPEC} path=${HOST_SH}
 
 .PHONY: gnu-target-config-inputs
 gnu-target-config-inputs:
