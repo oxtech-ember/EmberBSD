@@ -225,19 +225,23 @@ class ConsoleProfile(unittest.TestCase):
             self.assertIn('progs sh reboot df env uname', config)
             self.assertIn('ln reboot halt', config)
 
-            start = source.index('    if [ "$profile" = console-tools ]; then\n'
-                                 '        cp "$out/crunch/console-tools"')
+            start = source.index('    target_files mkdir -p "$root/bin"')
             end = source.index('    if [ -n "$extra" ]; then', start)
-            stage = ('link_if_same() { "$PYTHON" -B "$STATIC_PROFILE" link-if-same "$1" "$2"; }\n' +
+            target_files = source[source.index('target_files()\n'):source.index('link_if_same()\n')]
+            stage = (target_files + 'link_if_same() { "$PYTHON" -B "$STATIC_PROFILE" link-if-same "$1" "$2"; }\n' +
                      source[start:end])
-            (out / 'root/bin').mkdir(parents=True)
-            (out / 'root/sbin').mkdir()
             (out / 'crunch/console-tools').write_bytes(b'crunch fixture')
-            subprocess.run([shell, '-c', 'set -eu\n' + stage], check=True,
+            (out / 'crunch/console-tools').chmod(0o700)
+            subprocess.run([shell, '-c', 'set -eu\numask 077\n' + stage +
+                            'touch "$out/host-file"'], check=True,
                            env=dict(os.environ, out=str(out), root=str(out / 'root'), profile='console-tools',
                                     programs='bin/sh sbin/reboot bin/df usr.bin/env usr.bin/uname',
                                     PYTHON=sys.executable,
                                     STATIC_PROFILE=str(path)))
+            for name in ('root', 'root/bin', 'root/sbin', 'root/usr', 'root/usr/bin'):
+                self.assertEqual((out / name).stat().st_mode & 0o777, 0o755)
+            self.assertEqual((out / 'root/bin/sh').stat().st_mode & 0o777, 0o555)
+            self.assertEqual((out / 'host-file').stat().st_mode & 0o777, 0o600)
             self.assertEqual(os.readlink(out / 'root/sbin/reboot'),
                              '../bin/console-tools')
             self.assertEqual(os.readlink(out / 'root/sbin/halt'),

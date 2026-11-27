@@ -14,6 +14,12 @@ run()
         return 1
     fi
 }
+# Only target paths use the system installation mask.
+target_files()
+(
+    umask 022
+    "$@"
+)
 link_if_same()
 {
     target=$1 link=$2
@@ -246,29 +252,32 @@ if [ "${1:-}" = --console-selected ]; then
         root_spec=$network_root_stage.spec
     fi
     run makedev "$wrapper" -C "$src/etc" MAKEDEV
-    mkdir -p "$root/bin" "$root/sbin" "$root/dev" "$root/etc" "$root/tmp"
-    if [ "$profile" = console-tools ]; then
+    target_files mkdir -p "$root/bin" "$root/sbin" "$root/dev" "$root/etc" "$root/tmp"
+    case "$profile" in
+    console-tools|network)
         cp "$out/crunch/console-tools" "$root/bin/console-tools"
+        chmod 0555 "$root/bin/console-tools" ;;
+    esac
+    if [ "$profile" = console-tools ]; then
         for part in $programs; do
             case "$part" in
                 bin/*) link_if_same console-tools "$root/$part" ;;
                 sbin/*) link_if_same ../bin/console-tools "$root/$part" ;;
-                usr.bin/*) mkdir -p "$root/usr/bin"; link_if_same ../../bin/console-tools "$root/usr/bin/${part##*/}" ;;
+                usr.bin/*) target_files mkdir -p "$root/usr/bin"; link_if_same ../../bin/console-tools "$root/usr/bin/${part##*/}" ;;
                 *) echo 'Invalid console program path.' >&2; exit 1 ;;
             esac
         done
         link_if_same ../bin/console-tools "$root/sbin/halt"
     elif [ "$profile" = network ]; then
-        cp "$out/crunch/console-tools" "$root/bin/console-tools"
         for part in $crunch_programs; do
             case "$part" in
                 bin/*) link_if_same console-tools "$root/$part" ;;
                 sbin/*) link_if_same ../bin/console-tools "$root/$part" ;;
-                usr.bin/*) mkdir -p "$root/usr/bin"; link_if_same ../../bin/console-tools "$root/usr/bin/${part##*/}" ;;
-                usr.sbin/*) mkdir -p "$root/usr/sbin"; link_if_same ../../bin/console-tools "$root/usr/sbin/${part##*/}" ;;
-                libexec/*) mkdir -p "$root/usr/libexec"; link_if_same ../../bin/console-tools "$root/usr/libexec/${part##*/}" ;;
-                external/bsd/dhcpcd/sbin/*) mkdir -p "$root/sbin"; link_if_same ../bin/console-tools "$root/sbin/${part##*/}" ;;
-                external/bsd/wpa/bin/*|external/apache2/mDNSResponder/usr.sbin/*) mkdir -p "$root/usr/sbin"; link_if_same ../../bin/console-tools "$root/usr/sbin/${part##*/}" ;;
+                usr.bin/*) target_files mkdir -p "$root/usr/bin"; link_if_same ../../bin/console-tools "$root/usr/bin/${part##*/}" ;;
+                usr.sbin/*) target_files mkdir -p "$root/usr/sbin"; link_if_same ../../bin/console-tools "$root/usr/sbin/${part##*/}" ;;
+                libexec/*) target_files mkdir -p "$root/usr/libexec"; link_if_same ../../bin/console-tools "$root/usr/libexec/${part##*/}" ;;
+                external/bsd/dhcpcd/sbin/*) target_files mkdir -p "$root/sbin"; link_if_same ../bin/console-tools "$root/sbin/${part##*/}" ;;
+                external/bsd/wpa/bin/*|external/apache2/mDNSResponder/usr.sbin/*) target_files mkdir -p "$root/usr/sbin"; link_if_same ../../bin/console-tools "$root/usr/sbin/${part##*/}" ;;
                 *) echo 'Invalid network utility path.' >&2; exit 1 ;;
             esac
         done
@@ -276,6 +285,7 @@ if [ "${1:-}" = --console-selected ]; then
     else
         cp "$out/dest/bin/sh" "$root/bin/sh"
         cp "$out/dest/sbin/init" "$root/sbin/init"
+        chmod 0555 "$root/bin/sh" "$root/sbin/init"
     fi
     if [ -n "$extra" ]; then
         extra_name=${extra##*/}
@@ -332,13 +342,13 @@ if [ "${1:-}" = --console-selected ]; then
             [ -f "$out/dest/$install_path" ] || {
                 echo "Missing network program: $install_path" >&2; exit 1
             }
-            mkdir -p "$root/${install_path%/*}"
+            target_files mkdir -p "$root/${install_path%/*}"
             cp -p "$out/dest/$install_path" "$root/$install_path"
             run "strip-${install_path##*/}" "$host_prefix/bin/llvm-objcopy" -S "$root/$install_path"
             chmod 0555 "$root/$install_path"
         done
         [ -x "$root/bin/console-tools" ] || { echo 'Missing network console-tools.' >&2; exit 1; }
-        run network-config "$python" -B "$here/static-profile.py" stage-network \
+        run network-config target_files "$python" -B "$here/static-profile.py" stage-network \
             "$root" "$src" "$overlay" "$network_interface" \
             "$tools/bin/nbpwd_mkdb" "$out/dest" "$network_root_device" "$network_root_partition" "$network_root_filesystem" "$mdns_enabled" "$ssh_enabled" "$logging_enabled" "$openssh_crypto" "$sftp_enabled" "$display_enabled" "$dropbear_prefix"
         MACHINE="$machine" MACHINE_ARCH="$arch" "$HOST_SH" "$out/obj/etc/MAKEDEV" -s std $device_make > "$out/devices-all.spec"

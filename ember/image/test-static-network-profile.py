@@ -800,6 +800,7 @@ with tempfile.TemporaryDirectory(prefix='static-network-') as temporary:
     (overlay / 'etc/rc.conf.d').mkdir(parents=True)
     (overlay / 'etc/myname').write_text('host-from-overlay\n')
     (overlay / 'etc/wpa_supplicant.conf').write_text('ctrl_interface=/var/run/wpa_supplicant\n')
+    (overlay / 'etc/wpa_supplicant.conf').chmod(0o600)
     (overlay / 'etc/rc.conf.d/mdnsd').write_text('mdnsd_flags="-n host-from-overlay.local"\n')
     (overlay / 'etc/rc.conf.d/wpa_supplicant').write_text('wpa_supplicant=YES\n')
     (overlay / 'etc/ifconfig.wifi0').write_text('inet6 accept_rtadv\n')
@@ -1107,14 +1108,22 @@ with tempfile.TemporaryDirectory(prefix='static-network-') as temporary:
           'OpenSSL-mode SSH retains the generic host-key algorithm selection')
     cli_minimal = temporary / 'root-cli-minimal'
     cli_minimal.mkdir()
+    target_files = component_runner.split('target_files()\n', 1)[1].split('link_if_same()\n', 1)[0]
     cli_result = subprocess.run(
-        [sys.executable, '-B', str(path), 'stage-network', str(cli_minimal),
+        [os.environ.get('TEST_SH', '/bin/sh'), '-c', 'umask 077\ntarget_files()\n' +
+         target_files + 'target_files "$@"', 'stage',
+         sys.executable, '-B', str(path), 'stage-network', str(cli_minimal),
          str(source), str(overlay), 'wifi0', str(pwd_mkdb), str(dhcp_dest),
          'md0', 'a', 'ffs', 'no', 'no', 'no', 'builtin', 'no', 'no'],
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
     check(cli_result.returncode == 0 and
           'sshd=NO' in (cli_minimal / 'etc/rc.conf').read_text(),
           'network staging CLI accepts the resolved no-SSH builtin-mode default')
+    check(all((cli_minimal / name).stat().st_mode & 0o7777 == mode for name, mode in (
+        ('etc', 0o755), ('var/chroot/dhcpcd', 0o755), ('var/db/dhcpcd', 0o750),
+        ('root', 0o700), ('var/tmp', 0o1777), ('etc/login.conf.db', 0o644),
+        ('etc/wpa_supplicant.conf', 0o600))),
+        'target staging separates public paths, account files and DHCP state under a private host mask')
     display_root = temporary / 'root-display'
     display_root.mkdir()
     profile.stage_network(display_root, source, overlay, 'wifi0', pwd_mkdb,

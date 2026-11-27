@@ -832,6 +832,8 @@ def stage_network(root, source, overlay, interface, pwd_mkdb, dhcpcd_dest,
         (root / name).mkdir(parents=True, exist_ok=True)
     if ssh_enabled:
         (root / 'dev/pts').mkdir(parents=True, exist_ok=True)
+    (root / 'root').chmod(0o700)
+    (root / 'var/db/dhcpcd').chmod(0o750)
     (root / 'var/tmp').chmod(0o1777)
     for name in ('rc', 'rc.subr'):
         copy_if_different(source / 'etc' / name, root / 'etc' / name)
@@ -1073,6 +1075,7 @@ def stage_network(root, source, overlay, interface, pwd_mkdb, dhcpcd_dest,
                     str(root / 'etc/master.passwd')], check=True)
     subprocess.run([str(Path(pwd_mkdb).with_name('nbcap_mkdb')), '-l', '-f',
                     str(root / 'etc/login.conf'), str(root / 'etc/login.conf')], check=True)
+    (root / 'etc/login.conf.db').chmod((root / 'etc/login.conf').stat().st_mode & 0o666)
     for name in ('passwd', 'pwd.db', 'spwd.db', 'login.conf.db'):
         if not (root / 'etc' / name).is_file():
             raise ValueError('network account staging did not produce etc/' + name)
