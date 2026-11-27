@@ -328,6 +328,8 @@ check(profile.runtime_original_source({'paths': {'llvm-source': runtime_source}}
 with tempfile.TemporaryDirectory(prefix='network-modes-') as temporary:
     root = Path(temporary) / 'root'
     dest = Path(temporary) / 'dest'
+    (root / 'etc').mkdir(parents=True)
+    (root / 'etc/group').write_bytes((source / 'etc/group').read_bytes())
     (root / 'usr/bin').mkdir(parents=True)
     (root / 'usr/libexec').mkdir(parents=True)
     (dest / 'usr/bin').mkdir(parents=True)
@@ -344,18 +346,29 @@ with tempfile.TemporaryDirectory(prefix='network-modes-') as temporary:
     dest_login.chmod(0o555)
     root_auth.chmod(0o555)
     dest_auth.chmod(0o555)
+    for tree in (root, dest):
+        (tree / 'usr/bin/wall').write_bytes(b'wall')
+        (tree / 'sbin').mkdir()
+        (tree / 'sbin/shutdown').write_bytes(b'shutdown')
     root_spec = Path(temporary) / 'root.spec'
     root_spec.write_text('/set type=file mode=0755\n'
-                         '# ./usr/bin\nusr/bin type=dir\n    login mode=0555\n'
+                         '# ./usr/bin\nusr/bin type=dir\n    login mode=0555\n    wall\n'
+                         '# ./sbin\nsbin type=dir\n    shutdown\n'
                          '# ./usr/libexec\nusr/libexec type=dir\n    sshd-auth\n')
     metalog = Path(temporary) / 'METALOG'
-    metalog.write_text('./usr/bin/login type=file uname=root gname=wheel mode=04555 size=16\n'
+    metalog.write_text('./usr/bin/wall type=file uname=root gname=tty mode=02555\n'
+                       './sbin/shutdown type=file uname=root gname=operator mode=04554\n'
+                       './usr/bin/login type=file uname=root gname=wheel mode=04555 size=16\n'
                        './usr/bin/login type=file uname=root gname=wheel mode=04555 size=16\n'
                        './usr/libexec/sshd-auth type=file uname=root gname=wheel mode=0555 size=13\n')
     profile.apply_metalog_modes(root_spec, root, dest, metalog,
-                                (('usr.bin/login', 'usr/bin/login'),
+                                (('usr.bin/wall', 'usr/bin/wall'),
+                                 ('sbin/shutdown', 'sbin/shutdown'),
+                                 ('usr.bin/login', 'usr/bin/login'),
                                  ('sshd-auth', 'usr/libexec/sshd-auth')))
-    check('mode=04555' in root_spec.read_text() and
+    check('wall mode=02555 uid=0 gid=4' in root_spec.read_text() and
+          'shutdown mode=04554 uid=0 gid=5' in root_spec.read_text() and
+          'login mode=04555 uid=0 gid=0' in root_spec.read_text() and
           'sshd-auth mode=0555' in root_spec.read_text() and
           root_login.stat().st_mode & 0o7777 == 0o555 and
           dest_login.stat().st_mode & 0o7777 == 0o555 and

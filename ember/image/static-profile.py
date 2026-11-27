@@ -254,7 +254,7 @@ def stage_rc_script(source, destination):
 
 
 def apply_metalog_modes(spec, root, destdir, metalog, install_map):
-    """Apply target install modes to staged file records without changing host modes."""
+    """Apply the installed permissions and target group to standalone program records."""
     import re
 
     spec, root, destdir, metalog = map(Path, (spec, root, destdir, metalog))
@@ -280,6 +280,11 @@ def apply_metalog_modes(spec, root, destdir, metalog, install_map):
             continue
         records.setdefault(fields[0], []).append(fields[1:])
 
+    groups = {}
+    for entry in (root / 'etc/group').read_text().splitlines():
+        fields = entry.split(':')
+        if len(fields) == 4 and fields[2].isdecimal():
+            groups.setdefault(fields[0], set()).add(int(fields[2]))
     spec_lines = spec.read_text().splitlines(keepends=True)
     for _source, target in pairs:
         if not isinstance(target, str) or target.startswith('/') or \
@@ -291,7 +296,7 @@ def apply_metalog_modes(spec, root, destdir, metalog, install_map):
         if target_root.is_symlink() or target_dest.is_symlink() or \
                 not target_root.is_file() or not target_dest.is_file():
             raise ValueError('staged program or target install is missing or not regular')
-        modes = set()
+        permissions = set()
         for fields in records.get(rel, ()):
             if 'type=file' not in fields:
                 continue
@@ -301,9 +306,25 @@ def apply_metalog_modes(spec, root, destdir, metalog, install_map):
             mode = int(mode_fields[0], 8)
             if mode > 0o7777:
                 raise ValueError('target METALOG mode exceeds permission bits')
-            modes.add(mode_fields[0])
-        if len(modes) != 1:
-            raise ValueError('target METALOG mode is missing or inconsistent for ' + target)
+            # The selected programs install as root. Resolve their groups in
+            # the target account database, including operator and tty.
+            owners = [field for field in fields if field.startswith(('uid=', 'uname='))]
+            group_names = [field[6:] for field in fields if field.startswith('gname=')]
+            group_ids = [field[4:] for field in fields if field.startswith('gid=')]
+            if owners not in (['uname=root'], ['uid=0']):
+                raise ValueError('target METALOG requires a root-owned program: ' + target)
+            if len(group_names) == 1 and not group_ids:
+                ids = groups.get(group_names[0], set())
+            elif not group_names and len(group_ids) == 1 and group_ids[0].isdecimal():
+                ids = {int(group_ids[0])}
+            else:
+                ids = set()
+            if len(ids) != 1 or not 0 <= next(iter(ids)) < 2**32 - 1:
+                raise ValueError('target METALOG has no unique target group for ' + target)
+            permissions.add((mode, next(iter(ids))))
+        if len(permissions) != 1:
+            raise ValueError('target METALOG permissions are missing or inconsistent for ' + target)
+        mode, gid = next(iter(permissions))
         parent = './' + str(Path(target).parent)
         basename = Path(target).name
         current = None
@@ -322,19 +343,15 @@ def apply_metalog_modes(spec, root, destdir, metalog, install_map):
         if len(matching) != 1:
             raise ValueError('staged root specification lacks a unique target entry for ' + target)
         index = matching[0]
-        mode_re = re.compile(r'(?<!\S)mode=[0-7]{3,5}(?=\s|$)')
-        line = spec_lines[index]
-        mode_tokens = re.findall(r'(?<!\S)mode=([^\s]+)', line)
-        if not mode_tokens:
-            ending = '\n' if line.endswith('\n') else ''
-            updated = line.rstrip('\n').rstrip() + ' mode=' + next(iter(modes)) + ending
-        elif len(mode_tokens) == 1 and re.fullmatch(r'[0-7]{3,5}', mode_tokens[0]):
-            updated, count = mode_re.subn('mode=' + next(iter(modes)), line)
-            if count != 1:
-                raise ValueError('staged root specification has no unique mode for ' + target)
-        else:
+        fields = spec_lines[index].split()
+        old_modes = [field[5:] for field in fields[1:] if field.startswith('mode=')]
+        if old_modes and (len(old_modes) != 1 or not re.fullmatch(r'[0-7]{3,5}', old_modes[0])):
             raise ValueError('staged root specification has no unique mode for ' + target)
-        spec_lines[index] = updated
+        attributes = [field for field in fields[1:]
+                      if not field.startswith(('mode=', 'uid=', 'uname=', 'gid=', 'gname='))]
+        indent = spec_lines[index][:len(spec_lines[index]) - len(spec_lines[index].lstrip())]
+        spec_lines[index] = (indent + ' '.join([basename, *attributes,
+                            f'mode=0{mode:o}', 'uid=0', f'gid={gid}']) + '\n')
     spec.write_text(''.join(spec_lines))
 
 
