@@ -13,6 +13,8 @@
 #include <sys/mutex.h>
 #include <sys/systm.h>
 
+#include <net/if_ether.h>
+
 #include <dev/ic/aicwf_command.h>
 #include <dev/ic/aicwf_sta.h>
 #include <dev/usb/usb.h>
@@ -53,6 +55,11 @@ struct uaicfw_request {
 	usbd_status status;
 };
 
+struct uaicfw_data_reply {
+	uint32_t token;
+	usbd_status status;
+};
+
 struct uaicfw_softc {
 	kmutex_t sc_cmd_lock;	/* serialize command writers */
 	kmutex_t sc_rx_lock;	/* synchronize the sender with both IN pipes */
@@ -65,6 +72,11 @@ struct uaicfw_softc {
 	void *sc_input_arg;
 	struct aicwf_version sc_fw_version;
 	struct uaicfw_pipe sc_tx;
+	struct usbd_interface *sc_iface;
+	uint8_t sc_data_ep;
+	struct uaicfw_pipe sc_data;
+	uint32_t sc_data_sequence;
+	struct uaicfw_data_reply *sc_data_reply; /* protected by sc_rx_lock */
 	struct uaicfw_pipe sc_rx[2];
 	struct uaicfw_rx_stream sc_stream[2];
 	struct uaicfw_request *sc_request;
@@ -204,6 +216,27 @@ uaicfw_recover_rx(void *arg)
 	}
 }
 
+/* Retire only the current firmware token. USB completion is independent. */
+static bool
+uaicfw_ethernet_confirm(struct uaicfw_softc *sc, const uint8_t *rec,
+    size_t raw)
+{
+	struct uaicfw_data_reply * const reply = sc->sc_data_reply;
+	uint32_t status, token;
+
+	if ((rec[2] & 0x7f) != AICWF_TYPE_TX_CFM || raw != AICWF_HDR_LEN + 8 ||
+	    !aicwf_sta_cfm_decode(rec + AICWF_HDR_LEN, 8, &status, &token) ||
+	    (token & AICWF_DC_DATA_TOKEN) == 0)
+		return false;
+	if (reply != NULL && reply->token == token && status != 0 &&
+	    reply->status == USBD_IN_PROGRESS) {
+		reply->status = (status & AICWF_STA_CFM_ACK) != 0 ?
+		    USBD_NORMAL_COMPLETION : USBD_IOERROR;
+		cv_broadcast(&sc->sc_cv);
+	}
+	return true;
+}
+
 /* DC USB pads each configuration record to four bytes. DATA has no pad. */
 static size_t
 uaicfw_record_size(const uint8_t *p, size_t payload, size_t *raw)
@@ -283,13 +316,15 @@ uaicfw_receive(struct uaicfw_softc *sc, struct uaicfw_rx_stream *stream,
 		req->status = USBD_NORMAL_COMPLETION;
 		cv_broadcast(&sc->sc_cv);
 	}
-	if (sc->sc_input != NULL) {
+	if (sc->sc_input != NULL || sc->sc_data_reply != NULL) {
 		for (size_t pos = 0; pos < end;) {
 			const bool continued = pos == 0 && stream->pending != 0;
 			const uint8_t *rec = p + pos;
 			size_t raw;
 			pos += uaicfw_record_size(rec, le16dec(rec), &raw);
-			if (!continued || stream->deliver)
+			if (uaicfw_ethernet_confirm(sc, rec, raw))
+				continue;
+			if (sc->sc_input != NULL && (!continued || stream->deliver))
 				sc->sc_input(sc->sc_input_arg, rec, raw,
 				    continued ? stream->serial : serial);
 		}
@@ -442,6 +477,9 @@ uaicfw_stop(struct uaicfw_softc *sc)
 	if (sc->sc_tx.pipe != NULL)
 		usbd_suspend_pipe(sc->sc_tx.pipe);
 	mutex_enter(&sc->sc_cmd_lock);
+	if (sc->sc_data.pipe != NULL)
+		usbd_suspend_pipe(sc->sc_data.pipe);
+	uaicfw_close(&sc->sc_data);
 	uaicfw_close(&sc->sc_tx);
 	for (size_t i = 0; i < __arraycount(sc->sc_rx); i++)
 		uaicfw_close(&sc->sc_rx[i]);
@@ -527,12 +565,51 @@ uaicfw_survey_command(const uint8_t *packet, size_t len)
 	}
 }
 
+/* Serialize the reusable OUT transfer with sc_cmd_lock. */
+static usbd_status
+uaicfw_send(struct uaicfw_softc *sc, struct uaicfw_pipe *p, size_t len,
+    bool *attempted)
+{
+	struct usbd_xfer * const xfer = p->xfer;
+	usbd_status status;
+	uint32_t actual;
+
+	usbd_setup_xfer(xfer, NULL, usbd_get_buffer(xfer), len,
+	    USBD_FORCE_SHORT_XFER, UAICFW_TIMEOUT_MS, NULL);
+	if (attempted != NULL)
+		*attempted = true;
+	status = usbd_sync_transfer(xfer);
+	if (status == USBD_STALLED) {
+		usbd_status clear = usbd_clear_endpoint_stall(p->pipe);
+		if (clear != USBD_NORMAL_COMPLETION && p == &sc->sc_tx) {
+			mutex_enter(&sc->sc_rx_lock);
+			sc->sc_error = clear;
+			cv_broadcast(&sc->sc_cv);
+			mutex_exit(&sc->sc_rx_lock);
+		}
+	} else if (status == USBD_NORMAL_COMPLETION) {
+		usbd_get_xfer_status(xfer, NULL, NULL, &actual, NULL);
+		if (actual != len)
+			status = USBD_SHORT_XFER;
+	}
+	return status;
+}
+
+static usbd_status
+uaicfw_out_state(struct uaicfw_softc *sc)
+{
+	usbd_status status;
+
+	mutex_enter(&sc->sc_rx_lock);
+	status = sc->sc_stopping ? USBD_CANCELLED : sc->sc_error;
+	mutex_exit(&sc->sc_rx_lock);
+	return status;
+}
+
 static int
 uaicfw_write(void *arg, const uint8_t *packet, size_t len, bool *attempted)
 {
 	struct uaicfw_softc * const sc = arg;
-	struct usbd_xfer *xfer;
-	uint32_t actual;
 	usbd_status status;
 
 	if (attempted != NULL)
@@ -540,31 +617,87 @@ uaicfw_write(void *arg, const uint8_t *packet, size_t len, bool *attempted)
 	if (!uaicfw_survey_command(packet, len))
 		return EOPNOTSUPP;
 	mutex_enter(&sc->sc_cmd_lock);
-	mutex_enter(&sc->sc_rx_lock);
-	status = sc->sc_stopping ? USBD_CANCELLED : sc->sc_error;
-	mutex_exit(&sc->sc_rx_lock);
+	status = uaicfw_out_state(sc);
+	if (status == USBD_NORMAL_COMPLETION) {
+		memcpy(usbd_get_buffer(sc->sc_tx.xfer), packet, len);
+		status = uaicfw_send(sc, &sc->sc_tx, len, attempted);
+	}
+	mutex_exit(&sc->sc_cmd_lock);
+	return uaicfw_errno(status);
+}
+
+/* The common station supplies an Ethernet descriptor and its MSDU payload. */
+static int
+uaicfw_ethernet(void *arg, const uint8_t *packet, size_t len, bool *attempted)
+{
+	struct uaicfw_softc * const sc = arg;
+	struct uaicfw_data_reply reply = { .status = USBD_IN_PROGRESS };
+	const size_t hdr = AICWF_HDR_LEN + AICWF_TXDESC_LEN;
+	const uint8_t *desc;
+	uint8_t *buf;
+	size_t wire;
+	usbd_status status;
+
+	if (attempted != NULL)
+		*attempted = false;
+	if (len < hdr || len - hdr > ETHERMTU)
+		return EMSGSIZE;
+	desc = packet + AICWF_HDR_LEN;
+	if (packet[2] != AICWF_TYPE_DATA ||
+	    le16dec(packet) != len - AICWF_HDR_LEN || le16dec(desc) != len - hdr ||
+	    le16dec(desc + 2) != 0 || le32dec(desc + 4) != 0 ||
+	    le16dec(desc + 26) != 0)
+		return EINVAL;
+	const bool eapol = be16dec(desc + 20) == ETHERTYPE_PAE;
+	wire = eapol ? (len + 3) & ~(size_t)3 : len;
+	KASSERT(wire <= UAICFW_RX_SIZE);
+
+	mutex_enter(&sc->sc_cmd_lock);
+	status = uaicfw_out_state(sc);
 	if (status != USBD_NORMAL_COMPLETION)
 		goto out;
-	xfer = sc->sc_tx.xfer;
-	uint8_t *buf = usbd_get_buffer(xfer);
-	memcpy(buf, packet, len);
-	usbd_setup_xfer(xfer, NULL, buf, len, USBD_FORCE_SHORT_XFER, UAICFW_TIMEOUT_MS, NULL);
-	if (attempted != NULL)
-		*attempted = true;
-	status = usbd_sync_transfer(xfer);
-	if (status == USBD_STALLED) {
-		usbd_status clear = usbd_clear_endpoint_stall(sc->sc_tx.pipe);
-		if (clear != USBD_NORMAL_COMPLETION) {
-			mutex_enter(&sc->sc_rx_lock);
-			sc->sc_error = clear;
-			cv_broadcast(&sc->sc_cv);
-			mutex_exit(&sc->sc_rx_lock);
-		}
+	if (sc->sc_data.xfer == NULL) {
+		status = uaicfw_open(sc->sc_iface, sc->sc_data_ep,
+		    UAICFW_RX_SIZE, &sc->sc_data);
+		if (status != USBD_NORMAL_COMPLETION)
+			goto out;
 	}
-	if (status == USBD_NORMAL_COMPLETION) {
-		usbd_get_xfer_status(xfer, NULL, NULL, &actual, NULL);
-		if (len != actual)
-			status = USBD_SHORT_XFER;
+	buf = usbd_get_buffer(sc->sc_data.xfer);
+	memcpy(buf, packet, len);
+	le16enc(buf, wire);
+	buf[3] = 0;
+	if (eapol) {
+		/* Never reuse a token after a timeout or uncertain submission. */
+		if (sc->sc_data_sequence == AICWF_DC_DATA_TOKEN - 1) {
+			mutex_exit(&sc->sc_cmd_lock);
+			return EOVERFLOW;
+		}
+		reply.token = AICWF_DC_DATA_TOKEN | ++sc->sc_data_sequence;
+		le32enc(buf + AICWF_HDR_LEN + 4,
+		    AICWF_STA_CFM_REQUEST | reply.token);
+		memset(buf + len, 0, wire - len);
+		mutex_enter(&sc->sc_rx_lock);
+		sc->sc_data_reply = &reply;
+		mutex_exit(&sc->sc_rx_lock);
+	}
+	status = uaicfw_send(sc, &sc->sc_data, wire, attempted);
+	if (eapol) {
+		mutex_enter(&sc->sc_rx_lock);
+		while (status == USBD_NORMAL_COMPLETION && !sc->sc_stopping &&
+		    sc->sc_error == USBD_NORMAL_COMPLETION &&
+		    reply.status == USBD_IN_PROGRESS) {
+			if (cv_timedwait(&sc->sc_cv, &sc->sc_rx_lock,
+			    mstohz(UAICFW_TIMEOUT_MS)) == EWOULDBLOCK &&
+			    reply.status == USBD_IN_PROGRESS)
+				status = USBD_TIMEOUT;
+		}
+		if (status == USBD_NORMAL_COMPLETION) {
+			status = sc->sc_stopping ? USBD_CANCELLED : sc->sc_error;
+			if (status == USBD_NORMAL_COMPLETION)
+				status = reply.status;
+		}
+		sc->sc_data_reply = NULL;
+		mutex_exit(&sc->sc_rx_lock);
 	}
 out:
 	mutex_exit(&sc->sc_cmd_lock);
@@ -576,7 +709,8 @@ uaicfw_mountroot(device_t self)
 {
 	struct uaicfw_softc * const sc = device_private(self);
 	struct uaicfw_attach_args aa = {
-		.cookie = sc, .write = uaicfw_write, .listen = uaicfw_listen,
+		.cookie = sc, .write = uaicfw_write, .ethernet = uaicfw_ethernet,
+		.listen = uaicfw_listen,
 	};
 	(void)config_found(self, &aa, NULL, CFARGS(.iattr = "aicwfusbbus"));
 }
@@ -612,6 +746,8 @@ uaicfw_attach(device_t parent, device_t self, void *aux)
 		if (status != USBD_IN_PROGRESS && status != USBD_NORMAL_COMPLETION)
 			goto fail;
 	}
+	sc->sc_iface = iface;
+	sc->sc_data_ep = eps.out[0];
 	status = uaicfw_open(iface, eps.out[1], UAICFW_TX_SIZE, &sc->sc_tx);
 	if (status == USBD_NORMAL_COMPLETION)
 		status = uaicfw_read_id(sc, UAICFW_IDENT_REG, &chip);

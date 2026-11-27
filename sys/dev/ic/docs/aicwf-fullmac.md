@@ -11,6 +11,15 @@ The device name comes from the `aicwf` attachment. The first station is
 | AIC8800D80 | SDIO function 1. The adapter loads the selected WLAN image, applies the board settings, and checks FIFO credits and CRC. | The tested U02 version is `0x06090101`. Firmware and PHY capabilities govern 5 GHz, VHT and external SAE. The firmware BIP path has additional image and readback checks. |
 | AIC8800DC U02 on Lyra Zero W | The WLAN driver claims interface 2 of composite USB device `a69c:88dc`. The radio accepts data on the first bulk OUT pipe and commands on the second. Both bulk IN pipes can deliver firmware messages. | A hardware run reported chip ID `0x07`, sub-ID `0x01`, and FullMAC version `0x06040301`. The board profile covers 2.4 GHz channels 1 through 11. The power limit is the lower of 15 dBm and the current net80211 limit. |
 
+DC Ethernet TX uses one transfer on the first bulk OUT endpoint. The driver
+opens this endpoint when a connected station in normal mode submits data.
+The USB header counts the entire transfer. EAPOL requests a firmware
+confirmation with a 30-bit host index and pads the transfer to four bytes.
+A short transfer, a missing confirmation, or a negative acknowledgement
+fails the packet. The driver does not replay an uncertain submission.
+In a secured network, only EAPOL can pass before the pairwise key is installed.
+The passive survey attachment keeps the data OUT endpoint closed.
+
 ## DC passive survey
 
 On the known U02 command version, bring the interface up and request a scan.

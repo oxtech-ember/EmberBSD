@@ -16,7 +16,9 @@ sed -n '/^#define[[:space:]]*UAICFW_IDENT_REG/,$p' \
     "$src/sys/dev/usb/uaicfw.c" > "$work/probe.h"
 awk '/^aicwf_usb_queue_limit\(/ {copy=1; print "static unsigned"}
 copy {print} copy && /^}/ {exit}' "$src/sys/dev/usb/if_aicwf_usb.c" > "$work/survey-rx.h"
-${CC:-cc} -std=c99 -Wall -Wextra -Werror -Wno-unused-parameter \
+awk '/^aicwf_usb_write\(/ {copy=1; print "static int"}
+copy {print} copy && /^}/ {exit}' "$src/sys/dev/usb/if_aicwf_usb.c" > "$work/station-write.h"
+${CC:-cc} -std=c99 -Wall -Wextra -Werror -Wno-unused-parameter ${AICWF_USB_CFLAGS:-} \
     -I"$src/sys/dev/ic" -I"$src/sys/dev/usb" -I"$work" "$src/ember/tools/aicwf-usb-id.c" \
     -o "$work/check"
 "$work/check"

@@ -44,6 +44,19 @@ aicwf_usb_write(struct aicwf_softc *sc, size_t len, u_int reserve,
     bool *attempted)
 {
 	struct aicwf_usb_softc * const usc = sc->sc_bus;
+
+	if (len >= AICWF_HDR_LEN && sc->sc_txbuf[2] == AICWF_TYPE_DATA) {
+		if (attempted != NULL)
+			*attempted = false;
+		if (sc->sc_receive_only || !sc->sc_connected)
+			return ENETDOWN;
+		if (len >= AICWF_HDR_LEN + AICWF_TXDESC_LEN &&
+		    (sc->sc_ic.ic_flags & IEEE80211_F_WPA) != 0 && !sc->sc_ptk_valid &&
+		    be16dec(sc->sc_txbuf + AICWF_HDR_LEN + 20) != ETHERTYPE_PAE)
+			return EACCES;
+		return usc->bus.ethernet(usc->bus.cookie, sc->sc_txbuf, len,
+		    attempted);
+	}
 	return usc->bus.write(usc->bus.cookie, sc->sc_txbuf, len, attempted);
 }
 

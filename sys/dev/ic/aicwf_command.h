@@ -9,6 +9,8 @@
 #define _DEV_IC_AICWF_COMMAND_H_
 
 #define	AICWF_TYPE_CFG			0x10	/* configuration frame bit */
+#define	AICWF_TYPE_DATA			0x01
+#define	AICWF_TXDESC_LEN		28
 #define	AICWF_TYPE_TX_CFM		0x12
 #define	AICWF_RXHDR_LEN			60	/* radio descriptor and pad */
 #define	AICWF_TYPE_MSG			0x11

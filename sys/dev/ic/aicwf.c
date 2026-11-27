@@ -134,7 +134,6 @@ __KERNEL_RCSID(0, "$NetBSD$");
  * host tag, destination, source, Ethernet type, queue, traffic class,
  * interface, station, flags. The payload of the Ethernet frame follows.
  */
-#define	AICWF_TXDESC_LEN		28
 #define	AICWF_HWQ_BE			1
 #define	AICWF_HWQ_VO			3
 #define	AICWF_TX_MGMT			__BIT(3)
@@ -178,7 +177,6 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #define	AICWF_UAPSD_TIMEOUT_MS		300
 #define	AICWF_LP_CLK_PPM		20
 
-#define	AICWF_TYPE_DATA			0x01
 #define	AICWF_CMD_TIMEOUT_MS		2000
 
 enum aicwf_task_cmd {
@@ -1857,7 +1855,8 @@ aicwf_sta_mgmt(struct ieee80211com *ic, struct ieee80211req_sta_mgmt *req)
 				error = EBUSY;
 				break;
 			}
-			if (sc->sc_sta_token == AICWF_STA_TOKEN_MAX) {
+			if (sc->sc_sta_token >= (sc->sc_dc ?
+			    AICWF_DC_DATA_TOKEN - 1 : AICWF_STA_TOKEN_MAX)) {
 				error = EOVERFLOW;
 				break;
 			}

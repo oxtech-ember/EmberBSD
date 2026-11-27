@@ -9,6 +9,7 @@
 #define _DEV_IC_AICWF_STA_H_
 
 #define AICWF_STA_TOKEN_MAX		0x7fffffffU
+#define AICWF_DC_DATA_TOKEN		0x20000000U	/* bit 29 of a DC 30-bit host index */
 #define AICWF_STA_CFM_REQUEST		0x80000000U
 #define AICWF_STA_CFM_ACK		0x00000008U
 #define AICWF_STA_SCAN_LEN		376

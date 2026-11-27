@@ -91,6 +91,8 @@ struct usbd_xfer {
 #define USBD_SHORT_XFER_OK 2
 #define USBD_FORCE_SHORT_XFER 4
 #define USBD_NO_TIMEOUT 0
+#define ETHERMTU 1500
+#define ETHERTYPE_PAE 0x888e
 #define __arraycount(a) (sizeof(a) / sizeof((a)[0]))
 #define MUTEX_DEFAULT 0
 #define IPL_NONE 0
@@ -133,6 +135,13 @@ report(const char *fmt, uint32_t first, uint32_t second)
 }
 
 static uint16_t
+be16dec(const void *p)
+{
+	const uint8_t *b = p;
+	return ((uint16_t)b[0] << 8) | b[1];
+}
+
+static uint16_t
 le16dec(const void *p)
 {
 	const uint8_t *b = p;
@@ -167,6 +176,27 @@ le32enc(void *p, uint32_t v)
 #include "uaicfwvar.h"
 #include "aicwf_sta.h"
 #include "survey-rx.h"
+
+#define IEEE80211_F_WPA 3
+struct aicwf_softc {
+	void *sc_bus;
+	uint8_t *sc_txbuf;
+	struct { unsigned ic_flags; } sc_ic;
+	bool sc_receive_only, sc_connected, sc_ptk_valid;
+};
+struct aicwf_usb_softc { struct uaicfw_attach_args bus; };
+#include "station-write.h"
+
+enum data_out_test {
+	OUT_IDLE, OUT_ORDINARY, OUT_ACK, OUT_NACK, OUT_LATE, OUT_STALE,
+	OUT_MISSING, OUT_SHORT, OUT_STALL, OUT_ALLOC_FAIL
+};
+static enum data_out_test data_test;
+static unsigned data_writes;
+static uint8_t data_wire[2048];
+static size_t data_len;
+static uint32_t previous_token;
+
 
 enum fault {
 	NONE,
@@ -258,6 +288,7 @@ usbd_create_xfer(struct usbd_pipe *p, size_t n, int flags, int frames,
 {
 	assert(flags == (p->addr < 0x80 ? USBD_FORCE_SHORT_XFER : USBD_SHORT_XFER_OK));
 	if ((p->addr == 0x81 && fault == ALLOC_DATA) ||
+	    (p->addr == 1 && data_test == OUT_ALLOC_FAIL) ||
 	    (p->addr == 2 && fault == ALLOC_TX) ||
 	    (p->addr == 0x82 && fault == ALLOC_RX))
 		return ENOMEM;
@@ -321,12 +352,44 @@ usbd_suspend_pipe(struct usbd_pipe *p)
 	}
 }
 
+static void
+data_confirm(unsigned pipe, uint32_t status, uint32_t token)
+{
+	struct usbd_xfer *x = inputs[pipe];
+	assert(x->pending);
+	x->pending = false;
+	x->actual = 12;
+	memset(x->buf, 0, 12);
+	le16enc(x->buf, 8);
+	x->buf[2] = AICWF_TYPE_TX_CFM;
+	le32enc(x->buf + 4, status);
+	le32enc(x->buf + 8, token);
+	x->cb(x, x->arg, USBD_NORMAL_COMPLETION);
+}
+
 static void deliver(void);
 static usbd_status
 emulate_transfer(struct usbd_xfer *x)
 {
 	uint8_t *b = x->buf;
-	if (x->pipe->addr == 2) {
+	if (x->pipe->addr == 1) {
+		assert(data_test != OUT_IDLE && x->len <= sizeof(data_wire));
+		data_writes++;
+		data_len = x->len;
+		memcpy(data_wire, b, data_len);
+		uint32_t token = le32dec(b + 8) & AICWF_STA_TOKEN_MAX;
+		assert(token < 0x40000000U);
+		if (data_test == OUT_ACK || data_test == OUT_NACK)
+			data_confirm(0, data_test == OUT_ACK ? 8 : 1, token);
+		if (data_test == OUT_STALE) {
+			assert(previous_token != token);
+			data_confirm(1, 8, previous_token);
+			data_confirm(0, 0, token);
+		}
+		previous_token = token;
+		x->actual = data_test == OUT_SHORT ? x->len - 1 : x->len;
+		return data_test == OUT_STALL ? USBD_STALLED : USBD_NORMAL_COMPLETION;
+	} else if (x->pipe->addr == 2) {
 		static const uint8_t hdr[16] = {
 		    16, 0, 0x11, 0, 0, 0, 0, 0, 0, 4, 1, 0, 100, 0, 4, 0};
 		static const uint8_t version_hdr[16] = {
@@ -415,6 +478,14 @@ static int
 cv_timedwait(kcondvar_t *cv, kmutex_t *m, int ticks)
 {
 	assert(ticks == 500 && *m);
+	if (data_test == OUT_MISSING || data_test == OUT_STALE)
+		return EWOULDBLOCK;
+	if (data_test == OUT_LATE) {
+		mutex_exit(m);
+		data_confirm(1, 8, previous_token);
+		mutex_enter(m);
+		return EWOULDBLOCK; /* CFM arrived at the deadline. */
+	}
 	mutex_exit(m);
 	deliver();
 	mutex_enter(m);
@@ -603,6 +674,87 @@ survey_queue_checks(void)
 	assert(sc.sc_error == USBD_STALLED && !sc.sc_recover_task.pending);
 }
 
+static void
+ethernet_checks(void)
+{
+	uint8_t packet[AICWF_HDR_LEN + AICWF_TXDESC_LEN + ETHERMTU + 1] = {0};
+	struct aicwf_usb_softc usc = { .bus = radio };
+	struct aicwf_softc sc = { .sc_bus = &usc, .sc_txbuf = packet };
+	uint8_t *desc = packet + AICWF_HDR_LEN;
+	size_t hdr = AICWF_HDR_LEN + AICWF_TXDESC_LEN;
+	bool attempted;
+	const unsigned base = opens;
+
+	packet[2] = AICWF_TYPE_DATA;
+	packet[3] = 0xaa; /* Common bus byte is not part of the USB ABI. */
+	desc[20] = 8; /* IPv4 */
+	le16enc(packet, AICWF_TXDESC_LEN + 1);
+	le16enc(desc, 1);
+	desc[AICWF_TXDESC_LEN] = 0xa5;
+	sc.sc_receive_only = sc.sc_connected = true;
+	assert(aicwf_usb_write(&sc, hdr + 1, 0, &attempted) == ENETDOWN && !attempted);
+	sc.sc_receive_only = sc.sc_connected = false;
+	assert(aicwf_usb_write(&sc, hdr + 1, 0, &attempted) == ENETDOWN && !attempted);
+	assert(opens == base && !data_writes);
+	sc.sc_connected = true;
+	sc.sc_ic.ic_flags = IEEE80211_F_WPA;
+	assert(aicwf_usb_write(&sc, hdr + 1, 0, &attempted) == EACCES && !attempted);
+	sc.sc_ptk_valid = true;
+	data_test = OUT_ALLOC_FAIL;
+	assert(aicwf_usb_write(&sc, hdr + 1, 0, &attempted) == ENOMEM && !attempted);
+	assert(opens == base && !data_writes);
+
+	data_test = OUT_ORDINARY;
+	desc[26] = 1;
+	assert(aicwf_usb_write(&sc, hdr + 1, 0, &attempted) == EINVAL && !attempted);
+	desc[26] = 0;
+	desc[4] = 1;
+	assert(aicwf_usb_write(&sc, hdr + 1, 0, &attempted) == EINVAL && !attempted);
+	desc[4] = 0;
+	assert(aicwf_usb_write(&sc, hdr, 0, &attempted) == EINVAL && !attempted);
+	assert(aicwf_usb_write(&sc, sizeof(packet), 0, &attempted) == EMSGSIZE && !attempted);
+	assert(opens == base && !data_writes);
+	assert(aicwf_usb_write(&sc, hdr + 1, 0, &attempted) == 0 && attempted);
+	assert(opens == base + 1 && data_writes == 1 && data_len == hdr + 1);
+	assert(le16dec(data_wire) == data_len && data_wire[2] == 1 && data_wire[3] == 0);
+	assert(memcmp(desc, data_wire + AICWF_HDR_LEN, AICWF_TXDESC_LEN + 1) == 0);
+	le16enc(packet, AICWF_TXDESC_LEN + ETHERMTU);
+	le16enc(desc, ETHERMTU);
+	assert(aicwf_usb_write(&sc, hdr + ETHERMTU, 0, &attempted) == 0 && attempted);
+	assert(data_len == hdr + ETHERMTU);
+
+	le16enc(packet, AICWF_TXDESC_LEN + 1);
+	le16enc(desc, 1);
+	desc[20] = 0x88; desc[21] = 0x8e;
+	sc.sc_ptk_valid = false; /* EAPOL establishes the pairwise key. */
+	data_test = OUT_ACK;
+	assert(aicwf_usb_write(&sc, hdr + 1, 0, &attempted) == 0 && attempted);
+	assert(data_len == hdr + 4 && le16dec(data_wire) == data_len);
+	assert((le32dec(data_wire + 8) & AICWF_STA_CFM_REQUEST) != 0);
+	assert((previous_token & AICWF_DC_DATA_TOKEN) != 0);
+	assert(data_wire[hdr] == 0xa5 && data_wire[hdr + 1] == 0 &&
+	    data_wire[hdr + 2] == 0 && data_wire[hdr + 3] == 0);
+	data_test = OUT_NACK;
+	assert(aicwf_usb_write(&sc, hdr + 1, 0, &attempted) == EIO && attempted);
+	data_test = OUT_LATE;
+	assert(aicwf_usb_write(&sc, hdr + 1, 0, &attempted) == 0 && attempted);
+	data_test = OUT_MISSING;
+	assert(aicwf_usb_write(&sc, hdr + 1, 0, &attempted) == ETIMEDOUT && attempted);
+	data_test = OUT_STALE;
+	assert(aicwf_usb_write(&sc, hdr + 1, 0, &attempted) == ETIMEDOUT && attempted);
+	data_test = OUT_SHORT;
+	assert(aicwf_usb_write(&sc, hdr + 1, 0, &attempted) == EIO && attempted);
+	data_test = OUT_STALL;
+	unsigned saved_clears = clears;
+	assert(aicwf_usb_write(&sc, hdr + 1, 0, &attempted) == EIO && attempted);
+	assert(clears == saved_clears + 1 && data_writes == 9 && opens == base + 1);
+	clears = saved_clears;
+	device.sc_data_sequence = AICWF_DC_DATA_TOKEN - 1;
+	assert(aicwf_usb_write(&sc, hdr + 1, 0, &attempted) == EOVERFLOW && !attempted);
+	assert(device.sc_data_reply == NULL && data_writes == 9 && writes == 4);
+	data_test = OUT_IDLE;
+}
+
 int
 main(void)
 {
@@ -666,6 +818,7 @@ main(void)
 			assert(!uaicfw_survey_command(packet, n));
 		}
 		if (children && fault == NONE) {
+			ethernet_checks();
 			radio.listen(radio.cookie, ignore_input, NULL, NULL);
 			stall_input(inputs[0]);
 			stall_input(inputs[1]);
@@ -702,6 +855,6 @@ main(void)
 	assert(uaicfw_detach(0, 0) == 0);
 	assert(!writes && errors == 1);
 	puts("PASS: both bulk-IN endpoints, early and late FullMAC replies, "
-	     "DC record boundaries, generation and queue admission, recovery and cleanup");
+	     "DC record boundaries, station Ethernet OUT, EAPOL tokens, recovery and cleanup");
 	return 0;
 }
