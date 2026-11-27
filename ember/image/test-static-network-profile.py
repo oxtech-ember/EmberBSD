@@ -843,6 +843,17 @@ with tempfile.TemporaryDirectory(prefix='static-network-') as temporary:
     check('constty "/usr/libexec/getty std.115200" vt100 on secure' in
           (out / 'etc/ttys').read_text(), 'standard getty preserves a login console')
     rc_conf = (out / 'etc/rc.conf').read_text()
+    # Source the staged defaults at their test location, then apply profile overrides.
+    check(rc_conf.startswith((source / 'etc/rc.conf').read_text().rstrip() + '\n'),
+          'network rc.conf starts with the standard OS configuration')
+    config = rc_conf.replace('/etc/defaults/rc.conf', '"$1"')
+    values = subprocess.check_output(
+        [os.environ.get('TEST_SH', '/bin/sh'), '-c', config +
+         '\nprintf "%s\\n" "$resize_root" "$zfs" "$flushroutes" "$ip6mode" '
+         '"$rc_configured" "$net_interfaces" "$dhcpcd"', 'test',
+         str(out / 'etc/defaults/rc.conf')], env={'PATH': os.defpath}, text=True)
+    check(values.splitlines() == ['NO', 'NO', 'YES', 'host', 'YES', 'wifi0', 'YES'],
+          'startup reads the OS defaults and the selected network overrides in order')
     check('wpa_supplicant_flags="-Dbsd -i wifi0 -c /etc/wpa_supplicant.conf"' in rc_conf and
           'dhcpcd_flags="-b -C wpa_supplicant wifi0"' in rc_conf and
           'auto_ifconfig=NO' in rc_conf and 'net_interfaces="wifi0"' in rc_conf and

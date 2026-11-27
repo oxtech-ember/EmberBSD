@@ -837,7 +837,7 @@ def stage_network(root, source, overlay, interface, pwd_mkdb, dhcpcd_dest,
     (root / 'var/tmp').chmod(0o1777)
     for name in ('rc', 'rc.subr'):
         copy_if_different(source / 'etc' / name, root / 'etc' / name)
-    for name in ('rc.conf', 'gettytab', 'login.conf', 'group', 'master.passwd'):
+    for name in ('gettytab', 'login.conf', 'group', 'master.passwd'):
         copy_if_different(source / 'etc' / name, root / 'etc' / name)
     copy_if_different(source / 'etc/defaults/rc.conf', root / 'etc/defaults/rc.conf')
     dhcpcd_accounts = [line.split(':') for line in
@@ -859,6 +859,7 @@ def stage_network(root, source, overlay, interface, pwd_mkdb, dhcpcd_dest,
         + 'tmpfs /tmp tmpfs rw\n'
         + 'tmpfs /var/run tmpfs rw\n')
     network_rc_conf = (
+        (source / 'etc/rc.conf').read_text().rstrip() + '\n\n'
         'rc_configured=YES\n'
         f'rc_status_display="{ "/dev/ttyE0" if display_enabled else "" }"\n'
         'rc_directories=/etc/rc.network.d\n'
