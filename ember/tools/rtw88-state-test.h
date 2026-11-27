@@ -440,6 +440,9 @@ static void ieee80211_probe_curchan(struct ieee80211com *ic,int force)
 { (void)ic;(void)force;state_scan_probe++; }
 static void ieee80211_cancel_scan(struct ieee80211com *ic)
 { (void)ic;state_scan_cancel++; }
+/* The INIT arm ends an unfinished scan through the shared abort rule. */
+static void ieee80211_abort_scan(struct ieee80211com *ic)
+{ ieee80211_cancel_scan(ic); }
 static void state_band_sta_leave(struct ieee80211com *ic,struct ieee80211_node *ni)
 { (void)ic;(void)ni;state_leave++; }
 static void ieee80211_reset_bss(struct ieee80211com *ic)

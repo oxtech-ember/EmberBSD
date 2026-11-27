@@ -65,7 +65,8 @@ s = replace(s, 'const struct ieee80211_channel ieee80211_channel_anyc={0,0};',
 # This consumer keeps its leave/notification services and scan-start counter.
 band_names = ('ieee80211_begin_scan', 'ieee80211_probe_curchan',
               'ieee80211_create_ibss', 'ieee80211_find_node',
-              'ieee80211_unref_node', 'ieee80211_cancel_scan')
+              'ieee80211_unref_node', 'ieee80211_cancel_scan',
+              'ieee80211_abort_scan')
 band_start = '#define IEEE80211_DPRINTF(...) ((void)0)'
 band_end = '#undef ieee80211_sta_leave\n'
 s = replace(s, band_start,
@@ -113,7 +114,7 @@ parts.append(notice(proto)+'static void manualscan_parent_scan(struct ieee80211c
              'struct ieee80211_node *ni=ic->ic_bss;\nswitch (IEEE80211_S_SCAN) {\n'+s[a:b]+'\ndefault: break;\n}\n}\n')
 # Manual end-scan prefix is exact; automatic candidate selection is not modeled.
 s = read(node)
-a = s.index('\tieee80211_cancel_scan(ic);', s.index('ieee80211_end_scan('))
+a = s.index('\tieee80211_cancel_scan(ic);', s.index('\nieee80211_end_scan(struct'))
 b = s.index('\n\t/*\n\t * Automatic sequencing;',a)
 parts.append(notice(node)+'static void manualscan_end_scan(struct ieee80211com *ic) {\n'+s[a:b]+
              '\nCHECK(0); /* This fixture selects manual sequencing only. */\n}\n')
