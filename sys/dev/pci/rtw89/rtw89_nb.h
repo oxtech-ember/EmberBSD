@@ -66,6 +66,7 @@ struct rtw89_nb_ht {
 	uint16_t	ht_mcs;		/* TX HT-MCS 0-15 */
 	uint32_t	vht_cap;	/* VHT Capabilities Info of the AP */
 	uint16_t	vht_map;	/* TX VHT-MCS map */
+	bool		vht_bfee;	/* local SU beamformee, AP beamformer */
 	unsigned int	width;		/* 20, 40 or 80 MHz */
 	unsigned int	center;		/* center channel at 40 or 80 MHz */
 	/* HE (802.11ax): the words of the AP and the negotiated TX map. */
@@ -78,6 +79,7 @@ struct rtw89_nb_ht {
 	uint8_t		he_bss_color;	/* BSS Color Information octet */
 	uint32_t	he_params;	/* HE Operation Parameters */
 	uint16_t	he_basic_map;
+	bool		he_bfee;	/* local SU beamformee, AP beamformer */
 };
 
 struct rtw89_nb_bss {

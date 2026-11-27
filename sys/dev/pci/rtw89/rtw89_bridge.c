@@ -836,6 +836,11 @@ rtw89_nb_fill_ht(struct rtw89_nb *nb, const struct rtw89_nb_ht *ht)
 		vc->cap = ht->vht_cap & (IEEE80211_VHT_CAP_RXLDPC |
 		    IEEE80211_VHT_CAP_SHORT_GI_80 |
 		    IEEE80211_VHT_CAP_MAX_A_MPDU_LENGTH_EXPONENT_MASK);
+		/* rtw89_mac_bf_assoc() sets up the sounding response. */
+		if (ht->vht_bfee)
+			vc->cap |= ht->vht_cap &
+			    (IEEE80211_VHT_CAP_SU_BEAMFORMER_CAPABLE |
+			    IEEE80211_VHT_CAP_SOUNDING_DIMENSIONS_MASK);
 		vc->vht_mcs.rx_mcs_map = cpu_to_le16(ht->vht_map);
 		vc->vht_mcs.tx_mcs_map = cpu_to_le16(ht->vht_map);
 		for (nss = 0, i = 0; i < 8; i++)
@@ -865,8 +870,10 @@ rtw89_nb_fill_ht(struct rtw89_nb *nb, const struct rtw89_nb_ht *ht)
  * HE: the firmware rate adaptation reads the HE words of the AP, and the
  * MAC reads the BSS color and HE Operation of the BSS.  Keep only the AP
  * bits that this station uses with it: the width set, LDPC reception and
- * the PPE Thresholds or nominal padding.  STBC, DCM and beamforming stay
- * disabled.  The maps are the negotiated TX map in both directions.
+ * the PPE Thresholds or nominal padding, and the SU beamformer bit and
+ * sounding dimensions when the station offered SU beamformee.  STBC, DCM
+ * and MU beamforming stay disabled.  The maps are the negotiated TX map in
+ * both directions.
  */
 static void
 rtw89_nb_fill_he(struct rtw89_nb *nb, const struct rtw89_nb_ht *ht)
@@ -884,6 +891,12 @@ rtw89_nb_fill_he(struct rtw89_nb *nb, const struct rtw89_nb_ht *ht)
 	he->he_cap_elem.phy_cap_info[0] = ht->he_phy[0] & 0x1e;
 	he->he_cap_elem.phy_cap_info[1] = ht->he_phy[1] &
 	    IEEE80211_HE_PHY_CAP1_LDPC_CODING_IN_PAYLOAD;
+	if (ht->he_bfee) {
+		he->he_cap_elem.phy_cap_info[3] = ht->he_phy[3] &
+		    IEEE80211_HE_PHY_CAP3_SU_BEAMFORMER;
+		he->he_cap_elem.phy_cap_info[5] = ht->he_phy[5] &
+		    IEEE80211_HE_PHY_CAP5_BEAMFORMEE_NUM_SND_DIM_UNDER_80MHZ_MASK;
+	}
 	he->he_cap_elem.phy_cap_info[6] = ht->he_phy[6] &
 	    IEEE80211_HE_PHY_CAP6_PPE_THRESHOLD_PRESENT;
 	he->he_cap_elem.phy_cap_info[9] = ht->he_phy[9] &

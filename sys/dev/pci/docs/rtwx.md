@@ -104,18 +104,24 @@ Local capabilities:
   rtw89 sends OM Control with UL MU disabled after association. The bridge
   gives the firmware the AP's width, LDPC and PPE Thresholds or padding
   bits, the BSS color and the HE Operation parameters; STBC, DCM and
-  beamforming stay disabled. See the
+  MU beamforming stay disabled. See the
   [net80211 HE contract](../../../net80211/docs/net80211-he-ies.md).
+- SU beamformee for VHT and HE on a 2T2R chip: Beamformee STS 4 and, for
+  HE, Max Nc 2. When the AP is an SU beamformer, the bridge gives
+  `rtw89_mac_bf_assoc()` the beamformer bit and the sounding dimensions of
+  the AP. The MAC then answers the NDP sounding of the AP with a compressed
+  beamforming report, and the AP can steer its downlink to the station.
+  The link line shows `BFee 1` in this case.
 - HT20 with MCS 0-15 on a 2T2R chip (MCS 0-7 on 1T1R), long GI and BCC
   reception, maximum RX A-MPDU 65535 bytes, no MPDU start spacing.
 - VHT at the 40 or 80 MHz channel that the AP announces, MCS 0-9 on each
   stream, RX LDPC, short GI reception at 80 MHz and the maximum A-MPDU
-  length exponent 7. No 160 MHz, STBC or beamforming.
+  length exponent 7. No 160 MHz, STBC or MU beamforming.
 - At association, the bridge tunes the channel to the negotiated width and
   gives the firmware the HT and VHT words of the AP. The firmware then
   transmits with short GI and LDPC when the AP receives them.
 - The kernel log reports the negotiated link, for example
-  `rtwx0: VHT80 link on channel 64 (center 58), TX map 0xfffa, SGI 1, LDPC 1`.
+  `rtwx0: VHT80 link on channel 64 (center 58), TX map 0xfffa, SGI 1, LDPC 1, BFee 1`.
 - The HT20 profile sets `IEEE80211_HT20_PROFILE_HW_PROT`: each data frame
   has RTS and hardware RTS selection enabled in its TX descriptor, and the
   MAC has hardware CTS-to-self enabled. The station keeps HT when a 2.4 GHz
@@ -190,6 +196,22 @@ The default `kern.sbmax`, `net.inet.tcp.sendbuf_max` and
 10 ms under load, that window limits one connection to about 200 Mbit/s.
 While the laptop received 167 Mbit/s, the CPU that serves the interrupt
 was about 30 % busy and the other CPUs were idle.
+
+### SU beamformee, 2026-11-27
+
+The AP is an SU and MU beamformer. Before this change the station did not
+offer SU beamformee. The AP then sent to it at HE-MCS 5 on two streams or
+HE-MCS 9 on one stream, while an 802.11ax peer that offered SU beamformee
+received HE-MCS 10-11. With SU beamformee the link line showed `BFee 1`,
+and in the same hour the AP sent at HE-MCS 7-8 on two streams (721-865
+Mbit/s on the air instead of 480-576 Mbit/s).
+
+A 16-minute run alternated one TCP connection in each direction for 13
+rounds. There was no disconnection, and ping lost 3 of 960 replies. Of 520
+samples of the receive rate, 482 were HE-MCS 8 on two streams. Two L1 SER
+events recovered without loss of the link, as with the kernel before the
+change. The peer limited TCP to about 80 Mbit/s in this hour, also to the
+wired interface of the laptop, so the TCP gain is not measured.
 
 ### HE, 2026-11-27
 
