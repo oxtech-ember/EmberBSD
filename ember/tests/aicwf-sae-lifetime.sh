@@ -94,6 +94,7 @@ static void aicwf_recover_scan(struct aicwf_softc *sc, uint64_t epoch, uint64_t 
 static void aicwf_disconnect(struct aicwf_softc *);
 static int aicwf_sae_ioctl(struct aicwf_softc *, u_long, struct ieee80211req *);
 static int interruption, disconnect_requests, key_add_requests;
+static uint8_t add_status, add_slot = 7;
 static int aicwf_cmd(struct aicwf_softc *sc, uint16_t id, const void *p,
     size_t n, uint16_t cid, void *cfm, size_t clen)
 { (void)sc; (void)id; (void)p; (void)n; (void)cid; (void)cfm; (void)clen;
@@ -112,7 +113,9 @@ static int aicwf_cmd_reply(struct aicwf_softc *sc, uint16_t id,
         id == AICWF_SM_EXTERNAL_AUTH_RSP);
     int mode = interruption;
     interruption = 0;
-    if (mode == 3) {
+    if (mode == 4) {
+        sc->sc_ic.ic_bss = NULL;
+    } else if (mode == 3) {
         struct ieee80211req_sae req = {.version=1, .op=IEEE80211_SAE_CONFIGURE,
             .generation=43, .len=1, .data={1}, .bssid={2,0,0,0,0,2}};
         struct ieee80211req ireq = {.i_len=sizeof(req), .i_data=&req};
@@ -135,11 +138,15 @@ static int aicwf_cmd_reply(struct aicwf_softc *sc, uint16_t id,
     if (id == AICWF_MM_KEY_ADD_REQ) {
         const uint8_t *wire = param;
         assert(plen == 44 && clen == 2);
-        assert(memcmp(wire + 24, "\1\2\3\4\5\6", 6) == 0);
+        if (sc->sc_fw_bip_ready)
+            assert(memcmp(wire + 24, "\1\2\3\4\5\6", 6) == 0);
+        else
+            assert(memcmp(wire + 24, "\0\0\0\0\0\0", 6) == 0);
         assert(memcmp(wire + 30, "\0\0\0\0\0\0\0\0\0\0", 10) == 0);
         key_add_requests++;
         memset(cfm, 0, clen);
-        ((uint8_t *)cfm)[1] = 7;
+        ((uint8_t *)cfm)[0] = add_status;
+        ((uint8_t *)cfm)[1] = add_slot;
     } else {
         assert(clen == 0);
     }
@@ -250,6 +257,23 @@ int main(void)
     sc.sc_fw_bip_ready = true;
     assert(aicwf_sae_ioctl(&sc, SIOCS80211, &ireq) == 0);
     assert(key_add_requests == 1 && sc.sc_igtk[0] == 7);
+    /* A normal firmware key confirmation must supply a usable slot. */
+    sc.sc_fw_bip_ready = false;
+    memset(req.data + 2, 0, 6);
+    add_slot = AICWF_HWKEY_NONE;
+    assert(aicwf_sae_ioctl(&sc, SIOCS80211, &ireq) == EIO);
+    assert(sc.sc_igtk[0] == 7);
+    add_slot = 12;
+    add_status = 1;
+    assert(aicwf_sae_ioctl(&sc, SIOCS80211, &ireq) == EIO);
+    assert(sc.sc_igtk[0] == 7);
+    add_status = 0;
+    interruption = 4;
+    assert(aicwf_sae_ioctl(&sc, SIOCS80211, &ireq) == ESTALE);
+    assert(sc.sc_igtk[0] == 7);
+    sc.sc_ic.ic_bss = &node;
+    assert(aicwf_sae_ioctl(&sc, SIOCS80211, &ireq) == 0);
+    assert(sc.sc_igtk[0] == 12);
     sc.sc_connected = sc.sc_sae_enabled = sc.sc_sae_authenticated = true;
     sc.sc_sae_caps = 3;
     sc.sc_igtk[0] = 7;
@@ -276,7 +300,7 @@ int main(void)
     aicwf_disconnect_ind(&sc, ind, sizeof(ind));
     assert(!sc.sc_connected && sc.sc_sae_epoch == epoch + 1 &&
         sc.sc_configure_serial == 1);
-    puts("PASS: 24 SAE lifetime, extension and disconnect VIF/bounds cases");
+    puts("PASS: 28 SAE lifetime, key confirmation, extension and disconnect cases");
 
 
     return 0;

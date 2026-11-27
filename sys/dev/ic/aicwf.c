@@ -1156,7 +1156,7 @@ aicwf_sae_current(struct aicwf_softc *sc, const struct ieee80211req_sae *req,
     uint64_t epoch)
 {
 	return sc->sc_sae_enabled && sc->sc_sae_epoch == epoch &&
-	    req->generation == sc->sc_sae_generation &&
+	    sc->sc_ic.ic_bss != NULL && req->generation == sc->sc_sae_generation &&
 	    IEEE80211_ADDR_EQ(req->bssid, sc->sc_sae_bssid) &&
 	    IEEE80211_ADDR_EQ(req->bssid, sc->sc_ic.ic_bss->ni_bssid);
 }
@@ -1266,7 +1266,7 @@ aicwf_sae(struct ieee80211com *ic, const struct ieee80211req_sae *req)
 		    !sc->sc_connected || !sc->sc_sae_authenticated ||
 		    ic->ic_state != IEEE80211_S_RUN)
 			error = ESTALE;
-		if (error == 0 && cfm[0] != 0)
+		if (error == 0 && (cfm[0] != 0 || cfm[1] == AICWF_HWKEY_NONE))
 			error = EIO;
 		if (error == 0)
 			sc->sc_igtk[index - 4] = cfm[1];
