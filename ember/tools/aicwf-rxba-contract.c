@@ -47,6 +47,7 @@ struct aicwf_softc {
  uint64_t sc_pmf_rx_pn;
  uint8_t sc_rx_vif,sc_rx_ap,sc_rx_bssid[6],sc_vif,sc_ap,sc_ptk[16],sc_hwkey[5];
  uint64_t sc_port_serial;
+ bool sc_dc,sc_join_accepted,sc_join_open;
  bool sc_rx_active,sc_if_attached,sc_connected,sc_ptk_valid;
  bool sc_connecting,sc_sae_enabled,sc_sae_pending,sc_sae_authenticated,sc_qos;
  uint8_t sc_sae_bssid[6],sc_igtk[2];
@@ -267,6 +268,25 @@ static void aic_delete_pending(void)
  CHECK(aicwf_key_task(&aic.sc_ic,&aic_pending_key,AICWF_TASK_KEY_DELETE)==1);
 }
 static void
+test_dc_association_identity(void)
+{
+ aic_reset();aic.sc_dc=true;
+ aic.sc_join_accepted=aic.sc_join_open=true;
+ aicwf_rx_retire(&aic);
+ CHECK(!aic.sc_join_accepted && !aic.sc_join_open && aic.sc_rx_assoc==0);
+ aic.sc_rx_join=aic.sc_rx_serial;
+ aic.sc_rx_vif=aic.sc_vif;
+ memcpy(aic.sc_rx_bssid,aic_bssid,sizeof(aic.sc_rx_bssid));
+ aic.sc_rx_bssid[5]^=1;
+ CHECK(!aicwf_rx_begin(&aic) && aic.sc_rx_assoc==0);
+ aic.sc_rx_bssid[5]^=1;aic.sc_rx_vif++;
+ CHECK(!aicwf_rx_begin(&aic) && aic.sc_rx_assoc==0);
+ aic.sc_rx_vif=aic.sc_vif;
+ CHECK(aicwf_rx_begin(&aic) && aic.sc_rx_assoc!=0);
+ CHECK(!aic.sc_join_accepted && !aic.sc_join_open);
+ aicwf_rx_retire(&aic);
+}
+static void
 test_controlled_port_confirmation(void)
 {
  aic_reset();memset(&aic_pending_key,0,sizeof(aic_pending_key));
@@ -334,7 +354,7 @@ test_aic_old_ap_departure_preserves_join(void)
 int main(void)
 {
  test_aic_actual_reorder_lifetime();test_aic_key_stop_and_batch_fences();
- test_controlled_port_confirmation();test_aic_delete_during_key_install();test_aic_old_ap_departure_preserves_join();
+ test_dc_association_identity();test_controlled_port_confirmation();test_aic_delete_during_key_install();test_aic_old_ap_departure_preserves_join();
  CHECK(aic.sc_rxba.bytes==0 && rxba_kmem_live==0 && !aic.sc_epoch_lock && !aic.sc_rx_lock);
  CHECK(aic_queued==NULL && aic_acquired==NULL);
  printf("AIC actual offload RX/BA/lifetime: %u checks, %u failures\n",checks,failures);

@@ -184,7 +184,8 @@ struct aicwf_softc {
 	struct { unsigned ic_flags; } sc_ic;
 	bool sc_receive_only, sc_connected, sc_ptk_valid, sc_rx_active;
 	kmutex_t sc_epoch_lock;
-	uint64_t sc_port_serial, sc_rx_serial;
+	uint64_t sc_port_serial, sc_rx_serial, sc_rx_assoc;
+	bool sc_join_accepted, sc_join_open;
 };
 struct aicwf_usb_softc { struct uaicfw_attach_args bus; };
 #define mutex_spin_enter mutex_enter
@@ -731,14 +732,28 @@ ethernet_checks(void)
 	assert(aicwf_usb_write(&sc, hdr + 1, 0, &attempted) == ENETDOWN && !attempted);
 	assert(opens == base && !data_writes);
 	sc.sc_connected = true;
+	sc.sc_rx_assoc = 2;
+	sc.sc_join_accepted = true;
 	sc.sc_ic.ic_flags = IEEE80211_F_WPA;
 	assert(aicwf_usb_write(&sc, hdr + 1, 0, &attempted) == EACCES && !attempted);
+	/* The saved association is secured. A profile edit does not reconnect. */
+	sc.sc_ic.ic_flags = 0;
+	data_test = OUT_ALLOC_FAIL;
+	assert(aicwf_usb_write(&sc, hdr + 1, 0, &attempted) == EACCES && !attempted);
+	assert(!data_writes && opens == base);
+	sc.sc_ic.ic_flags = IEEE80211_F_WPA;
 	sc.sc_ptk_valid = sc.sc_rx_active = true;
 	sc.sc_rx_serial = 4;
 	assert(aicwf_usb_write(&sc, hdr + 1, 0, &attempted) == EACCES && !attempted);
 	sc.sc_port_serial = 3;
 	assert(aicwf_usb_write(&sc, hdr + 1, 0, &attempted) == EACCES && !attempted);
 	sc.sc_port_serial = 4;
+	sc.sc_join_accepted = false; /* IND before CONNECT_CFM. */
+	assert(aicwf_usb_write(&sc, hdr + 1, 0, &attempted) == EACCES && !attempted);
+	sc.sc_join_accepted = true;
+	sc.sc_rx_assoc = 0; /* CONNECT_CFM before IND or a retired join. */
+	assert(aicwf_usb_write(&sc, hdr + 1, 0, &attempted) == EACCES && !attempted);
+	sc.sc_rx_assoc = 2;
 	data_test = OUT_ALLOC_FAIL;
 	assert(aicwf_usb_write(&sc, hdr + 1, 0, &attempted) == ENOMEM && !attempted);
 	assert(opens == base && !data_writes);
@@ -761,6 +776,11 @@ ethernet_checks(void)
 	assert(opens == base + 1 && data_writes == 1 && data_len == hdr + 1);
 	assert(le16dec(data_wire) == data_len && data_wire[2] == 1 && data_wire[3] == 0);
 	assert(memcmp(desc, data_wire + AICWF_HDR_LEN, AICWF_TXDESC_LEN + 1) == 0);
+	/* A confirmed open join keeps its policy through a pending profile edit. */
+	sc.sc_join_open = true;
+	sc.sc_ptk_valid = false;
+	sc.sc_port_serial = 0;
+	sc.sc_ic.ic_flags = IEEE80211_F_WPA;
 	le16enc(packet, AICWF_TXDESC_LEN + ETHERMTU);
 	le16enc(desc, ETHERMTU);
 	assert(aicwf_usb_write(&sc, hdr + ETHERMTU, 0, &attempted) == 0 && attempted);

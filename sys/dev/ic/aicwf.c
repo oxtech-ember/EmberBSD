@@ -1296,7 +1296,7 @@ aicwf_connect(struct aicwf_softc *sc)
 	uint8_t req[320], cfm[1] = { 0xff };
 	uint32_t flags = 0;
 	uint64_t epoch;
-	bool reassoc;
+	bool reassoc, open, controlled;
 	int error;
 
 	KASSERT(IFNET_LOCKED(&sc->sc_if));
@@ -1342,6 +1342,12 @@ aicwf_connect(struct aicwf_softc *sc)
 	if (reassoc)
 		flags |= AICWF_CONNECT_REASSOC;
 	le32enc(req + 48, flags);
+	/* Bind admission to these request bytes and the selected BSS. */
+	controlled = (flags & (AICWF_CONNECT_WPA | AICWF_CONNECT_PORT_HOST)) ==
+	    (AICWF_CONNECT_WPA | AICWF_CONNECT_PORT_HOST);
+	open = (flags & (AICWF_CONNECT_WPA | AICWF_CONNECT_PORT_HOST |
+	    AICWF_CONNECT_MFP)) == 0 && (ic->ic_flags & IEEE80211_F_PRIVACY) == 0 &&
+	    (ni->ni_capinfo & IEEE80211_CAPINFO_PRIVACY) == 0;
 	epoch = aicwf_sae_advance_if(sc, 0);
 	mutex_enter(&sc->sc_lock);
 	if (epoch != sc->sc_sae_epoch) {
@@ -1353,6 +1359,8 @@ aicwf_connect(struct aicwf_softc *sc)
 	sc->sc_connecting = true;
 	mutex_spin_enter(&sc->sc_epoch_lock);
 	sc->sc_rx_join = sc->sc_rx_serial;
+	sc->sc_rx_vif = req[61];
+	memcpy(sc->sc_rx_bssid, req + 34, ETHER_ADDR_LEN);
 	mutex_spin_exit(&sc->sc_epoch_lock);
 	mutex_exit(&sc->sc_lock);
 	error = aicwf_cmd_reply(sc, AICWF_SM_CONNECT_REQ, req, sizeof(req),
@@ -1368,9 +1376,14 @@ aicwf_connect(struct aicwf_softc *sc)
 		    error, cfm[0]);
 		sc->sc_connecting = false;
 		aicwf_rx_retire(sc);
-	} else
+	} else {
+		mutex_spin_enter(&sc->sc_epoch_lock);
+		sc->sc_join_accepted = controlled || open;
+		sc->sc_join_open = open;
+		mutex_spin_exit(&sc->sc_epoch_lock);
 		/* New IGTK requests cannot run until IFNET is released. */
 		memset(sc->sc_igtk, AICWF_HWKEY_NONE, sizeof(sc->sc_igtk));
+	}
 	mutex_exit(&sc->sc_lock);
 }
 
@@ -3011,6 +3024,7 @@ aicwf_rx_retire(struct aicwf_softc *sc)
 	mutex_spin_enter(&sc->sc_epoch_lock);
 	aicwf_rx_fence_locked(sc, &out);
 	sc->sc_rx_assoc = 0;
+	sc->sc_join_accepted = sc->sc_join_open = false;
 	mutex_spin_exit(&sc->sc_epoch_lock);
 	aicwf_rx_discard(&out);
 }
@@ -3023,6 +3037,8 @@ aicwf_rx_begin(struct aicwf_softc *sc)
 
 	mutex_spin_enter(&sc->sc_epoch_lock);
 	if (sc->sc_rx_join == 0 || sc->sc_rx_join != sc->sc_rx_serial ||
+	    (sc->sc_dc && (sc->sc_rx_vif != sc->sc_vif ||
+	    !IEEE80211_ADDR_EQ(sc->sc_rx_bssid, sc->sc_ic.ic_bss->ni_bssid))) ||
 	    (sc->sc_if.if_flags & IFF_RUNNING) == 0) {
 		mutex_spin_exit(&sc->sc_epoch_lock);
 		return false;

@@ -47,9 +47,10 @@ aicwf_usb_port(void *cookie)
 	uint64_t serial = 0;
 
 	mutex_spin_enter(&sc->sc_epoch_lock);
-	if (sc->sc_ptk_valid && sc->sc_rx_active &&
-	    sc->sc_port_serial == sc->sc_rx_serial)
-		serial = sc->sc_port_serial;
+	if (sc->sc_join_accepted && sc->sc_rx_assoc != 0 && sc->sc_rx_active &&
+	    (sc->sc_join_open || (sc->sc_ptk_valid &&
+	    sc->sc_port_serial == sc->sc_rx_serial)))
+		serial = sc->sc_rx_serial;
 	mutex_spin_exit(&sc->sc_epoch_lock);
 	return serial;
 }
@@ -68,7 +69,6 @@ aicwf_usb_write(struct aicwf_softc *sc, size_t len, u_int reserve,
 		if (sc->sc_receive_only || !sc->sc_connected)
 			return ENETDOWN;
 		if (len >= AICWF_HDR_LEN + AICWF_TXDESC_LEN &&
-		    (sc->sc_ic.ic_flags & IEEE80211_F_WPA) != 0 &&
 		    be16dec(sc->sc_txbuf + AICWF_HDR_LEN + 20) != ETHERTYPE_PAE) {
 			port.serial = aicwf_usb_port(sc);
 			if (port.serial == 0)

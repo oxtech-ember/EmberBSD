@@ -42,6 +42,8 @@ enum ieee80211_state {
 #define IEEE80211_F_SCAN 0x10
 #define IEEE80211_F_WPA2 2
 #define IEEE80211_F_WPA 3
+#define IEEE80211_F_PRIVACY 0x1000000
+#define IEEE80211_CAPINFO_PRIVACY 0x10
 #define IFF_RUNNING 1
 #define AICWF_TX_POWER_DBM 20
 #define AICWF_HWQ_VO 3
@@ -113,6 +115,7 @@ struct ieee80211_assoc_event {
 #define IEEE80211_ASSOC_EVENT_VERSION 1
 struct ieee80211_node {
 	uint8_t ni_bssid[6];
+	uint16_t ni_capinfo;
 	uint8_t ni_essid[32], ni_esslen;
 	uint64_t ni_assoc_epoch;
 	struct ieee80211_chan *ni_chan;
@@ -164,6 +167,8 @@ struct aicwf_softc {
 	uint32_t sc_sae_generation;
 	uint64_t sc_sae_epoch, sc_pmf_rx_pn, sc_join_serial, sc_configure_serial;
 	uint64_t sc_rx_join, sc_rx_serial;
+	bool sc_join_accepted, sc_join_open;
+	uint8_t sc_rx_bssid[6], sc_rx_vif;
 	uint64_t sc_alive_epoch, sc_alive_join_serial;
 	bool sc_alive_queued; unsigned sc_alive_misses;
 	int (*sc_newstate)(struct ieee80211com *, enum ieee80211_state, int);
@@ -356,7 +361,7 @@ static bool ieee80211_assoc_event_snapshot(struct ieee80211com *ic,
 static void kpause(const char *name, bool intr, int delay, void *lock)
 { (void)name; (void)intr; (void)delay; (void)lock; }
 static void aicwf_rx_retire(struct aicwf_softc *s)
-{ (void)s; }
+{ s->sc_join_accepted = s->sc_join_open = false; }
 static void aicwf_key_set_cb(struct aicwf_softc *s, const struct aicwf_task *t)
 { (void)s; (void)t; assert(0); }
 static void aicwf_key_delete_cb(struct aicwf_softc *s, const struct aicwf_task *t)
@@ -1409,6 +1414,22 @@ dc_channel_checks(void)
 	aicwf_connect(&sc);
 	CHECK(writes == 1 && le16dec(written + 8) == AICWF_SM_CONNECT_REQ);
 	CHECK(le16dec(written + 16 + 40) == 2437 && written[16 + 44] == 11);
+	CHECK(sc.sc_join_accepted && !sc.sc_join_open);
+	CHECK(sc.sc_rx_vif == sc.sc_vif &&
+	    memcmp(sc.sc_rx_bssid, written + 16 + 34, ETHER_ADDR_LEN) == 0);
+	sc.sc_ic.ic_flags = 0;
+	CHECK(sc.sc_join_accepted && !sc.sc_join_open);
+	ni.ni_capinfo = IEEE80211_CAPINFO_PRIVACY;
+	aicwf_connect(&sc);
+	CHECK(!sc.sc_join_accepted && !sc.sc_join_open);
+	ni.ni_capinfo = 0;
+	aicwf_connect(&sc);
+	CHECK(sc.sc_join_accepted && sc.sc_join_open);
+	sc.sc_ic.ic_flags = IEEE80211_F_WPA2;
+	CHECK(sc.sc_join_accepted && sc.sc_join_open);
+	reply_status = 1;
+	aicwf_connect(&sc);
+	CHECK(!sc.sc_join_accepted && !sc.sc_join_open);
 	IFNET_UNLOCK(&sc.sc_if);
 }
 

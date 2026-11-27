@@ -20,6 +20,8 @@ fails the packet. The driver does not replay an uncertain submission.
 In a secured network, EAPOL can pass before key setup. Other packets require
 the controlled-port confirmation for the current key generation. A queued
 pairwise key change retires permission before its firmware command runs.
+A successful connection request and a matching association indication establish
+the policy for that connection. Editing the next profile does not change it.
 The passive survey attachment keeps the data OUT endpoint closed.
 
 ## DC passive survey
