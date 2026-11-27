@@ -62,6 +62,7 @@ ember/tests/usb-hub-address-retry.sh sys/dev/usb/usbdi.h
 ember/tests/xhci-command-abort.sh ember/tests/xhci-command-abort.c
 ember/tests/xhci-command-abort.sh sys/dev/usb/xhci.c
 ember/tests/xhci-command-abort.sh sys/dev/usb/xhcivar.h
+ember/tests/acpi-sleep-disabled.sh sys/dev/acpi/acpi.c
 ember/tests/aicwf-sta.sh sys/dev/ic/aicwf_command.h
 ember/tests/aicwf-sta.sh sys/dev/ic/aicwf_sae.h
 ember/tests/aicwf-sta.sh sys/dev/ic/aicwf_vht.h

@@ -24,7 +24,7 @@
 .\" ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 .\" POSSIBILITY OF SUCH DAMAGE.
 .\"
-.Dd December 5, 2020
+.Dd November 27, 2026
 .Dt ACPI 4
 .Os
 .Sh NAME
@@ -96,7 +96,9 @@ The address of the ACPI root pointer in system memory.
 .It Ic hw.acpi.sleep.state
 The system sleep state.
 .It Ic hw.acpi.sleep.states
-A list of system sleep states that the machine supports.
+A list of system sleep states that the machine supports and that
+the system can enter; see
+.Ic hw.acpi.sleep.disabled .
 The possible values are:
 .Pp
 .Bl -tag -width XS1X -offset indent -compact
@@ -114,6 +116,12 @@ suspend-to-disk (not supported on
 .It S5
 power off
 .El
+.It Ic hw.acpi.sleep.disabled
+A boolean variable.
+If set, the system does not enter the sleep states S1 to S4, and
+.Ic hw.acpi.sleep.states
+does not report them.
+Set it on a machine that must not sleep, or where resume does not work.
 .It Ic hw.acpi.sleep.beep
 A boolean variable that controls whether the PC
 speaker beeps upon resume.

@@ -245,10 +245,12 @@ static void		acpi_poll_task(void *);
 static void		acpi_poll_schedule(void);
 
 static void		acpi_sleep_init(struct acpi_softc *);
+static int		acpi_sleep_available(const struct acpi_softc *);
 
 static int		sysctl_hw_acpi_fixedstats(SYSCTLFN_PROTO);
 static int		sysctl_hw_acpi_sleepstate(SYSCTLFN_PROTO);
 static int		sysctl_hw_acpi_sleepstates(SYSCTLFN_PROTO);
+static int		sysctl_hw_acpi_sleepdisabled(SYSCTLFN_PROTO);
 static int		sysctl_hw_acpi_poll_interval(SYSCTLFN_PROTO);
 
 static bool		  acpi_is_scope(struct acpi_devnode *);
@@ -270,6 +272,15 @@ pci_chipset_tag_t	acpi_default_pci_chipset_tag(struct acpi_softc *, int, int);
 
 CFATTACH_DECL2_NEW(acpi, sizeof(struct acpi_softc),
     acpi_match, acpi_attach, acpi_detach, NULL, acpi_rescan, acpi_childdet);
+
+/*
+ * Origin: EmberBSD (AI-assisted).  If set, the system does not enter
+ * S1-S4 and hw.acpi.sleep.states does not report them.  Session managers,
+ * for example ConsoleKit, then do not offer suspend.  Use it on machines
+ * where resume does not work, or where the system must stay awake.
+ * FreeBSD has the same control as hw.acpi.sleep_disabled.
+ */
+static int		acpi_sleep_disabled;
 
 /*
  * Probe for ACPI support.
@@ -1676,6 +1687,21 @@ acpi_sleep_init(struct acpi_softc *sc)
 }
 
 /*
+ * The sleep states that the system can enter now: the states of the
+ * firmware, without S1-S4 when hw.acpi.sleep.disabled is set.
+ */
+static int
+acpi_sleep_available(const struct acpi_softc *sc)
+{
+	int states = sc->sc_sleepstates;
+
+	if (atomic_load_relaxed(&acpi_sleep_disabled))
+		states &= ~(__BIT(ACPI_STATE_S1) | __BIT(ACPI_STATE_S2) |
+		    __BIT(ACPI_STATE_S3) | __BIT(ACPI_STATE_S4));
+	return states;
+}
+
+/*
  * Must be called with interrupts enabled.
  */
 void
@@ -1693,11 +1719,10 @@ acpi_enter_sleep_state(int state)
 	if (state < ACPI_STATE_S0 || state > ACPI_STATE_S5)
 		return;
 
-	aprint_normal_dev(sc->sc_dev, "entering state S%d\n", state);
-
 	switch (state) {
 
 	case ACPI_STATE_S0:
+		aprint_normal_dev(sc->sc_dev, "entering state S%d\n", state);
 		sc->sc_sleepstate = ACPI_STATE_S0;
 		return;
 
@@ -1706,11 +1731,12 @@ acpi_enter_sleep_state(int state)
 	case ACPI_STATE_S3:
 	case ACPI_STATE_S4:
 
-		if ((sc->sc_sleepstates & __BIT(state)) == 0) {
+		if ((acpi_sleep_available(sc) & __BIT(state)) == 0) {
 			aprint_error_dev(sc->sc_dev, "sleep state "
 			    "S%d is not available\n", state);
 			return;
 		}
+		aprint_normal_dev(sc->sc_dev, "entering state S%d\n", state);
 
 		/*
 		 * Evaluate the _TTS method. This should be done before
@@ -1812,6 +1838,7 @@ acpi_enter_sleep_state(int state)
 
 	case ACPI_STATE_S5:
 
+		aprint_normal_dev(sc->sc_dev, "entering state S%d\n", state);
 		(void)acpi_eval_set_integer(NULL, "\\_TTS", ACPI_STATE_S5);
 
 		rv = AcpiEnterSleepStatePrep(ACPI_STATE_S5);
@@ -1890,6 +1917,12 @@ SYSCTL_SETUP(sysctl_acpi_setup, "sysctl hw.acpi subtree setup")
 	    CTLFLAG_PERMANENT | CTLFLAG_READONLY, CTLTYPE_STRING,
 	    "states", SYSCTL_DESCR("Supported sleep states"),
 	    sysctl_hw_acpi_sleepstates, 0, NULL, 0,
+	    CTL_CREATE, CTL_EOL);
+
+	(void)sysctl_createv(NULL, 0, &snode, NULL,
+	    CTLFLAG_PERMANENT | CTLFLAG_READWRITE, CTLTYPE_INT,
+	    "disabled", SYSCTL_DESCR("Disable sleep states S1-S4"),
+	    sysctl_hw_acpi_sleepdisabled, 0, NULL, 0,
 	    CTL_CREATE, CTL_EOL);
 
 	err = sysctl_createv(clog, 0, &rnode, &rnode,
@@ -2001,6 +2034,11 @@ sysctl_hw_acpi_sleepstate(SYSCTLFN_ARGS)
 	if (t < ACPI_STATE_S0 || t > ACPI_STATE_S5)
 		return EINVAL;
 
+	/* Report a refused sleep state to the caller, for example powerd. */
+	if (t >= ACPI_STATE_S1 && t <= ACPI_STATE_S4 &&
+	    (acpi_sleep_available(sc) & __BIT(t)) == 0)
+		return EOPNOTSUPP;
+
 	acpi_enter_sleep_state(t);
 
 	return 0;
@@ -2012,20 +2050,21 @@ sysctl_hw_acpi_sleepstates(SYSCTLFN_ARGS)
 	struct acpi_softc *sc = acpi_softc;
 	struct sysctlnode node;
 	char t[3 * 6 + 1];
-	int err;
+	int err, states;
 
 	if (acpi_softc == NULL)
 		return ENOSYS;
 
 	(void)memset(t, '\0', sizeof(t));
 
+	states = acpi_sleep_available(sc);
 	(void)snprintf(t, sizeof(t), "%s%s%s%s%s%s",
-	    ((sc->sc_sleepstates & __BIT(0)) != 0) ? "S0 " : "",
-	    ((sc->sc_sleepstates & __BIT(1)) != 0) ? "S1 " : "",
-	    ((sc->sc_sleepstates & __BIT(2)) != 0) ? "S2 " : "",
-	    ((sc->sc_sleepstates & __BIT(3)) != 0) ? "S3 " : "",
-	    ((sc->sc_sleepstates & __BIT(4)) != 0) ? "S4 " : "",
-	    ((sc->sc_sleepstates & __BIT(5)) != 0) ? "S5 " : "");
+	    ((states & __BIT(0)) != 0) ? "S0 " : "",
+	    ((states & __BIT(1)) != 0) ? "S1 " : "",
+	    ((states & __BIT(2)) != 0) ? "S2 " : "",
+	    ((states & __BIT(3)) != 0) ? "S3 " : "",
+	    ((states & __BIT(4)) != 0) ? "S4 " : "",
+	    ((states & __BIT(5)) != 0) ? "S5 " : "");
 
 	node = *rnode;
 	node.sysctl_data = &t;
@@ -2034,6 +2073,29 @@ sysctl_hw_acpi_sleepstates(SYSCTLFN_ARGS)
 
 	if (err || newp == NULL)
 		return err;
+
+	return 0;
+}
+
+static int
+sysctl_hw_acpi_sleepdisabled(SYSCTLFN_ARGS)
+{
+	struct sysctlnode node;
+	int err, t;
+
+	node = *rnode;
+	t = atomic_load_relaxed(&acpi_sleep_disabled);
+	node.sysctl_data = &t;
+
+	err = sysctl_lookup(SYSCTLFN_CALL(&node));
+
+	if (err || newp == NULL)
+		return err;
+
+	if (t != 0 && t != 1)
+		return EINVAL;
+
+	atomic_store_relaxed(&acpi_sleep_disabled, t);
 
 	return 0;
 }
