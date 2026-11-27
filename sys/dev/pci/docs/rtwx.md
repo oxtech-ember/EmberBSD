@@ -88,7 +88,7 @@ HT, VHT or block-ack elements itself.
 
 | Function | Owner |
 | --- | --- |
-| HT20 and VHT offer, AP response check, beacon withdrawal | net80211 [`ieee80211_ht20.c`](../../../net80211/ieee80211_ht20.c), [`ieee80211_vht_ies.c`](../../../net80211/ieee80211_vht_ies.c) |
+| HT20, VHT and HE offer, AP response check, beacon withdrawal | net80211 [`ieee80211_ht20.c`](../../../net80211/ieee80211_ht20.c), [`ieee80211_vht_ies.c`](../../../net80211/ieee80211_vht_ies.c), [`ieee80211_he_ies.c`](../../../net80211/ieee80211_he_ies.c) |
 | RX block-ack window, reorder and hole timeout | net80211 [`ieee80211_rxba.c`](../../../net80211/ieee80211_rxba.c); `rtwx` gives the timer (`ic_rxba_ops`) |
 | TX block-ack (originator) sessions | net80211 `ieee80211_txba_request()` and `ieee80211_txba_window()` |
 | WME parameters of the AP | net80211; `rtwx` applies them with the rtw89 `conf_tx` operation from a work queue |
@@ -98,6 +98,14 @@ HT, VHT or block-ack elements itself.
 
 Local capabilities:
 
+- HE (802.11ax) at 20 MHz, or at the 40/80 MHz VHT channel, with
+  HE-MCS 0-11 on each stream, LDPC reception and a nominal packet padding
+  of 16 us. No MAC capability: no TWT, +HTC reception or multi-user UL;
+  rtw89 sends OM Control with UL MU disabled after association. The bridge
+  gives the firmware the AP's width, LDPC and PPE Thresholds or padding
+  bits, the BSS color and the HE Operation parameters; STBC, DCM and
+  beamforming stay disabled. See the
+  [net80211 HE contract](../../../net80211/docs/net80211-he-ies.md).
 - HT20 with MCS 0-15 on a 2T2R chip (MCS 0-7 on 1T1R), long GI and BCC
   reception, maximum RX A-MPDU 65535 bytes, no MPDU start spacing.
 - VHT at the 40 or 80 MHz channel that the AP announces, MCS 0-9 on each
@@ -183,6 +191,24 @@ The default `kern.sbmax`, `net.inet.tcp.sendbuf_max` and
 While the laptop received 167 Mbit/s, the CPU that serves the interrupt
 was about 30 % busy and the other CPUs were idle.
 
+### HE, 2026-11-27
+
+A kernel with the HE change associated as `HE80 link on channel 52
+(center 58)`. The firmware transmitted at HE-MCS 11 on two streams at
+80 MHz (1201 Mbit/s on the air) and received at HE-MCS 5-7. With the
+802.11ax peer at 160 MHz:
+
+| TCP, default socket buffers | Laptop to peer | Peer to laptop |
+| --- | --- | --- |
+| One connection | 218-258 Mbit/s | 170-176 Mbit/s |
+| Four connections | 451 Mbit/s | 268 Mbit/s |
+| Two connections, 12 min, 32 runs each way | 365 Mbit/s mean (313-378) | 222 Mbit/s mean (202-230) |
+
+The 12-minute run moved about 10.6 million frames from the laptop without
+a disconnection or SER event; ping lost none of 20 replies. On 2.4 GHz
+channel 1 the station ran HE20 at HE-MCS 9-10 on two streams, and one
+connection moved 94.9 Mbit/s from the laptop.
+
 ### 2.4 GHz, 2026-11-26
 
 The same AP on 2.4 GHz channel 1 uses HT protection mode 3. Before
@@ -247,9 +273,9 @@ It does not replace kernel or physical-device testing.
 ## Limits
 
 - Station mode only. No access point, monitor or IBSS mode.
-- HT20 and VHT 40/80 MHz with A-MPDU in both directions; see
-  [HT and VHT](#ht-and-vht). HE (802.11ax) and HT40 without VHT are not
-  negotiated, because net80211 has no HE or HT40 owner.
+- HT20, VHT 40/80 MHz and HE 20/40/80 MHz with A-MPDU in both
+  directions; see [HT and VHT](#ht-and-vht). HE 160 MHz, multi-user and
+  TWT, and HT40 without VHT are not negotiated.
 - Software crypto only. WPA3-Personal uses the opt-in common net80211
   SAE/PMF owner; its new software integration has not yet completed physical
   acceptance. See the [consumer matrix](../../../net80211/docs/wpa3-consumers.md).
