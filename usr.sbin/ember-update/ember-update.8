@@ -90,6 +90,9 @@ Device target, OS set roles, and boot slot settings.
 Installed signing trust anchor.
 .It Pa /etc/ember-os-health
 Local executable that must report a healthy trial within 30 seconds.
+Exit 0 when ready or 1 to retry after one second.
+All attempts share the same monotonic deadline.
+Any other exit status or a signal fails the check.
 .It Pa /var/db/ember-update/state.json
 Atomic status for local applications.
 All users can read it.

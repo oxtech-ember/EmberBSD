@@ -118,9 +118,13 @@ determine whether the running system needs confirmation.
 
 The client records the verified preparation in the confirmed root before it
 arms a one-shot boot. It confirms the trial after matching the installed
-receipt, running kernel and local `/etc/ember-os-health` result. The health
-check has 30 seconds. A failed trial stays unconfirmed and the watchdog
-returns control to the last confirmed slot. A previous boot's unconsumed
+receipt, running kernel and local `/etc/ember-os-health` result. The hook
+returns 0 when ready. Exit 1 asks the controller to retry after one second.
+All attempts share one 30-second monotonic deadline. A signal or any other
+exit status fails the check. The controller stops remaining probe children
+after each attempt, on timeout and on service stop. A failed trial stays
+unconfirmed and the watchdog returns control to the last confirmed slot.
+A previous boot's unconsumed
 request is cancelled before another restart. Failed OS generations stay
 below the installation floor. Service stop permits the current storage
 operation to finish. A stop after arming leaves the one-shot request for the
@@ -166,9 +170,12 @@ a generation above both its installed and previously attempted generation.
 A failure before confirmation keeps that controller and its attempt floor
 on the previous root.
 
-The handoff checks the stock running kernel and local health, then verifies
-the archive of the former controller configuration. It imports the original
-rc flags immediately after the system defaults are sourced. Later site
+The handoff checks the stock running kernel and uses the same readiness
+deadline. Its rc script runs synchronously. The hook can observe a service
+that has already started, such as DHCP installing a route. Start services
+needed by this check before the handoff in the rc order. The handoff then
+verifies the archive of the former controller configuration. It imports the
+original rc flags immediately after the system defaults are sourced. Later site
 settings in rc.conf and rc.conf.d keep their priority. A durable journal
 identifies the confirmed bytes if power fails during the firmware commit.
 The private journal also keeps the verified transition record. Confirmation

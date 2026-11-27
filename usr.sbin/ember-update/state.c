@@ -309,41 +309,74 @@ load_hardware(struct hardware *h)
 	eu_put(ui, "os_hold", eu_text(h->custom ? "custom-kernel" : NULL));
 }
 
+static int64_t
+monotonic_ms(void)
+{
+	struct timespec ts;
+	if (clock_gettime(CLOCK_MONOTONIC, &ts) < 0)
+		return -1;
+	return (int64_t)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
+}
+
+/* Keep the group leader waitable until all of the hook's children are stopped. */
+static void
+reap_probe(pid_t child)
+{
+	(void)kill(-child, SIGKILL);
+	while (waitpid(child, NULL, 0) < 0)
+		if (errno != EINTR)
+			fail("cannot reap trial health check");
+}
+
 void
 trial_health(void)
 {
-	trusted(HEALTH, false);
-	checkpoint();
-	pid_t child = fork();
-	if (child < 0)
-		fail("cannot start trial health check");
-	if (child == 0) {
-		setpgid(0, 0);
-		execl(HEALTH, HEALTH, (char *)NULL);
-		_exit(127);
-	}
-	(void)setpgid(child, child);
-	struct timespec start, now, nap = {0, 100000000};
-	if (clock_gettime(CLOCK_MONOTONIC, &start) < 0)
-		err(1, "clock_gettime");
-	int status;
+	const struct timespec poll = {0, 100000000};
+	int64_t start = monotonic_ms(), next = start;
+	pid_t child = 0;
+
+	if (start < 0)
+		fail("cannot time trial health check");
 	for (;;) {
-		pid_t r = waitpid(child, &status, WNOHANG);
-		if (r == child)
-			break;
-		if (r < 0 && errno != EINTR)
-			fail("cannot wait for trial health check");
-		if (clock_gettime(CLOCK_MONOTONIC, &now) < 0 ||
-		    now.tv_sec - start.tv_sec >= 30 || stopping) {
-			kill(-child, SIGKILL);
-			while (waitpid(child, &status, 0) < 0 && errno == EINTR)
+		siginfo_t result = {0};
+		if (child && waitid(P_PID, child, &result, WEXITED | WNOHANG | WNOWAIT) < 0) {
+			if (errno == EINTR)
 				continue;
-			checkpoint();
-			fail("trial health check timed out");
+			fail("cannot wait for trial health check");
 		}
-		nanosleep(&nap, NULL);
+		if (result.si_pid) {
+			reap_probe(child);
+			child = 0;
+		}
+		int64_t now = monotonic_ms();
+		if (stopping || now < 0 || now - start >= 30000)
+			break;
+		if (result.si_pid) {
+			if (result.si_code != CLD_EXITED || result.si_status > 1)
+				fail("trial health check failed");
+			if (result.si_status == 0) {
+				checkpoint();
+				return;
+			}
+			next = now + 1000;
+		}
+		if (!child && now >= next) {
+			trusted(HEALTH, false);
+			checkpoint();
+			child = fork();
+			if (child < 0)
+				fail("cannot start trial health check");
+			if (child == 0) {
+				if (setpgid(0, 0) == 0)
+					execl(HEALTH, HEALTH, (char *)NULL);
+				_exit(127);
+			}
+			(void)setpgid(child, child);
+		}
+		(void)nanosleep(&poll, NULL);
 	}
-	if (!WIFEXITED(status) || WEXITSTATUS(status) != 0)
-		fail("trial health check failed");
+	if (child)
+		reap_probe(child);
 	checkpoint();
+	fail("trial health check timed out");
 }

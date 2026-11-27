@@ -10,7 +10,14 @@ set -eu
 client=$1 input=$2 profile=$3 script=$4
 case "$profile" in *[!a-z0-9._-]*|'') exit 2;; esac
 root=$(mktemp -d /var/tmp/test-update-handoff.XXXXXXXX)
-trap 'rm -rf "$root"' EXIT HUP INT TERM
+updater=
+cleanup()
+{
+	if [ -n "$updater" ]; then kill -TERM "$updater" 2>/dev/null || :; wait "$updater" || :; fi
+	rm -rf "$root"
+}
+trap cleanup EXIT
+trap 'exit 1' HUP INT TERM
 mkdir -p "$root"/etc/rc.conf.d "$root"/etc/defaults "$root"/dev "$root"/var/run "$root"/var/db/ember-os-update \
     "$root"/usr/libexec "$root"/usr/sbin "$root"/etc/rc.d "$root"/sbin "$root"/usr/share/ember-update/handoff
 # Copy the complete runtime of each utility. The chroot has no device nodes.
@@ -21,7 +28,7 @@ utility()
 	cp -pL "$leaf" "$root$leaf"
 }
 utility /libexec/ld.elf_so
-for leaf in /bin/sh /bin/cat /bin/cp /bin/mv /bin/rm /usr/bin/grep /usr/bin/awk /usr/bin/mktemp; do
+for leaf in /bin/sh /bin/cat /bin/cp /bin/mv /bin/rm /bin/sleep /usr/bin/grep /usr/bin/awk /usr/bin/mktemp; do
 	utility "$leaf"
 	ldd "$leaf" | awk '$2 == "=>" && $3 ~ /^\// { print $3 }' | while read -r lib; do utility "$lib"; done
 done
@@ -85,7 +92,22 @@ confirm)
 *) exit 2;;
 esac
 SH
-printf '#!/bin/sh\n[ ! -f /unhealthy ]\n' >"$root/etc/ember-os-health"
+cat >"$root/etc/ember-os-health" <<'SH'
+#!/bin/sh
+[ -f /health-mode ] || exit 0
+read -r mode </health-mode
+echo probe >>/probes
+case "$mode" in
+route) [ -f /route ] ;;
+unhealthy) exit 1 ;;
+fatal) exit 2 ;;
+signal) kill -TERM "$$" ;;
+hang)
+	if [ ! -f /retried ]; then sleep 10; : >/retried; exit 1; fi
+	sleep 120 & echo "$!" >/sleeper
+	wait ;;
+esac
+SH
 chmod 0555 "$root/sbin/sysctl" "$root/usr/libexec/ember-os-slot" "$root/etc/ember-os-health"
 sha=$(sha256 -q "$input/release.json")
 step() { "$@" /usr/sbin/chroot "$root" /usr/sbin/ember-update handoff; }
@@ -96,6 +118,17 @@ refused()
 	if ! grep -Fq "$detail" "$root/failure"; then cat "$root/failure" >&2; exit 1; fi
 }
 model() { echo "$*" >"$root/model"; }
+await_probe()
+{
+	for delay in 1 2 3 4 5 6 7 8 9 10; do [ ! -s "$1" ] || return 0; sleep 1; done
+	echo "Probe did not write $1" >&2; return 1
+}
+check_reaped()
+{
+	read -r sleeper <"$root/sleeper"
+	for delay in 1 2 3 4 5; do kill -0 "$sleeper" 2>/dev/null || return 0; sleep 1; done
+	echo 'Hook child survived' >&2; return 1
+}
 model B A null true B "$sha"
 for former in ember_os_update ember_pkg_update; do
 	refused "a legacy update service is active" /usr/bin/flock "$root/var/run/$former.pid"
@@ -110,9 +143,35 @@ refused "consumed and identified trial"
 model B A '"A"' true B "$sha"
 refused "invalid boot slot status"
 model B A null true B "$sha"
-touch "$root/unhealthy"
-refused "health check failed"
-rm "$root/unhealthy"
+# A persistent readiness failure must expire. Hook errors and signals are final.
+for mode in unhealthy fatal signal; do
+	echo "$mode" >"$root/health-mode"; : >"$root/probes"
+	if [ "$mode" = unhealthy ]; then
+		refused "trial health check timed out" /usr/bin/timeout 38
+		[ "$(wc -l <"$root/probes")" -gt 1 ]
+	else
+		refused "trial health check failed" /usr/bin/timeout 10
+		[ "$(wc -l <"$root/probes")" -eq 1 ]
+	fi
+	grep -Fxq "B A null true B $sha" "$root/model"
+done
+# A hung retry gets the remainder of the original 30 seconds.
+echo hang >"$root/health-mode"
+refused "trial health check timed out" /usr/bin/timeout 38
+check_reaped
+grep -Fxq "B A null true B $sha" "$root/model"
+# Stop while the hook is running. The old slot stays confirmed.
+rm "$root/sleeper"
+/usr/sbin/chroot "$root" /usr/sbin/ember-update handoff & updater=$!
+await_probe "$root/sleeper"
+kill -TERM "$updater"
+wait "$updater"; updater=
+check_reaped
+grep -Fxq "B A null true B $sha" "$root/model"
+rm "$root/health-mode"
+chmod 0777 "$root/etc/ember-os-health"
+refused "unexpected owner, mode, or file type"
+chmod 0555 "$root/etc/ember-os-health"
 cp "$root/buildinfo" "$root/original-buildinfo"
 printf 'local kernel\n' >"$root/buildinfo"
 refused "trial kernel differs"
@@ -156,7 +215,14 @@ cp "$input/seal.json" "$root/usr/share/ember-update/handoff/$profile.json"
 mv "$root/etc/ember-os-update.migrated.json" "$root/etc/ember-os-update.json"
 rm "$root/var/db/ember-update/handoff.json"
 model B A null true B "$sha"
-step
+# DHCP can install its route after the first local readiness probe.
+echo route >"$root/health-mode"; : >"$root/probes"
+/usr/bin/timeout 38 /usr/sbin/chroot "$root" /usr/sbin/ember-update handoff & updater=$!
+await_probe "$root/probes"
+sleep 2
+: >"$root/route"
+wait "$updater"; updater=
+[ "$(wc -l <"$root/probes")" -gt 1 ]
 grep -Fq "B B null true B $sha" "$root/model"
 test ! -e "$root/etc/ember-os-update.json"
 cmp "$root/var/db/ember-update/os-release.json" "$input/release.json"
