@@ -1037,7 +1037,12 @@ tmpfs_readdir(void *v)
 		}
 		(*cookies)[i] = off;
 	}
-	KASSERT(uio->uio_offset == off);
+	/*
+	 * Origin: EmberBSD (AI-assisted).  If no entry was returned, the
+	 * loop did not run.  The offset can still differ from the start
+	 * position, because the start entry was removed.
+	 */
+	KASSERT(cnt == 0 || uio->uio_offset == off);
 	return error;
 }
 
