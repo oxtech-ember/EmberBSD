@@ -56,9 +56,11 @@ struct aicwf_softc;
  * credit-based bus. USB uses separate command and data pipes.
  * If attempted is non-NULL, clear it before validation and set it just
  * before submitting the FIFO or USB transfer. An error after submission
- * leaves delivery uncertain. Return zero for a complete bus transfer,
- * or a BSD errno for admission, capacity, length, timeout or I/O errors.
- * The core receives the firmware confirmation separately through aicwf_rx.
+ * leaves delivery uncertain. The DC USB transport waits for the matching
+ * firmware acknowledgement before write returns success for EAPOL.
+ * Other writes return success when the bus transfer completes. The core
+ * receives command and management confirmations through aicwf_rx.
+ * Return a BSD errno on rejection, timeout, or transfer failure.
  *
  * verify is optional. A bus that sets sc_fw_bip_pending must provide it.
  * The core calls it after ADD_IF in sleepable context with sc_lock free.
