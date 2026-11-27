@@ -929,10 +929,20 @@ with tempfile.TemporaryDirectory(prefix='static-network-') as temporary:
     service_rc = (services / 'etc/rc.conf').read_text()
     service_provides, service_requires, service_missing = staged_rc_dependencies(services)
     check((services / 'etc/rc.network.d/random_seed').read_bytes() ==
-          (source / 'etc/rc.d/random_seed').read_bytes() and
+          (source / 'etc/rc.d/random_seed').read_bytes().replace(b'# BEFORE: securelevel\n', b'') and
           (services / 'etc/rc.shutdown').read_bytes() == (source / 'etc/rc.shutdown').read_bytes() and
           not (services / 'var/db/entropy-file').exists(),
-          'OpenSSH stages the native seed and shutdown scripts and supplies no shared seed')
+          'the closed OpenSSH profile drops only the absent securelevel edge and supplies no shared seed')
+    custom_services = temporary / 'custom-services'
+    (custom_services / 'etc/rc.network.d').mkdir(parents=True)
+    (custom_services / 'etc/rc.network.d/custom_level').write_text('# PROVIDE: securelevel\n')
+    custom_root = temporary / 'custom-ssh-root'
+    custom_root.mkdir()
+    profile.stage_network(custom_root, source, custom_services, 'wifi0', pwd_mkdb, dhcp_dest,
+                          'md0', 'a', ssh_enabled=True)
+    check((custom_root / 'etc/rc.network.d/random_seed').read_bytes() ==
+          (source / 'etc/rc.d/random_seed').read_bytes(),
+          'site-selected services retain the native seed ordering before securelevel')
     sshd_config = (services / 'etc/ssh/sshd_config').read_text()
     check(not service_missing and
           {'sshd', 'sysdb', 'wscons', 'newsyslog', 'syslogd', 'network_logfs'} <=
@@ -1014,7 +1024,7 @@ with tempfile.TemporaryDirectory(prefix='static-network-') as temporary:
             [rcorder_path, '-s', 'nostart', *map(str, rc_scripts)],
             text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             check=False)
-        check(rc_result.returncode == 0,
+        check(rc_result.returncode == 0 and not rc_result.stderr,
               'actual rcorder accepts the logging profile: ' + rc_result.stderr)
         rc_names = [Path(item).name for item in rc_result.stdout.splitlines()]
         rc_order = {name: index for index, name in enumerate(rc_names)}

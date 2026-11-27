@@ -1022,6 +1022,12 @@ def stage_network(root, source, overlay, interface, pwd_mkdb, dhcpcd_dest,
                   allow_suffixes={'etc/ifconfig.' + interface: b'up\n'},
                   replace_regular=True)
     overlay_kept_rc_conf = (root / 'etc/rc.conf').read_text() == network_rc_conf
+    if openssh_enabled and overlay_kept_rc_conf and not (overlay / 'etc/rc.network.d').exists():
+        # This closed service set loads the seed before bootconf and has no
+        # securelevel service. Preserve the native edge for custom graphs.
+        seed_script = root / 'etc/rc.network.d/random_seed'
+        text = seed_script.read_text().replace('# BEFORE: securelevel\n', '')
+        write_if_different(seed_script, text, mode=0o555)
     disabled = []
     if not openssh_enabled:
         disabled += ['etc/rc.network.d/sshd', 'etc/ssh/sshd_config', 'etc/rc.conf.d/sshd']
