@@ -41,16 +41,22 @@ CFATTACH_DECL_NEW(aicwf_usb, sizeof(struct aicwf_usb_softc),
 
 /* Key admission and the port CFM update this lifetime at IPL_NET. */
 static uint64_t
-aicwf_usb_port(void *cookie)
+aicwf_usb_port(void *cookie, enum uaicfw_data_kind kind)
 {
 	struct aicwf_softc * const sc = cookie;
 	uint64_t serial = 0;
 
 	mutex_spin_enter(&sc->sc_epoch_lock);
-	if (sc->sc_join_accepted && sc->sc_rx_assoc != 0 && sc->sc_rx_active &&
-	    (sc->sc_join_open || (sc->sc_ptk_valid &&
-	    sc->sc_port_serial == sc->sc_rx_serial)))
+	if (kind == UAICFW_SAE_AUTH) {
+		if (sc->sc_join_accepted && !sc->sc_join_open &&
+		    sc->sc_rx_join == sc->sc_rx_serial)
+			serial = sc->sc_rx_join;
+	} else if (sc->sc_join_accepted && sc->sc_rx_assoc != 0 &&
+	    sc->sc_rx_active && ((sc->sc_join_open && kind == UAICFW_ETHERNET) ||
+	    (!sc->sc_join_open && sc->sc_ptk_valid &&
+	    sc->sc_port_serial == sc->sc_rx_serial))) {
 		serial = sc->sc_rx_serial;
+	}
 	mutex_spin_exit(&sc->sc_epoch_lock);
 	return serial;
 }
@@ -63,18 +69,44 @@ aicwf_usb_write(struct aicwf_softc *sc, size_t len, u_int reserve,
 
 	if (len >= AICWF_HDR_LEN && sc->sc_txbuf[2] == AICWF_TYPE_DATA) {
 		struct uaicfw_port port = { .current = aicwf_usb_port, .cookie = sc };
+		const uint8_t * const desc = sc->sc_txbuf + AICWF_HDR_LEN;
+		enum uaicfw_data_kind kind = UAICFW_ETHERNET;
 
 		if (attempted != NULL)
 			*attempted = false;
-		if (sc->sc_receive_only || !sc->sc_connected)
+		if (sc->sc_receive_only)
 			return ENETDOWN;
-		if (len >= AICWF_HDR_LEN + AICWF_TXDESC_LEN &&
-		    be16dec(sc->sc_txbuf + AICWF_HDR_LEN + 20) != ETHERTYPE_PAE) {
-			port.serial = aicwf_usb_port(sc);
+		if (len < AICWF_HDR_LEN + AICWF_TXDESC_LEN)
+			return EINVAL;
+		const uint16_t flags = le16dec(desc + 26);
+		if ((flags & AICWF_TX_MGMT) != 0) {
+			/* Only external SAE and protected SA Query use this path. */
+			const struct ieee80211com * const ic = &sc->sc_ic;
+			if (!sc->sc_sae_enabled || sc->sc_sae_generation == 0 ||
+			    ic->ic_bss == NULL || desc[24] != sc->sc_vif ||
+			    memcmp(desc + 8, sc->sc_sae_bssid, ETHER_ADDR_LEN) != 0 ||
+			    memcmp(desc + 8, ic->ic_bss->ni_bssid, ETHER_ADDR_LEN) != 0 ||
+			    memcmp(desc + 14, ic->ic_myaddr, ETHER_ADDR_LEN) != 0)
+				return ESTALE;
+			if (flags == AICWF_TX_MGMT && sc->sc_sae_pending &&
+			    sc->sc_connecting && ic->ic_state == IEEE80211_S_AUTH) {
+				kind = UAICFW_SAE_AUTH;
+			} else if (flags == (AICWF_TX_MGMT | AICWF_TX_MGMT_ROBUST) &&
+			    sc->sc_connected && sc->sc_sae_authenticated &&
+			    sc->sc_ptk_valid && desc[25] == sc->sc_ap &&
+			    ic->ic_state == IEEE80211_S_RUN)
+				kind = UAICFW_SA_QUERY;
+			else
+				return ESTALE;
+		} else if (!sc->sc_connected) {
+			return ENETDOWN;
+		}
+		if (kind != UAICFW_ETHERNET || be16dec(desc + 20) != ETHERTYPE_PAE) {
+			port.serial = port.current(sc, kind);
 			if (port.serial == 0)
 				return EACCES;
 		}
-		return usc->bus.ethernet(usc->bus.cookie, sc->sc_txbuf, len,
+		return usc->bus.data(usc->bus.cookie, kind, sc->sc_txbuf, len,
 		    port.serial != 0 ? &port : NULL, attempted);
 	}
 	return usc->bus.write(usc->bus.cookie, sc->sc_txbuf, len, attempted);

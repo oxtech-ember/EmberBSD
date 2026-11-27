@@ -48,7 +48,6 @@ enum ieee80211_state {
 #define AICWF_TX_POWER_DBM 20
 #define AICWF_HWQ_VO 3
 #define AICWF_TID_NONE 255
-#define AICWF_TX_MGMT 8
 #define AICWF_TX_RESERVE 2
 #define AICWF_BLOCK_SIZE 512
 #define AICWF_CHAN_MAX 42

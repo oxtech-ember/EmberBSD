@@ -91,6 +91,7 @@ struct usbd_xfer {
 #define USBD_SHORT_XFER_OK 2
 #define USBD_FORCE_SHORT_XFER 4
 #define USBD_NO_TIMEOUT 0
+#define ETHER_ADDR_LEN 6
 #define ETHERMTU 1500
 #define ETHERTYPE_PAE 0x888e
 #define __arraycount(a) (sizeof(a) / sizeof((a)[0]))
@@ -175,16 +176,28 @@ le32enc(void *p, uint32_t v)
 #include "aicwf_command.h"
 #include "uaicfwvar.h"
 #include "aicwf_sta.h"
+#include "aicwf_sae.h"
 #include "survey-rx.h"
 
 #define IEEE80211_F_WPA 3
+#define IEEE80211_S_AUTH 2
+#define IEEE80211_S_RUN 4
+struct ieee80211_node { uint8_t ni_bssid[6]; };
+struct ieee80211com {
+	unsigned ic_flags, ic_state;
+	struct ieee80211_node *ic_bss;
+	uint8_t ic_myaddr[6];
+};
 struct aicwf_softc {
 	void *sc_bus;
 	uint8_t *sc_txbuf;
-	struct { unsigned ic_flags; } sc_ic;
+	struct ieee80211com sc_ic;
+	bool sc_sae_enabled, sc_sae_pending, sc_connecting, sc_sae_authenticated;
+	uint8_t sc_vif, sc_ap, sc_sae_bssid[6];
+	unsigned sc_sae_generation;
 	bool sc_receive_only, sc_connected, sc_ptk_valid, sc_rx_active;
 	kmutex_t sc_epoch_lock;
-	uint64_t sc_port_serial, sc_rx_serial, sc_rx_assoc;
+	uint64_t sc_port_serial, sc_rx_serial, sc_rx_assoc, sc_rx_join;
 	bool sc_join_accepted, sc_join_open;
 };
 struct aicwf_usb_softc { struct uaicfw_attach_args bus; };
@@ -821,6 +834,84 @@ ethernet_checks(void)
 	data_test = OUT_IDLE;
 }
 
+static void
+security_checks(void)
+{
+	uint8_t packet[AICWF_HDR_LEN + AICWF_TXDESC_LEN + 40] = {0};
+	uint8_t *desc = packet + AICWF_HDR_LEN;
+	uint8_t *frame = desc + AICWF_TXDESC_LEN;
+	const uint8_t addr[6] = {2,0,0,0,0,1};
+	struct ieee80211_node peer = { .ni_bssid = {2,0,0,0,0,2} };
+	struct aicwf_usb_softc usc = { .bus = radio };
+	struct aicwf_softc sc = { .sc_bus = &usc, .sc_txbuf = packet };
+	const unsigned previous = data_writes;
+	size_t hdr = AICWF_HDR_LEN + AICWF_TXDESC_LEN;
+	bool attempted;
+
+	device.sc_data_sequence = 100;
+	sc.sc_vif = desc[24] = 2;
+	sc.sc_ap = 4;
+	sc.sc_ic.ic_bss = &peer;
+	sc.sc_ic.ic_state = IEEE80211_S_AUTH;
+	sc.sc_sae_generation = 7;
+	sc.sc_rx_serial = sc.sc_rx_join = 18;
+	sc.sc_sae_enabled = sc.sc_connecting = sc.sc_sae_pending = true;
+	memcpy(sc.sc_sae_bssid, peer.ni_bssid, 6);
+	memcpy(sc.sc_ic.ic_myaddr, addr, 6);
+	memcpy(desc + 8, peer.ni_bssid, 6); memcpy(desc + 14, addr, 6);
+	memcpy(frame + 4, peer.ni_bssid, 6); memcpy(frame + 10, addr, 6);
+	memcpy(frame + 16, peer.ni_bssid, 6);
+	packet[2] = AICWF_TYPE_DATA;
+	desc[25] = 0xff;
+	frame[0] = 0xb0; frame[24] = 3; frame[26] = 1;
+	le16enc(desc + 26, AICWF_TX_MGMT);
+	le16enc(packet, AICWF_TXDESC_LEN + 35); le16enc(desc, 35);
+
+	assert(radio.data(radio.cookie, UAICFW_SAE_AUTH, packet, hdr + 35,
+	    NULL, &attempted) == EACCES && !attempted);
+	sc.sc_receive_only = true;
+	assert(aicwf_usb_write(&sc, hdr + 35, 0, &attempted) == ENETDOWN && !attempted);
+	sc.sc_receive_only = false; sc.sc_sae_pending = false;
+	assert(aicwf_usb_write(&sc, hdr + 35, 0, &attempted) == ESTALE && !attempted);
+	sc.sc_sae_pending = true;
+	assert(aicwf_usb_write(&sc, hdr + 35, 0, &attempted) == EACCES && !attempted);
+	sc.sc_join_accepted = sc.sc_join_open = true;
+	assert(aicwf_usb_write(&sc, hdr + 35, 0, &attempted) == EACCES && !attempted);
+	sc.sc_join_open = false; sc.sc_rx_join--;
+	assert(aicwf_usb_write(&sc, hdr + 35, 0, &attempted) == EACCES && !attempted);
+	sc.sc_rx_join = sc.sc_rx_serial; frame[16] ^= 1;
+	assert(aicwf_usb_write(&sc, hdr + 35, 0, &attempted) == EINVAL && !attempted);
+	frame[16] ^= 1; frame[26] = 3;
+	assert(aicwf_usb_write(&sc, hdr + 35, 0, &attempted) == EINVAL && !attempted);
+	frame[26] = 1; data_test = OUT_ORDINARY;
+	assert(aicwf_usb_write(&sc, hdr + 35, 0, &attempted) == 0 && attempted);
+	assert(data_len == hdr + 35 && le32dec(data_wire + 8) == 0);
+	assert(data_writes == previous + 1);
+
+	frame[0] = 0xd0; frame[24] = 8; frame[25] = 1;
+	desc[25] = sc.sc_ap; le16enc(desc + 26, AICWF_TX_MGMT | AICWF_TX_MGMT_ROBUST);
+	le16enc(packet, AICWF_TXDESC_LEN + 28); le16enc(desc, 28);
+	assert(radio.data(radio.cookie, UAICFW_SA_QUERY, packet, hdr + 28,
+	    NULL, &attempted) == EACCES && !attempted);
+	assert(aicwf_usb_write(&sc, hdr + 28, 0, &attempted) == ESTALE && !attempted);
+	sc.sc_ic.ic_state = IEEE80211_S_RUN; sc.sc_sae_pending = sc.sc_connecting = false;
+	sc.sc_join_accepted = sc.sc_rx_active = sc.sc_connected = sc.sc_sae_authenticated = true;
+	sc.sc_ptk_valid = true; sc.sc_rx_assoc = 20; sc.sc_rx_serial = 23;
+	assert(aicwf_usb_write(&sc, hdr + 28, 0, &attempted) == EACCES && !attempted);
+	sc.sc_port_serial = sc.sc_rx_serial;
+	sc.sc_join_open = true;
+	assert(aicwf_usb_write(&sc, hdr + 28, 0, &attempted) == EACCES && !attempted);
+	sc.sc_join_open = false; frame[24] = 10;
+	assert(aicwf_usb_write(&sc, hdr + 28, 0, &attempted) == EINVAL && !attempted);
+	frame[24] = 8; data_test = OUT_ACK;
+	assert(aicwf_usb_write(&sc, hdr + 28, 0, &attempted) == 0 && attempted);
+	assert((le32dec(data_wire + 8) & AICWF_STA_CFM_REQUEST) != 0);
+	data_test = OUT_STALE;
+	assert(aicwf_usb_write(&sc, hdr + 28, 0, &attempted) == ETIMEDOUT && attempted);
+	assert(data_writes == previous + 3);
+	data_test = OUT_IDLE;
+}
+
 int
 main(void)
 {
@@ -885,6 +976,7 @@ main(void)
 		}
 		if (children && fault == NONE) {
 			ethernet_checks();
+			security_checks();
 			radio.listen(radio.cookie, ignore_input, NULL, NULL);
 			stall_input(inputs[0]);
 			stall_input(inputs[1]);
@@ -902,11 +994,13 @@ main(void)
 		} else if (children && fault == EARLY_REPLY) {
 			uint8_t p[AICWF_HDR_LEN + AICWF_TXDESC_LEN] = { 0 };
 			bool attempted = true;
+			p[AICWF_HDR_LEN + 20] = 0x88; /* EAPOL can open the first pipe. */
+			p[AICWF_HDR_LEN + 21] = 0x8e;
 			le16enc(p, AICWF_TXDESC_LEN);
 			p[2] = AICWF_TYPE_DATA;
 			stopping_on_alloc = true;
 			unsigned before = data_writes;
-			assert(radio.ethernet(radio.cookie, p, sizeof(p), NULL, &attempted)
+			assert(radio.data(radio.cookie, UAICFW_ETHERNET, p, sizeof(p), NULL, &attempted)
 			    == ENXIO && !attempted && data_writes == before);
 			stopping_on_alloc = false;
 			assert(device.sc_data.xfer != NULL && !device.sc_data_reply);
@@ -933,6 +1027,6 @@ main(void)
 	assert(uaicfw_detach(0, 0) == 0);
 	assert(!writes && errors == 1);
 	puts("PASS: both bulk-IN endpoints, early and late FullMAC replies, "
-	     "DC record boundaries, station Ethernet OUT, EAPOL tokens, recovery and cleanup");
+	     "DC records, Ethernet, SAE, protected SA Query, TX tokens and cleanup");
 	return 0;
 }

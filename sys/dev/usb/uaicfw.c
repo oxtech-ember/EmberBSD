@@ -17,6 +17,7 @@
 
 #include <dev/ic/aicwf_command.h>
 #include <dev/ic/aicwf_sta.h>
+#include <dev/ic/aicwf_sae.h>
 #include <dev/usb/usb.h>
 #include <dev/usb/usbdi.h>
 #include <dev/usb/usbdevs.h>
@@ -218,7 +219,7 @@ uaicfw_recover_rx(void *arg)
 
 /* Retire only the current firmware token. USB completion is independent. */
 static bool
-uaicfw_ethernet_confirm(struct uaicfw_softc *sc, const uint8_t *rec,
+uaicfw_data_confirm(struct uaicfw_softc *sc, const uint8_t *rec,
     size_t raw)
 {
 	struct uaicfw_data_reply * const reply = sc->sc_data_reply;
@@ -322,7 +323,7 @@ uaicfw_receive(struct uaicfw_softc *sc, struct uaicfw_rx_stream *stream,
 			const uint8_t *rec = p + pos;
 			size_t raw;
 			pos += uaicfw_record_size(rec, le16dec(rec), &raw);
-			if (uaicfw_ethernet_confirm(sc, rec, raw))
+			if (uaicfw_data_confirm(sc, rec, raw))
 				continue;
 			if (sc->sc_input != NULL && (!continued || stream->deliver))
 				sc->sc_input(sc->sc_input_arg, rec, raw,
@@ -626,10 +627,10 @@ uaicfw_write(void *arg, const uint8_t *packet, size_t len, bool *attempted)
 	return uaicfw_errno(status);
 }
 
-/* The common station supplies an Ethernet descriptor and its MSDU payload. */
+/* The station supplies the bounded frame and its firmware descriptor. */
 static int
-uaicfw_ethernet(void *arg, const uint8_t *packet, size_t len,
-    const struct uaicfw_port *port, bool *attempted)
+uaicfw_data(void *arg, enum uaicfw_data_kind kind, const uint8_t *packet,
+    size_t len, const struct uaicfw_port *port, bool *attempted)
 {
 	struct uaicfw_softc * const sc = arg;
 	struct uaicfw_data_reply reply = { .status = USBD_IN_PROGRESS };
@@ -642,16 +643,50 @@ uaicfw_ethernet(void *arg, const uint8_t *packet, size_t len,
 
 	if (attempted != NULL)
 		*attempted = false;
-	if (len < hdr || len - hdr > ETHERMTU)
+	if (len < hdr || len > UAICFW_RX_SIZE ||
+	    (kind == UAICFW_ETHERNET && len - hdr > ETHERMTU))
 		return EMSGSIZE;
 	desc = packet + AICWF_HDR_LEN;
 	if (packet[2] != AICWF_TYPE_DATA ||
 	    le16dec(packet) != len - AICWF_HDR_LEN || le16dec(desc) != len - hdr ||
-	    le16dec(desc + 2) != 0 || le32dec(desc + 4) != 0 ||
-	    le16dec(desc + 26) != 0)
+	    le16dec(desc + 2) != 0 || le32dec(desc + 4) != 0)
 		return EINVAL;
-	const bool eapol = be16dec(desc + 20) == ETHERTYPE_PAE;
-	wire = eapol ? (len + 3) & ~(size_t)3 : len;
+	const uint16_t flags = le16dec(desc + 26);
+	bool confirm;
+	switch (kind) {
+	case UAICFW_ETHERNET:
+		if (flags != 0)
+			return EINVAL;
+		confirm = be16dec(desc + 20) == ETHERTYPE_PAE;
+		break;
+	case UAICFW_SAE_AUTH:
+		if (flags != AICWF_TX_MGMT || le16dec(desc + 20) != 0 ||
+		    desc[25] != 0xff ||
+		    !aicwf_sae_frame_valid(packet + hdr, len - hdr, desc + 8,
+		    desc + 14, desc + 8) || le16dec(packet + hdr + 26) < 1 ||
+		    le16dec(packet + hdr + 26) > 2)
+			return EINVAL;
+		confirm = false;
+		break;
+	case UAICFW_SA_QUERY:
+		if (flags != (AICWF_TX_MGMT | AICWF_TX_MGMT_ROBUST) ||
+		    le16dec(desc + 20) != 0 || desc[25] == 0xff ||
+		    !aicwf_pmf_query_valid(packet + hdr, len - hdr, desc + 8,
+		    desc + 14, desc + 8))
+			return EINVAL;
+		confirm = true;
+		break;
+	default:
+		return EOPNOTSUPP;
+	}
+	/* EAPOL can establish the first controlled-port generation. */
+	if (port == NULL) {
+		if (kind != UAICFW_ETHERNET || !confirm)
+			return EACCES;
+	} else if (port->current == NULL || port->serial == 0) {
+		return EACCES;
+	}
+	wire = confirm ? (len + 3) & ~(size_t)3 : len;
 	KASSERT(wire <= UAICFW_RX_SIZE);
 
 	mutex_enter(&sc->sc_cmd_lock);
@@ -668,7 +703,7 @@ uaicfw_ethernet(void *arg, const uint8_t *packet, size_t len,
 	}
 	/* Already admitted OUT transfers can complete across a key change.
 	 * Recheck after every sleep preceding submission of protected data. */
-	if (port != NULL && port->current(port->cookie) != port->serial) {
+	if (port != NULL && port->current(port->cookie, kind) != port->serial) {
 		mutex_exit(&sc->sc_cmd_lock);
 		return EACCES;
 	}
@@ -676,7 +711,7 @@ uaicfw_ethernet(void *arg, const uint8_t *packet, size_t len,
 	memcpy(buf, packet, len);
 	le16enc(buf, wire);
 	buf[3] = 0;
-	if (eapol) {
+	if (confirm) {
 		/* Never reuse a token after a timeout or uncertain submission. */
 		if (sc->sc_data_sequence == AICWF_DC_DATA_TOKEN - 1) {
 			mutex_exit(&sc->sc_cmd_lock);
@@ -693,7 +728,7 @@ uaicfw_ethernet(void *arg, const uint8_t *packet, size_t len,
 	timeout = mstohz(UAICFW_TIMEOUT_MS);
 	start = getticks();
 	status = uaicfw_send(sc, &sc->sc_data, wire, attempted);
-	if (eapol) {
+	if (confirm) {
 		mutex_enter(&sc->sc_rx_lock);
 		while (status == USBD_NORMAL_COMPLETION && !sc->sc_stopping &&
 		    sc->sc_error == USBD_NORMAL_COMPLETION &&
@@ -724,7 +759,7 @@ uaicfw_mountroot(device_t self)
 {
 	struct uaicfw_softc * const sc = device_private(self);
 	struct uaicfw_attach_args aa = {
-		.cookie = sc, .write = uaicfw_write, .ethernet = uaicfw_ethernet,
+		.cookie = sc, .write = uaicfw_write, .data = uaicfw_data,
 		.listen = uaicfw_listen,
 	};
 	(void)config_found(self, &aa, NULL, CFARGS(.iattr = "aicwfusbbus"));

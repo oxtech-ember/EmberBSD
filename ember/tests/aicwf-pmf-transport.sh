@@ -32,6 +32,7 @@ cat > "$work/check.c" <<'C'
 #define AICWF_TID_NONE 255
 #define AICWF_STA_NONE 255
 #define AICWF_TX_MGMT 8
+#define AICWF_TX_MGMT_ROBUST 128
 #define AICWF_TX_RESERVE 2
 #ifndef __BIT
 #define __BIT(n) (1u<<(n))

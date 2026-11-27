@@ -136,7 +136,6 @@ __KERNEL_RCSID(0, "$NetBSD$");
  */
 #define	AICWF_HWQ_BE			1
 #define	AICWF_HWQ_VO			3
-#define	AICWF_TX_MGMT			__BIT(3)
 #define	AICWF_TID_NONE			0xff
 #define	AICWF_TX_RESERVE		2	/* buffers left to messages */
 
@@ -1140,7 +1139,8 @@ aicwf_sae_tx(struct aicwf_softc *sc, const uint8_t *frame, size_t len,
 	desc[24] = sc->sc_vif;
 	desc[25] = query ? sc->sc_ap : AICWF_STA_NONE;
 	/* Bit 7 asks firmware to protect robust management with the PTK. */
-	le16enc(desc + 26, AICWF_TX_MGMT | (query ? __BIT(7) : 0));
+	le16enc(desc + 26, AICWF_TX_MGMT |
+	    (query ? AICWF_TX_MGMT_ROBUST : 0));
 	memcpy(desc + AICWF_TXDESC_LEN, frame, len);
 	error = aicwf_write(sc, AICWF_HDR_LEN + AICWF_TXDESC_LEN + len,
 	    AICWF_TX_RESERVE);
@@ -1989,7 +1989,8 @@ aicwf_sta_mgmt_cb(struct aicwf_softc *sc, const struct aicwf_task *t)
 		desc[23] = AICWF_TID_NONE;
 		desc[24] = sc->sc_vif;
 		desc[25] = sc->sc_ap;
-		le16enc(desc + 26, AICWF_TX_MGMT | (sc->sc_sae_enabled ? __BIT(7) : 0));
+		le16enc(desc + 26, AICWF_TX_MGMT |
+		    (sc->sc_sae_enabled ? AICWF_TX_MGMT_ROBUST : 0));
 		frame[0] = 0xd0;
 		memcpy(frame + 4, req->bssid, ETHER_ADDR_LEN);
 		memcpy(frame + 10, ic->ic_myaddr, ETHER_ADDR_LEN);
