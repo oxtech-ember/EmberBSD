@@ -166,6 +166,8 @@ struct ieee80211com {
 	uint64_t ic_rxba_serial, ic_sae_serial;
 	int (*ic_ht20_admit)(struct ieee80211com *, struct ieee80211_ht20_profile *);
 	struct ieee80211_ht20_diag ic_ht20_diag;
+	int (*ic_he_admit)(struct ieee80211com *, unsigned,
+	    struct ieee80211_he_cap *);
 	int (*ic_vht_admit)(struct ieee80211com *,
 	    const struct ieee80211_vht_channel *, struct ieee80211_vht_cap *);
 	int ic_fixed_rate;
@@ -1268,6 +1270,140 @@ vht_assoc_response(unsigned variant)
 	m->model_capacity += len;
 	return m;
 }
+/* HE (802.11ax) offer beside HT/VHT and commit from the response. */
+static unsigned he_admissions, he_width, he_bad;
+static int
+he_local_admit(struct ieee80211com *ic, unsigned width,
+    struct ieee80211_he_cap *cap)
+{
+	(void)ic;
+	he_admissions++;
+	he_width = width;
+	memset(cap, 0, sizeof(*cap));
+	cap->phy[0] = width == 20 ? 0 : IEEE80211_HE_PHY0_CW_40_80_5G;
+	cap->phy[1] = IEEE80211_HE_PHY1_LDPC;
+	cap->phy[9] = IEEE80211_HE_PHY9_PADDING_16US;
+	cap->rx_map80 = cap->tx_map80 = 0xfffa;
+	if (he_bad == 1)
+		cap->mac[0] = 1;		/* Unqualified MAC capability. */
+	if (he_bad == 2)
+		cap->phy[0] ^= IEEE80211_HE_PHY0_CW_40_80_5G; /* Wrong width. */
+	return he_bad == 3 ? EOPNOTSUPP : 0;
+}
+
+static struct mbuf *
+he_assoc_response(unsigned variant, unsigned vht_variant)
+{
+	static const uint8_t cap[] = {
+		255, 22, 35, 0, 0, 0, 0, 0, 0,
+		0x04, 0x20, 0, 0, 0, 0, 0, 0, 0, 0x80, 0,
+		0xfa, 0xff, 0xfa, 0xff,
+	};
+	static const uint8_t op[] = { 255, 7, 36, 0x04, 0x00, 0x00, 0x21,
+	    0xfc, 0xff };
+	uint8_t ies[64];
+	size_t len = 0;
+	struct mbuf *m = vht_assoc_response(vht_variant);
+
+	if (variant != 1) {
+		memcpy(ies + len, cap, sizeof(cap));
+		if (variant == 3)
+			ies[len + 1]--;		/* Body shorter than its maps. */
+		if (variant == 4)
+			ies[len + 20] = ies[len + 21] = 0xff; /* Peer RX none. */
+		len += variant == 3 ? sizeof(cap) - 1 : sizeof(cap);
+	}
+	if (variant != 1 && variant != 2) {
+		memcpy(ies + len, op, sizeof(op));
+		len += sizeof(op);
+	}
+	assert((size_t)m->m_len + len < sizeof(m->data) - 128);
+	memcpy(m->m_data + m->m_len, ies, len);
+	m->m_len += (int)len;
+	m->m_pkthdr.len = m->m_len;
+	m->model_capacity += len;
+	return m;
+}
+
+static void
+test_he_assoc(void)
+{
+	const uint8_t *he;
+	unsigned count;
+
+	/* Without a provider no HE element is offered. */
+	prepare_vht_request();
+	CHECK(request(IEEE80211_FC0_SUBTYPE_ASSOC_REQ) == 0);
+	he = request_ie(IEEE80211_FC0_SUBTYPE_ASSOC_REQ, 255, &count);
+	CHECK(count == 0 && test_ic.ic_ht20_diag.he_offers == 0);
+	release_capture();
+
+	/* VHT80 offer: HE at the same 80 MHz channel, committed on response. */
+	for (unsigned variant = 0; variant < 5; variant++) {
+		prepare_vht_request();
+		he_bad = 0;
+		he_admissions = 0;
+		test_ic.ic_he_admit = he_local_admit;
+		CHECK(request(IEEE80211_FC0_SUBTYPE_ASSOC_REQ) == 0);
+		CHECK(he_admissions == 1 && he_width == 80);
+		he = request_ie(IEEE80211_FC0_SUBTYPE_ASSOC_REQ, 255, &count);
+		CHECK(count == 1 && he != NULL);
+		if (he != NULL)
+			CHECK(he[1] == IEEE80211_HE_CAP_MINLEN && he[2] == 35 &&
+			    he[3 + 6] == IEEE80211_HE_PHY0_CW_40_80_5G);
+		CHECK(test_node.ni_ht20.he.offered &&
+		    test_ic.ic_ht20_diag.he_offers == 1);
+		deliver(he_assoc_response(variant, 0),
+		    IEEE80211_FC0_SUBTYPE_ASSOC_RESP);
+		CHECK(test_ic.ic_state == IEEE80211_S_RUN);
+		CHECK(test_node.ni_ht20.valid && test_node.ni_ht20.vht.valid);
+		/* 1: no HE; 2: no HE Operation; 3: malformed; 4: peer RX none. */
+		CHECK(test_node.ni_ht20.he.valid == (variant == 0));
+		CHECK(!test_node.ni_ht20.he.offered);
+		CHECK(test_ic.ic_ht20_diag.he == (variant == 0));
+		if (variant == 0) {
+			const struct ieee80211_ht20_he *h = &test_node.ni_ht20.he;
+
+			CHECK(h->width_mhz == 80 && h->operation.bss_color == 0x21);
+			CHECK(h->operation.basic_map == 0xfffc);
+			CHECK(h->maps.rx_map == 0xfffa);
+			CHECK(h->maps.tx_map == 0xfffa || h->maps.tx_map == 0xfffe);
+			CHECK(h->peer.rx_map80 == 0xfffa &&
+			    h->local.phy[1] == IEEE80211_HE_PHY1_LDPC);
+		}
+		test_ic.ic_he_admit = NULL;
+	}
+
+	/* Refused or unqualified local profiles offer no HE element. */
+	for (he_bad = 1; he_bad <= 3; he_bad++) {
+		prepare_vht_request();
+		test_ic.ic_he_admit = he_local_admit;
+		CHECK(request(IEEE80211_FC0_SUBTYPE_ASSOC_REQ) == 0);
+		he = request_ie(IEEE80211_FC0_SUBTYPE_ASSOC_REQ, 255, &count);
+		CHECK(count == 0 && !test_node.ni_ht20.he.offered);
+		CHECK(test_ic.ic_ht20_diag.he_offers == 0);
+		release_capture();
+		test_ic.ic_he_admit = NULL;
+	}
+	he_bad = 0;
+
+	/* HT20 without VHT: HE at 20 MHz, without a width bit. */
+	prepare_vht_request();
+	test_ic.ic_vht_admit = NULL;
+	test_ic.ic_he_admit = he_local_admit;
+	CHECK(request(IEEE80211_FC0_SUBTYPE_ASSOC_REQ) == 0);
+	CHECK(he_width == 20);
+	he = request_ie(IEEE80211_FC0_SUBTYPE_ASSOC_REQ, 255, &count);
+	CHECK(count == 1 && he != NULL);
+	if (he != NULL)
+		CHECK(he[3 + 6] == 0);
+	deliver(he_assoc_response(0, 1), IEEE80211_FC0_SUBTYPE_ASSOC_RESP);
+	CHECK(test_node.ni_ht20.valid && !test_node.ni_ht20.vht.valid);
+	CHECK(test_node.ni_ht20.he.valid &&
+	    test_node.ni_ht20.he.width_mhz == 20);
+	test_ic.ic_he_admit = NULL;
+}
+
 static void
 test_vht_assoc_response(void)
 {
@@ -2755,6 +2891,7 @@ main(void)
 	test_request_ie();
 	test_vht_request_bytes();
 	test_vht_assoc_response();
+	test_he_assoc();
 	test_vht_channel_lifecycle();
 	test_vht_protection_modes();
 	test_vht_diagnostics();

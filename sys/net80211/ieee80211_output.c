@@ -295,6 +295,32 @@ ieee80211_vht_request_prepare(struct ieee80211com *ic,
 	    chan) == 0;
 }
 
+/*
+ * Local HE Capabilities for an HT offer at the offered width: 20 MHz, or
+ * the 40/80 MHz VHT channel. The provider supplies them; the width bits
+ * must match the offer: none for 20 MHz, 40/80 MHz in 5 GHz otherwise.
+ */
+static int
+ieee80211_he_request_prepare(struct ieee80211com *ic, unsigned width,
+    struct ieee80211_he_cap *cap)
+{
+	uint8_t cw;
+
+	memset(cap, 0, sizeof(*cap));
+	if (ic->ic_he_admit == NULL || ic->ic_opmode != IEEE80211_M_STA ||
+	    ic->ic_curchan == NULL || ic->ic_curchan == IEEE80211_CHAN_ANYC ||
+	    ic->ic_he_admit(ic, width, cap) != 0 ||
+	    ieee80211_he_local_check(cap) != 0)
+		return 0;
+	cw = cap->phy[0] & (IEEE80211_HE_PHY0_CW_40_2G |
+	    IEEE80211_HE_PHY0_CW_40_80_5G);
+	if (width == 20 ? cw != 0 :
+	    (cw != IEEE80211_HE_PHY0_CW_40_80_5G ||
+	    ic->ic_curmode != IEEE80211_MODE_11A))
+		return 0;
+	return 1;
+}
+
 static int
 ieee80211_vht_request_offer(const struct mbuf *m, int type,
     const struct ieee80211_vht_cap *cap)
@@ -1763,7 +1789,10 @@ ieee80211_send_mgmt(struct ieee80211com *ic, struct ieee80211_node *ni,
 	u_int8_t *frm;
 	u_int16_t capinfo;
 	int ret, timer, status, wme_offer = 0, ht20_offer = 0, vht_offer = 0;
+	int he_offer = 0, he_len = 0;
+	unsigned he_width = 20;
 	struct ieee80211_ht20_profile ht20;
+	struct ieee80211_he_cap he;
 	struct ieee80211_vht_cap vht;
 	struct ieee80211_vht_channel vht_chan;
 
@@ -2000,6 +2029,10 @@ ieee80211_send_mgmt(struct ieee80211com *ic, struct ieee80211_node *ni,
 		    &ht20);
 		vht_offer = ht20_offer &&
 		    ieee80211_vht_request_prepare(ic, ni, &vht, &vht_chan);
+		if (vht_offer)
+			he_width = vht_chan.width_mhz;
+		he_offer = ht20_offer &&
+		    ieee80211_he_request_prepare(ic, he_width, &he);
 		m = ieee80211_getmgtframe(&frm,
 			 sizeof(u_int16_t)
 		       + sizeof(u_int16_t)
@@ -2010,6 +2043,7 @@ ieee80211_send_mgmt(struct ieee80211com *ic, struct ieee80211_node *ni,
 		       + sizeof(struct ieee80211_wme_info)
 		       + (ht20_offer ? 28 : 0)
 		       + (vht_offer ? 2 + IEEE80211_VHT_CAP_LEN : 0)
+		       + (he_offer ? 2 + IEEE80211_HE_CAP_MAXLEN : 0)
 		       + (ic->ic_opt_ie != NULL ? ic->ic_opt_ie_len : 0)
 		);
 		if (m == NULL)
@@ -2064,6 +2098,13 @@ ieee80211_send_mgmt(struct ieee80211com *ic, struct ieee80211_node *ni,
 			    IEEE80211_VHT_CAP_LEN, &vht) != 0)
 				senderr(EINVAL, is_tx_unknownmgt);
 			frm += IEEE80211_VHT_CAP_LEN;
+		}
+		if (he_offer) {
+			he_len = ieee80211_he_cap_encode(frm,
+			    2 + IEEE80211_HE_CAP_MAXLEN, &he);
+			if (he_len < 0)
+				senderr(EINVAL, is_tx_unknownmgt);
+			frm += he_len;
 		}
 		if (ic->ic_opt_ie != NULL) {
 			memcpy(frm, ic->ic_opt_ie, ic->ic_opt_ie_len);
@@ -2150,6 +2191,9 @@ ieee80211_send_mgmt(struct ieee80211com *ic, struct ieee80211_node *ni,
 	ret = ieee80211_mgmt_output(ic, ni, m, type, timer, wme_offer,
 	    ht20_offer ? &ht20 : NULL, vht_offer ? &vht : NULL,
 	    vht_offer ? &vht_chan : NULL, NULL);
+	/* The HE element follows the HT offer that the queue just admitted. */
+	if (ret == 0 && he_offer)
+		ieee80211_ht20_he_offer(ic, ni, &he, he_width);
 	if (ret != 0) {
 bad:
 		ieee80211_free_node(ni);

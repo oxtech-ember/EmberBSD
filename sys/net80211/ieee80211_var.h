@@ -92,6 +92,7 @@
 struct ieee80211_aclator;
 struct ieee80211_vht_cap;
 struct ieee80211_vht_channel;
+struct ieee80211_he_cap;
 
 #define	IEEE80211_PS_SLEEP	0x1	/* STA is in power saving mode */
 
@@ -137,6 +138,10 @@ struct ieee80211com {
 	 * channel; NULL means VHT stays disabled. */
 	int (*ic_vht_admit)(struct ieee80211com *,
 	    const struct ieee80211_vht_channel *, struct ieee80211_vht_cap *);
+	/* Optional local HE capability provider for the offered width (20, or
+	 * the 40/80 MHz VHT channel); NULL means HE stays disabled. */
+	int (*ic_he_admit)(struct ieee80211com *, unsigned,
+	    struct ieee80211_he_cap *);
 	const struct ieee80211_rxba_ops *ic_rxba_ops;
 	uint64_t ic_rxba_serial;
 	SLIST_ENTRY(ieee80211com) ic_next;

@@ -4,6 +4,7 @@
 #define _NET80211_IEEE80211_HT20_H_
 #include <sys/types.h>
 #include <net80211/ieee80211_vht_ies.h>
+#include <net80211/ieee80211_he_ies.h>
 #define IEEE80211_HT20_READY_RXBA 0x01
 #define IEEE80211_HT20_READY_SCHEDULER 0x02
 #define IEEE80211_HT20_READY_AMSDU 0x04
@@ -41,10 +42,19 @@ struct ieee80211_ht20_vht {
 	struct ieee80211_vht_channel channel;	/* Negotiated 40/80 MHz. */
 	uint8_t offered, valid;
 };
+/* HE (802.11ax) beside a committed HT/VHT contract; maps use VHT coding. */
+struct ieee80211_ht20_he {
+	struct ieee80211_he_cap local, peer;
+	struct ieee80211_he_operation operation;
+	struct ieee80211_vht_mcs_maps maps;	/* tx: local TX and peer RX */
+	uint8_t width_mhz;			/* 20, 40 or 80, as offered */
+	uint8_t offered, valid;
+};
 struct ieee80211_ht20_node {
 	uint32_t attempt, offer_attempt;
 	struct ieee80211_ht20_profile profile;
 	struct ieee80211_ht20_vht vht;
+	struct ieee80211_ht20_he he;
 	uint32_t assoc_attempt; /* Snapshot of the WME association attempt. */
 	struct ieee80211_channel *channel;
 	uint8_t bssid[6], subtype, offered, valid, security;
@@ -106,6 +116,7 @@ struct ieee80211_ht20_diag {
 	uint8_t reset_cap[4], reset_peer_cap[4];
 	uint8_t reset_op[6], reset_peer_op[6];
 	uint8_t reset_mcs[3];
+	uint32_t he_offers, he;	/* queued HE offers, committed HE */
 };
 /* A source-qualified primary20/mixed-format, one-PPDU protection result: a
  * single MPDU or one A-MPDU, without RTS or TXOP bursts. This is not a
@@ -126,6 +137,9 @@ void ieee80211_ht20_write(uint8_t *, const struct ieee80211_ht20_profile *);
 void ieee80211_ht20_offer(struct ieee80211com *, struct ieee80211_node *, int,
     const struct ieee80211_ht20_profile *, const struct ieee80211_vht_cap *,
     const struct ieee80211_vht_channel *);
+/* Record the HE Capabilities that the queued HT offer carried. */
+void ieee80211_ht20_he_offer(struct ieee80211com *, struct ieee80211_node *,
+    const struct ieee80211_he_cap *, unsigned);
 void ieee80211_ht20_reset(struct ieee80211_node *);
 int ieee80211_ht20_response(struct ieee80211com *, struct ieee80211_node *,
     int, const struct ieee80211_ht20_node *, const uint8_t *, size_t, int);
