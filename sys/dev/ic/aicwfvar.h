@@ -78,6 +78,9 @@ struct aicwf_softc {
 	bool			sc_dc;
 	bool			sc_receive_only, sc_survey_failed;
 	bool			sc_survey_draining, sc_survey_ok;
+	bool			sc_survey_cleanup;
+	uint8_t			sc_survey_vif;	/* late ADD, owned until REMOVE */
+	struct work		sc_survey_work;
 	bool			sc_dying;
 
 	kmutex_t		sc_lock;

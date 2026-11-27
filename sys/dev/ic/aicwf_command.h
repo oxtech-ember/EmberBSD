@@ -16,6 +16,7 @@
 #define	AICWF_TX_MSG_OFFSET		8
 #define	AICWF_MSG_HDR_LEN		8
 #define	AICWF_RX_MSG_PARAM		12	/* includes the pattern word */
+#define	AICWF_CO_OP_IN_PROGRESS		9	/* FullMAC operation is pending */
 #define	AICWF_MM_GET_MAC_ADDR_REQ	0x0073
 #define	AICWF_MM_ADD_IF_REQ		0x0006
 #define	AICWF_MM_REMOVE_IF_REQ		0x0008

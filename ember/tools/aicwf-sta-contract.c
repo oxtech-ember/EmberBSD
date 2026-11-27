@@ -132,9 +132,9 @@ struct ieee80211com {
 struct ieee80211_frame { uint8_t bytes[24]; };
 struct mbuf { int unused; };
 struct work { unsigned unused; };
-enum aicwf_task_cmd { AICWF_TASK_STA_MGMT, AICWF_TASK_STA_CANCEL_SCAN, AICWF_TASK_NEWSTATE, AICWF_TASK_RECOVER_SCAN };
+enum aicwf_task_cmd { AICWF_TASK_STA_MGMT, AICWF_TASK_STA_CANCEL_SCAN, AICWF_TASK_NEWSTATE, AICWF_TASK_RECOVER_SCAN, AICWF_TASK_KEY_SET, AICWF_TASK_KEY_DELETE };
 struct aicwf_task { struct work t_work; enum aicwf_task_cmd t_cmd;
-    uint64_t t_epoch, t_join_serial, t_configure_serial; enum ieee80211_state t_state; int t_arg; struct ieee80211req_sta_mgmt t_sta; };
+    uint8_t t_key[16]; uint64_t t_epoch, t_join_serial, t_configure_serial; enum ieee80211_state t_state; int t_arg; struct ieee80211req_sta_mgmt t_sta; };
 #define aicwf_sdio_softc aicwf_softc
 struct aicwf_softc;
 struct aicwf_bus_ops { int (*write)(struct aicwf_softc *, size_t, unsigned, bool *); };
@@ -142,6 +142,9 @@ struct aicwf_softc {
 	struct aicwf_softc *sc_bus;
 	const struct aicwf_bus_ops *sc_ops;
 	bool sc_5ghz, sc_dc, sc_dying, sc_survey_failed, sc_survey_draining, sc_survey_ok, sc_receive_only, sc_fw_bip_pending;
+	bool sc_survey_cleanup;
+	uint8_t sc_survey_vif;
+	struct work sc_survey_work, sc_alive_work, sc_barrier;
 	uint8_t sc_enaddr[6];
 	struct ieee80211com sc_ic;
 	struct ifnet sc_if;
@@ -344,6 +347,10 @@ static void kpause(const char *name, bool intr, int delay, void *lock)
 { (void)name; (void)intr; (void)delay; (void)lock; }
 static void aicwf_rx_retire(struct aicwf_softc *s)
 { (void)s; }
+static void aicwf_key_set_cb(struct aicwf_softc *s, const struct aicwf_task *t)
+{ (void)s; (void)t; assert(0); }
+static void aicwf_key_delete_cb(struct aicwf_softc *s, const struct aicwf_task *t)
+{ (void)s; (void)t; assert(0); }
 static void *pool_cache_get(void *pool, int flags)
 { (void)pool;assert(flags==PR_NOWAIT);return failtask?NULL:calloc(1,sizeof(struct aicwf_task)); }
 static void pool_cache_put(void *pool, void *ptr) { (void)pool; free(ptr); }
@@ -357,8 +364,13 @@ static int aicwf_tx_wait(struct aicwf_softc *s, size_t n, unsigned reserve)
 	assert(reserve == (s->sc_txbuf[2] == AICWF_TYPE_MSG ? 0 : 2));
 	return pre_fifo_error;
 }
-static unsigned survey_out[3], survey_count;
-static int survey_fault;
+static unsigned survey_out[8], survey_count;
+enum survey_fault {
+	SURVEY_OK, SCAN_REJECTED, SCAN_TIMEOUT, ADD_TIMEOUT, ADD_SHORT,
+	ADD_LONG, ADD_BAD_VIF, ADD_UNKNOWN_STATUS, ADD_PENDING, ADD_REJECTED,
+	ADD_AT_DEADLINE, REMOVE_TIMEOUT
+};
+static enum survey_fault survey_fault;
 static int aicwf_fifo(struct aicwf_softc *s, bool write, uint8_t *data, size_t n)
 {
 	assert(s == &sc && s->sc_lock && s->sc_bus_lock && write && n == 512);
@@ -371,11 +383,23 @@ static int aicwf_fifo(struct aicwf_softc *s, bool write, uint8_t *data, size_t n
 		memset(s->sc_cfm, 0, sizeof(s->sc_cfm));
 		s->sc_cfm[0] = reply_status;
 		if (s->sc_receive_only) {
-			assert(survey_count < 3);
+			assert(survey_count < __arraycount(survey_out));
 			survey_out[survey_count++] = le16dec(data + 8);
 			if (le16dec(data + 8) == AICWF_MM_ADD_IF_REQ) {
 				s->sc_cfm_len = 2;
 				s->sc_cfm[1] = 2;
+				if (survey_fault == ADD_TIMEOUT || survey_fault == ADD_AT_DEADLINE)
+					s->sc_cfm_done = false;
+				if (survey_fault == ADD_SHORT || survey_fault == ADD_LONG)
+					s->sc_cfm_len = survey_fault == ADD_SHORT ? 1 : 3;
+				if (survey_fault == ADD_BAD_VIF)
+					s->sc_cfm[1] = 4;
+				if (survey_fault == ADD_UNKNOWN_STATUS)
+					s->sc_cfm[0] = 0xff;
+				if (survey_fault == ADD_PENDING)
+					s->sc_cfm[0] = AICWF_CO_OP_IN_PROGRESS;
+				if (survey_fault == ADD_REJECTED)
+					s->sc_cfm[0] = 1;
 			} else if (le16dec(data + 8) == AICWF_SCANU_START_REQ) {
 				assert(data[16 + 366] == 2 && data[16 + 367] == 1);
 				assert(le16dec(data + 16) == 2437 && data[16 + 3] == 1);
@@ -385,6 +409,8 @@ static int aicwf_fifo(struct aicwf_softc *s, bool write, uint8_t *data, size_t n
 				assert(le16dec(data + 8) == AICWF_MM_REMOVE_IF_REQ);
 				assert(data[16] == 2);
 				s->sc_cfm_len = 0;
+				if (survey_fault == REMOVE_TIMEOUT)
+					s->sc_cfm_done = false;
 			}
 		}
 	}
@@ -393,18 +419,25 @@ static int aicwf_fifo(struct aicwf_softc *s, bool write, uint8_t *data, size_t n
 static void cv_wait(int *cv, int *lock)
 { (void)cv;assert(*lock && wait_hook);mutex_exit(lock);wait_hook();mutex_enter(lock);sc.sc_cmd_busy=false; }
 static void aicwf_scan_done(struct aicwf_softc *, const uint8_t *, size_t);
+static void aicwf_confirm(struct aicwf_softc *, uint16_t, const void *, size_t);
 static int cv_timedwait(int *cv, int *lock, int delay)
 {
-		(void)cv;
+	(void)cv;
 	if (sc.sc_receive_only && delay == 4000) {
 		assert(*lock);
-		if (survey_fault == 2)
+		if (survey_fault == SCAN_TIMEOUT)
 			return ETIMEDOUT;
-		uint8_t cfm[3] = { 2, survey_fault == 1, 1 };
+		uint8_t cfm[3] = { 2, survey_fault == SCAN_REJECTED, 1 };
 		mutex_exit(lock); aicwf_scan_done(&sc, cfm, sizeof(cfm)); mutex_enter(lock);
 		return 0;
 	}
 	assert(*lock && delay == 2000);
+	if (sc.sc_receive_only && survey_fault == ADD_AT_DEADLINE) {
+		mutex_exit(lock);
+		aicwf_confirm(&sc, AICWF_MM_ADD_IF_CFM, (uint8_t[]){0, 2}, 2);
+		mutex_enter(lock);
+		return ETIMEDOUT;
+	}
 	if (reply_hook != NULL) {
 		void (*hook)(void) = reply_hook; reply_hook = NULL;
 		mutex_exit(lock); hook(); mutex_enter(lock);
@@ -848,15 +881,7 @@ run_task(void)
 	CHECK(tasks_count != 0);
 	struct aicwf_task *t = tasks[0];
 	memmove(tasks, tasks + 1, --tasks_count * sizeof(*tasks));
-	if (t->t_cmd == AICWF_TASK_STA_MGMT)
-		aicwf_sta_mgmt_cb(&sc, t);
-	else if (t->t_cmd == AICWF_TASK_STA_CANCEL_SCAN)
-		aicwf_sta_cancel_scan_cb(&sc, t->t_sta.flags);
-	else if (t->t_cmd == AICWF_TASK_RECOVER_SCAN)
-		aicwf_recover_scan_cb(&sc, t);
-	else
-		aicwf_state_cb(&sc, t);
-	free(t);
+	aicwf_task((struct work *)t, &sc);
 }
 
 static void
@@ -1170,18 +1195,113 @@ join_disconnect(void)
 }
 
 static void
+survey_prepare(enum survey_fault fault)
+{
+	reset();
+	sc.sc_dc = sc.sc_receive_only = true;
+	sc.sc_ic.ic_state = IEEE80211_S_INIT;
+	sc.sc_ic.ic_channels[6].ic_freq = 2437;
+	setbit(sc.sc_ic.ic_chan_active, 6);
+	sc.sc_enaddr[0] = 2;
+	sc.sc_connected = false;
+	survey_count = 0;
+	survey_fault = fault;
+}
+
+static void
+dc_survey_add_checks(void)
+{
+	const uint8_t added[] = { 0, 2 }, refused[] = { 1, 0xff };
+	const struct {
+		enum survey_fault fault;
+		uint8_t data[3];
+		size_t len;
+	} malformed[] = {
+		{ ADD_SHORT, {0}, 1 },
+		{ ADD_LONG, {0, 2, 0}, 3 },
+		{ ADD_BAD_VIF, {0, 4}, 2 },
+		{ ADD_UNKNOWN_STATUS, {0xff, 2}, 2 },
+		{ ADD_PENDING, {AICWF_CO_OP_IN_PROGRESS, 2}, 2 },
+	};
+
+	for (size_t i = 0; i < __arraycount(malformed); i++) {
+		/* The same reply is unsafe both before and after the timeout. */
+		survey_prepare(malformed[i].fault);
+		aicwf_passive_scan(&sc);
+		CHECK(aicwf_survey_set(&sc, IEEE80211_IOC_SCAN_REQ) == EIO);
+		CHECK(writes == 1 && scans_ended == 1 && tasks_count == 0);
+
+		survey_prepare(ADD_TIMEOUT);
+		aicwf_passive_scan(&sc);
+		CHECK(aicwf_survey_set(&sc, IEEE80211_IOC_SCAN_REQ) == EBUSY);
+		aicwf_confirm(&sc, AICWF_MM_ADD_IF_CFM, malformed[i].data, malformed[i].len);
+		CHECK(aicwf_survey_set(&sc, IEEE80211_IOC_SCAN_REQ) == EIO);
+		aicwf_passive_scan(&sc);
+		CHECK(writes == 1 && scans_ended == 2 && tasks_count == 0);
+	}
+
+	for (unsigned i = 0; i < 3; i++) {
+		survey_prepare(i == 1 ? ADD_AT_DEADLINE : ADD_TIMEOUT);
+		aicwf_passive_scan(&sc);
+		CHECK(scans_ended == 1 && writes == 1 && survey_out[0] == AICWF_MM_ADD_IF_REQ);
+		CHECK(aicwf_survey_set(&sc, IEEE80211_IOC_SCAN_REQ) == EBUSY);
+		if (i != 1) {
+			CHECK(tasks_count == 0);
+			aicwf_confirm(&sc, AICWF_MM_ADD_IF_CFM, added, sizeof(added));
+		}
+		CHECK(aicwf_survey_set(&sc, IEEE80211_IOC_SCAN_REQ) == EBUSY);
+		CHECK(sc.sc_survey_vif == 2 && writes == 1);
+		aicwf_confirm(&sc, AICWF_MM_ADD_IF_CFM, added, sizeof(added));
+		CHECK(tasks_count == 1 && (struct work *)tasks[0] == &sc.sc_survey_work);
+		/* A scan queued before admission closed must not send another ADD. */
+		aicwf_passive_scan(&sc);
+		CHECK(scans_ended == 2 && writes == 1);
+		survey_fault = i == 2 ? REMOVE_TIMEOUT : SURVEY_OK;
+		run_task();
+		CHECK(writes == 2 && survey_out[1] == AICWF_MM_REMOVE_IF_REQ);
+		CHECK(scans_ended == 2 && tasks_count == 0);
+		if (i == 2) {
+			CHECK(aicwf_survey_set(&sc, IEEE80211_IOC_SCAN_REQ) == EIO);
+			continue;
+		}
+		CHECK(aicwf_survey_set(&sc, IEEE80211_IOC_SCAN_REQ) == 0);
+		aicwf_passive_scan(&sc);
+		CHECK(scans_ended == 3 && writes == 5 && sc.sc_survey_ok);
+	}
+
+	survey_prepare(ADD_REJECTED);
+	aicwf_passive_scan(&sc);
+	CHECK(writes == 1 && tasks_count == 0 && scans_ended == 1);
+	CHECK(aicwf_survey_set(&sc, IEEE80211_IOC_SCAN_REQ) == 0);
+	survey_prepare(ADD_TIMEOUT);
+	aicwf_passive_scan(&sc);
+	aicwf_confirm(&sc, AICWF_MM_ADD_IF_CFM, refused, sizeof(refused));
+	CHECK(writes == 1 && tasks_count == 0 && scans_ended == 1);
+	CHECK(aicwf_survey_set(&sc, IEEE80211_IOC_SCAN_REQ) == 0);
+
+	survey_prepare(SURVEY_OK);
+	pre_fifo_error = EBUSY;
+	aicwf_passive_scan(&sc);
+	CHECK(writes == 0 && tasks_count == 0 && scans_ended == 1);
+	CHECK(aicwf_survey_set(&sc, IEEE80211_IOC_SCAN_REQ) == 0);
+	survey_prepare(ADD_TIMEOUT);
+	aicwf_passive_scan(&sc);
+	sc.sc_dying = true;
+	aicwf_confirm(&sc, AICWF_MM_ADD_IF_CFM, added, sizeof(added));
+	CHECK(tasks_count == 0 && writes == 1 && scans_ended == 1);
+	survey_prepare(ADD_TIMEOUT);
+	aicwf_passive_scan(&sc);
+	aicwf_confirm(&sc, AICWF_MM_ADD_IF_CFM, added, sizeof(added));
+	sc.sc_dying = true;
+	run_task();
+	CHECK(tasks_count == 0 && writes == 1 && scans_ended == 1);
+}
+
+static void
 dc_survey_checks(void)
 {
-	for (int fault = 0; fault < 3; fault++) {
-		reset();
-		sc.sc_dc = sc.sc_receive_only = true;
-		sc.sc_ic.ic_state = IEEE80211_S_INIT;
-		sc.sc_ic.ic_channels[6].ic_freq = 2437;
-		setbit(sc.sc_ic.ic_chan_active, 6);
-		sc.sc_enaddr[0] = 2;
-		sc.sc_connected = false;
-		survey_count = 0;
-		survey_fault = fault;
+	for (enum survey_fault fault = SURVEY_OK; fault <= SCAN_TIMEOUT; fault++) {
+		survey_prepare(fault);
 		CHECK(aicwf_newstate(&sc.sc_ic, IEEE80211_S_AUTH, -1) == EOPNOTSUPP);
 		CHECK(tasks_count == 0 && writes == 0);
 		CHECK(aicwf_survey_set(&sc, IEEE80211_IOC_WPA) == EOPNOTSUPP);
@@ -1194,9 +1314,9 @@ dc_survey_checks(void)
 		CHECK(scans_ended == 1 && writes == 3 && survey_count == 3);
 		CHECK(survey_out[0] == AICWF_MM_ADD_IF_REQ && survey_out[1] == AICWF_SCANU_START_REQ);
 		CHECK(survey_out[2] == AICWF_MM_REMOVE_IF_REQ && !sc.sc_scanning);
-		CHECK(sc.sc_survey_ok == (fault == 0));
-		CHECK(sc.sc_survey_draining == (fault == 2) && !sc.sc_survey_failed);
-		if (fault == 2) {
+		CHECK(sc.sc_survey_ok == (fault == SURVEY_OK));
+		CHECK(sc.sc_survey_draining == (fault == SCAN_TIMEOUT) && !sc.sc_survey_failed);
+		if (fault == SCAN_TIMEOUT) {
 			uint8_t old[3] = { 2, 0, 0 };
 			CHECK(aicwf_survey_set(&sc, IEEE80211_IOC_SCAN_REQ) == EBUSY);
 			aicwf_scan_done(&sc, old, sizeof(old));
@@ -1467,6 +1587,7 @@ main(int argc, char **argv)
 	if (!strcmp(group, "all") || !strcmp(group, "reassoc")) {
 		dc_channel_checks();
 		dc_survey_checks();
+		dc_survey_add_checks();
 		reassoc_checks();
 	}
 	if (!strcmp(group, "all") || !strcmp(group, "recovery")) recovery_checks();

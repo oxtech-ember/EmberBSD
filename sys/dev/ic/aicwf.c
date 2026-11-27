@@ -257,6 +257,30 @@ aicwf_write(struct aicwf_softc *sc, size_t len, u_int reserve)
 }
 
 /*
+ * MM_ADD_IF_CFM contains a status and an assigned interface index. The
+ * station worker must remove a VIF if the scan that requested it has left.
+ */
+static int
+aicwf_survey_add_reply(struct aicwf_softc *sc, const uint8_t *p, size_t len,
+    bool abandoned)
+{
+	KASSERT(mutex_owned(&sc->sc_lock));
+	if (len != 2 || p[0] >= AICWF_CO_OP_IN_PROGRESS ||
+	    (p[0] == 0 && p[1] > 3)) {
+		sc->sc_survey_failed = true;
+		return EPROTO;
+	}
+	if (p[0] != 0)
+		return EIO;
+	if (abandoned && !atomic_load_relaxed(&sc->sc_dying)) {
+		sc->sc_survey_cleanup = true;
+		sc->sc_survey_vif = p[1];
+		workqueue_enqueue(sc->sc_taskq, &sc->sc_survey_work, NULL);
+	}
+	return 0;
+}
+
+/*
  * Send a request and wait for its confirmation. The parameters of the
  * confirmation are copied to cfm, which holds cfm_len bytes.
  */
@@ -326,6 +350,13 @@ aicwf_cmd_reply(struct aicwf_softc *sc, uint16_t id, const void *param,
 	if (error == 0 && strict && (sc->sc_cfm_len < cfm_len ||
 	    (strict == 2 && sc->sc_cfm_len != cfm_len)))
 		error = EPROTO;
+	if (sc->sc_receive_only && cfm_id == AICWF_MM_ADD_IF_CFM &&
+	    submitted && sc->sc_cfm_done) {
+		int status = aicwf_survey_add_reply(sc, sc->sc_cfm,
+		    sc->sc_cfm_len, error != 0);
+		if (error == 0)
+			error = status;
+	}
 	if (error == 0 && cfm_len != 0) {
 		/* A shorter answer reads as zeros past its end. */
 		memset(cfm, 0, cfm_len);
@@ -367,7 +398,8 @@ aicwf_confirm(struct aicwf_softc *sc, uint16_t id, const void *p, size_t len)
 {
 	mutex_enter(&sc->sc_lock);
 	if (sc->sc_lost_cfm != 0 && id == sc->sc_lost_cfm) {
-		/* Consume the earlier transfer before admitting a new request. */
+		if (sc->sc_receive_only && id == AICWF_MM_ADD_IF_CFM)
+			(void)aicwf_survey_add_reply(sc, p, len, true);
 		sc->sc_lost_cfm = 0;
 		cv_broadcast(&sc->sc_cv);
 	} else if (sc->sc_cmd_busy && id == sc->sc_cfm_id && !sc->sc_cfm_done) {
@@ -635,6 +667,36 @@ aicwf_station_setup(struct aicwf_softc *sc)
 	return 0;
 }
 
+static int
+aicwf_survey_scan_status(struct aicwf_softc *sc)
+{
+	int error = 0;
+
+	mutex_enter(&sc->sc_lock);
+	if (sc->sc_survey_failed)
+		error = EIO;
+	else if (sc->sc_survey_cleanup || sc->sc_survey_draining ||
+	    sc->sc_lost_cfm != 0)
+		error = EBUSY;
+	mutex_exit(&sc->sc_lock);
+	return error;
+}
+
+static int
+aicwf_survey_remove_vif(struct aicwf_softc *sc, uint8_t vif)
+{
+	int error;
+
+	error = aicwf_fw_cmd(sc, AICWF_MM_REMOVE_IF_REQ, &vif, 1,
+	    AICWF_MM_REMOVE_IF_CFM, NULL, 0);
+	mutex_enter(&sc->sc_lock);
+	if (error != 0)
+		sc->sc_survey_failed = true;
+	sc->sc_survey_cleanup = false;
+	mutex_exit(&sc->sc_lock);
+	return error;
+}
+
 /*
  * Run in the station workqueue. The separate USB RX worker populates the
  * net80211 scan cache and wakes this waiter. Only a user scan creates a VIF.
@@ -654,10 +716,8 @@ aicwf_passive_scan(struct aicwf_softc *sc)
 		if (aicwf_dc_channel(sc, ch, freq))
 			freqs[n++] = freq;
 	}
-	mutex_enter(&sc->sc_lock);
-	const bool available = !sc->sc_survey_failed && !sc->sc_survey_draining;
-	mutex_exit(&sc->sc_lock);
-	if (n == 0 || !available)
+	error = aicwf_survey_scan_status(sc);
+	if (n == 0 || error != 0)
 		goto done;
 	error = aicwf_add_vif(sc);
 	if (error != 0)
@@ -684,13 +744,7 @@ aicwf_passive_scan(struct aicwf_softc *sc)
 		error = EIO;
 	sc->sc_scanning = false;
 	mutex_exit(&sc->sc_lock);
-	release = aicwf_fw_cmd(sc, AICWF_MM_REMOVE_IF_REQ, &sc->sc_vif, 1,
-	    AICWF_MM_REMOVE_IF_CFM, NULL, 0);
-	if (release != 0) {
-		mutex_enter(&sc->sc_lock);
-		sc->sc_survey_failed = true;
-		mutex_exit(&sc->sc_lock);
-	}
+	release = aicwf_survey_remove_vif(sc, sc->sc_vif);
 	if (error != 0 || release != 0)
 		aprint_error_dev(sc->sc_dev, "passive scan failed: %d, VIF removal: %d\n",
 		    error, release);
@@ -2599,6 +2653,11 @@ aicwf_task(struct work *wk, void *arg)
 
 	if (wk == &sc->sc_barrier)
 		return;
+	if (wk == &sc->sc_survey_work) {
+		if (!atomic_load_relaxed(&sc->sc_dying))
+			(void)aicwf_survey_remove_vif(sc, sc->sc_survey_vif);
+		return;
+	}
 	if (wk == &sc->sc_alive_work) {
 		if (!atomic_load_relaxed(&sc->sc_dying))
 			aicwf_alive_work(sc);
@@ -3388,17 +3447,9 @@ aicwf_watchdog(struct ifnet *ifp)
 static int
 aicwf_survey_set(struct aicwf_softc *sc, unsigned type)
 {
-	int error = 0;
-
 	switch (type) {
 	case IEEE80211_IOC_SCAN_REQ:
-		mutex_enter(&sc->sc_lock);
-		if (sc->sc_survey_failed)
-			error = EIO;
-		else if (sc->sc_survey_draining || sc->sc_lost_cfm != 0)
-			error = EBUSY;
-		mutex_exit(&sc->sc_lock);
-		return error;
+		return aicwf_survey_scan_status(sc);
 	case IEEE80211_IOC_CHANLIST:
 		return 0;
 	default:

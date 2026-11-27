@@ -29,8 +29,11 @@ the command OUT pipe and both IN pipes. It never opens the data OUT pipe.
 Both IN pipes can deliver firmware messages.
 
 The driver waits up to four seconds for scan completion after the start
-confirmation. A late completion retires its original scan. A failed VIF
-removal leaves the device state uncertain and stops further scans.
+confirmation. A late completion retires its original scan. If the VIF creation
+times out, further scans return `EBUSY` until the firmware confirms a
+rejection or the driver removes the VIF named in a late success reply.
+An invalid status, length or VIF in a decoded creation reply stops further
+scans with `EIO`. A failed removal also stops further scans.
 The DC command version confirms basic service. Enabling association and
 data transfer requires the revision-specific normal startup and RF setup.
 Physical scan, association and IP transfer each require a separate observation.

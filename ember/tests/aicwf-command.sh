@@ -4,9 +4,11 @@ set -eu
 src=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
 work=$(mktemp -d "${TMPDIR:-/tmp}/aicwf-command.XXXXXX")
 trap 'rm -rf "$work"' EXIT HUP INT TERM
+awk '/^aicwf_survey_add_reply\(/ {copy=1; print "static int"}
+copy {print} copy && /^}/ {exit}' "$src/sys/dev/ic/aicwf.c" > "$work/command.h"
 awk '/^aicwf_cmd_reply\(/ {copy=1; print "static int"}
 copy {print} copy && /^}/ {exit}' \
-    "$src/sys/dev/ic/aicwf.c" > "$work/command.h"
+    "$src/sys/dev/ic/aicwf.c" >> "$work/command.h"
 awk '/^aicwf_confirm\(/ {copy=1; print "static void"}
 copy {print} copy && /^}/ {exit}' "$src/sys/dev/ic/aicwf.c" >> "$work/command.h"
 awk '/^aicwf_crc8\(/ {copy=1; print "static uint8_t"}
@@ -33,11 +35,15 @@ cat > "$work/check.c" <<'C'
 struct aicwf_softc {
     uint8_t sc_txbuf[2048], sc_cfm[1032];
     int sc_lock, sc_cv; uint64_t sc_sae_epoch;
+    bool sc_survey_failed, sc_survey_cleanup;
+    uint8_t sc_survey_vif; int sc_survey_work; void *sc_taskq;
     bool sc_cmd_busy, sc_cfm_done, sc_dying, sc_dc, sc_receive_only;
     bool sc_sta_scan_pending, sc_sta_scan_started, sc_sta_scan_draining;
     bool sc_scanning, sc_scan_published;
     uint16_t sc_cfm_len, sc_cfm_id, sc_lost_cfm;
 };
+static void workqueue_enqueue(void *q, int *w, void *arg)
+{ (void)q; (void)w; (void)arg; assert(0); }
 static bool aicwf_sta_ready(struct aicwf_softc *sc) { (void)sc; return true; }
 static int write_error, reply_len, writes; static struct aicwf_softc *waiting;
 static int mutex_owned(int *p) { return *p; }
