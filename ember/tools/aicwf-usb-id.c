@@ -360,7 +360,7 @@ emulate_transfer(struct usbd_xfer *x)
 		le16enc(b, fault == SHORT_DATA ? 2048 : 3);
 		b[2] = 0;
 		memset(b + 4, 0xbd, 59);
-		b += 64;
+		b += 63;
 		/* Put an unrelated indication before the confirmation. */
 		le16enc(b, 12);
 		b[2] = 0x11;
@@ -374,7 +374,7 @@ emulate_transfer(struct usbd_xfer *x)
 			le16enc(b + 10, fault == VERSION_SHORT ? 27 : 28);
 			le32enc(b + 16, 0x06040301);
 			le32enc(b + 36, 0xb011fa5f);
-			x->actual = 64 + 60;
+			x->actual = 63 + 60;
 			return USBD_NORMAL_COMPLETION;
 		}
 		le16enc(b, fault == SHORT_BODY ? 200 : 20);
@@ -383,7 +383,7 @@ emulate_transfer(struct usbd_xfer *x)
 		le16enc(b + 10, fault == BAD_PARAM_LEN ? 7 : 8);
 		le32enc(b + 16, fault == BAD_ECHO ? 0xdead : requested);
 		le32enc(b + 20, requested == 0x20 ? 1 : 0x00070000);
-		x->actual = fault == EMPTY_RX ? 0 : 64 + 40;
+		x->actual = fault == EMPTY_RX ? 0 : 63 + 40;
 		if (fault == SHORT_TAIL || fault == DUPLICATE) {
 			memcpy(b + 24, b, 24);
 			x->actual += fault == DUPLICATE ? 24 : 23;
@@ -407,7 +407,7 @@ deliver(void)
 	x->pending = false;
 	usbd_status st = emulate_transfer(x);
 	if (fault == FW_ERROR)
-		le16enc(x->buf + 68, 0x0408);
+		le16enc(x->buf + 67, 0x0408);
 	x->cb(x, x->arg, st);
 }
 
@@ -434,7 +434,7 @@ static struct uaicfw_softc device;
 static void *device_private(device_t self) { return &device; }
 
 static void
-ignore_input(void *cookie, const uint8_t *p, size_t len)
+ignore_input(void *cookie, const uint8_t *p, size_t len, uint64_t serial)
 {
 }
 
@@ -454,24 +454,153 @@ run_usb_task(struct usb_task *t)
 	t->fn(t->arg);
 }
 
+struct received_record {
+	size_t len;
+	unsigned limit;
+	uint8_t type;
+	uint16_t id;
+	uint64_t serial;
+};
+static struct received_record seen[16];
+static size_t nseen;
+static uint64_t generation;
+static uint64_t get_serial(void *cookie) { return generation; }
+
+static void
+capture_record(void *cookie, const uint8_t *p, size_t len, uint64_t serial)
+{
+	assert(nseen < __arraycount(seen));
+	struct received_record *r = &seen[nseen++];
+	r->len = len;
+	r->serial = serial;
+	r->type = p[2] & 0x7f;
+	r->id = r->type == AICWF_TYPE_MSG ? le16dec(p + 4) : 0;
+	r->limit = aicwf_usb_queue_limit(p, len, true);
+	if ((r->type & AICWF_TYPE_CFG) == 0)
+		assert(aicwf_usb_queue_limit(p, len, false) == 16);
+}
+
+static void
+message(uint8_t *p, uint16_t id)
+{
+	memset(p, 0, 20);
+	le16enc(p, 14);
+	p[2] = AICWF_TYPE_MSG;
+	le16enc(p + 4, id);
+	le16enc(p + 10, 2);
+	p[16] = 1;
+	p[17] = 0xff;
+	/* Padding belongs to this record regardless of its contents. */
+	p[18] = 0xa5;
+	p[19] = 0x5a;
+}
+
 static void
 survey_queue_checks(void)
 {
-	uint8_t agg[96] = { 0 };
-	/* A raw data frame can precede both kinds of scan message. */
-	le16enc(agg, 4);
-	assert(aicwf_usb_queue_limit(agg, 64) == 0);
-	le16enc(agg + 64, 12);
-	agg[66] = AICWF_TYPE_MSG;
-	le16enc(agg + 68, AICWF_SCANU_RESULT_IND);
-	assert(aicwf_usb_queue_limit(agg, 80) == 24);
-	memcpy(agg + 80, agg + 64, 16);
-	le16enc(agg + 84, AICWF_SCANU_START_CFM);
-	assert(aicwf_usb_queue_limit(agg, 96) == 32);
-	le16enc(agg + 68, 0xffff);
-	le16enc(agg + 84, AICWF_MM_REMOVE_IF_CFM);
-	assert(aicwf_usb_queue_limit(agg, 80) == 0);
-	assert(aicwf_usb_queue_limit(agg, 96) == 32);
+	struct uaicfw_softc sc = { 0 };
+	struct uaicfw_request req = { AICWF_MM_ADD_IF_CFM, 2, USBD_IN_PROGRESS };
+	uint8_t records[240] = { 0 };
+	uint8_t first[UAICFW_RX_SIZE];
+	uint8_t rest[24];
+	struct uaicfw_rx_stream *s = &sc.sc_stream[0];
+
+	sc.sc_input = capture_record;
+	sc.sc_serial = get_serial;
+	sc.sc_request = &req;
+	mutex_enter(&sc.sc_rx_lock);
+	le16enc(records, 133);	/* 60-byte descriptor plus 133-byte MPDU */
+	message(records + 193, AICWF_SCANU_RESULT_IND);
+	message(records + 213, AICWF_MM_ADD_IF_CFM);
+	assert(uaicfw_receive(&sc, s, records, 233) == USBD_NORMAL_COMPLETION);
+	assert(nseen == 3 && seen[0].len == 193 && seen[0].limit == 0);
+	assert(seen[1].len == 18 && seen[1].limit == 24);
+	assert(seen[2].id == AICWF_MM_ADD_IF_CFM && seen[2].limit == 32);
+	assert(req.status == USBD_NORMAL_COMPLETION && sc.sc_reply[0] == 1 &&
+	    sc.sc_reply[1] == 0xff);
+	sc.sc_request = NULL;
+
+	/* Split the header, parameters or alignment at a full URB boundary.
+	 * A completion on the other pipe must not contribute to this record. */
+	for (size_t split = 1; split < 20; split++) {
+		size_t data = sizeof(first) - split;
+		memset(first, 0, sizeof(first));
+		le16enc(first, data - AICWF_RXHDR_LEN);
+		memcpy(first + data, records + 193, split);
+		nseen = 0;
+		assert(uaicfw_receive(&sc, s, first, sizeof(first)) == USBD_NORMAL_COMPLETION);
+		assert(nseen == 1 && seen[0].len == data && s->pending == split);
+		assert(uaicfw_receive(&sc, &sc.sc_stream[1], records + 213, 20) ==
+		    USBD_NORMAL_COMPLETION);
+		assert(nseen == 2 && seen[1].limit == 32);
+		assert(uaicfw_receive(&sc, s, records + 193 + split, 40 - split) ==
+		    USBD_NORMAL_COMPLETION);
+		assert(nseen == 4 && seen[2].limit == 24 && seen[3].limit == 32);
+		assert(s->pending == 0);
+	}
+	/* A DATA record can itself span URBs. Its continuation has no header. */
+	memset(first, 0, sizeof(first));
+	le16enc(first, sizeof(first) + 1 - AICWF_RXHDR_LEN);
+	rest[0] = 0xe1;
+	message(rest + 1, AICWF_SCANU_START_CFM);
+	nseen = 0;
+	generation = 41;
+	assert(uaicfw_receive(&sc, s, first, sizeof(first)) == USBD_NORMAL_COMPLETION);
+	assert(s->pending == sizeof(first) && nseen == 0);
+	generation++;
+	assert(uaicfw_receive(&sc, s, rest, 21) == USBD_NORMAL_COMPLETION);
+	assert(nseen == 2 && seen[0].len == 2049 && seen[1].limit == 32);
+	assert(seen[0].serial == 41 && seen[1].serial == 42);
+	assert(s->pending == 0);
+
+	/* Replacing the listener retires its partial record only. */
+	nseen = 0;
+	assert(uaicfw_receive(&sc, s, first, sizeof(first)) == USBD_NORMAL_COMPLETION);
+	mutex_exit(&sc.sc_rx_lock);
+	uaicfw_listen(&sc, NULL, NULL, NULL);
+	uaicfw_listen(&sc, capture_record, get_serial, NULL);
+	mutex_enter(&sc.sc_rx_lock);
+	assert(uaicfw_receive(&sc, s, rest, 21) == USBD_NORMAL_COMPLETION);
+	assert(nseen == 1 && seen[0].limit == 32 && s->pending == 0);
+
+	/* The largest DATA record spans three host transfers. */
+	le16enc(first, UAICFW_PAYLOAD_MAX);
+	nseen = 0;
+	assert(uaicfw_receive(&sc, s, first, sizeof(first)) == USBD_NORMAL_COMPLETION);
+	memset(first, 0, sizeof(first));
+	assert(uaicfw_receive(&sc, s, first, sizeof(first)) == USBD_NORMAL_COMPLETION);
+	assert(s->pending == 2 * sizeof(first) && nseen == 0);
+	assert(uaicfw_receive(&sc, s, first,
+	    UAICFW_PAYLOAD_MAX + AICWF_RXHDR_LEN - 2 * sizeof(first)) == USBD_NORMAL_COMPLETION);
+	assert(nseen == 1 && seen[0].len == UAICFW_PAYLOAD_MAX + AICWF_RXHDR_LEN);
+
+	/* A short transfer can omit final padding, never required message bytes. */
+	nseen = 0;
+	assert(uaicfw_receive(&sc, s, records + 193, 18) == USBD_NORMAL_COMPLETION);
+	assert(uaicfw_receive(&sc, s, records + 213, 20) == USBD_NORMAL_COMPLETION);
+	assert(nseen == 2 && seen[0].limit == 24 && seen[1].limit == 32);
+	assert(uaicfw_receive(&sc, s, records + 193, 17) == USBD_INVAL);
+	assert(nseen == 2 && s->pending == 0);
+	message(rest, 0xffff);
+	assert(aicwf_usb_queue_limit(rest, 18, true) == 0);
+	assert(aicwf_usb_queue_limit(rest, 18, false) == 32);
+	/* TX confirmation admission belongs to the normal station mode. */
+	rest[2] = AICWF_TYPE_TX_CFM;
+	le16enc(rest, 8);
+	assert(aicwf_usb_queue_limit(rest, 12, false) == 32);
+	assert(aicwf_usb_queue_limit(rest, 12, true) == 0);
+	assert(aicwf_usb_queue_limit(rest, 11, false) == 0);
+	le16enc(first, UAICFW_PAYLOAD_MAX + 1);
+	assert(uaicfw_receive(&sc, s, first, sizeof(first)) == USBD_INVAL);
+	le16enc(first, sizeof(first));
+	assert(uaicfw_receive(&sc, s, first, sizeof(first)) == USBD_NORMAL_COMPLETION);
+	mutex_exit(&sc.sc_rx_lock);
+
+	/* A stall can lose bytes. Never parse a continuation after recovery. */
+	struct usbd_xfer xfer = { 0 };
+	sc.sc_rx[0].xfer = &xfer;
+	uaicfw_rxeof(&xfer, &sc, USBD_STALLED);
+	assert(sc.sc_error == USBD_STALLED && !sc.sc_recover_task.pending);
 }
 
 int
@@ -537,7 +666,7 @@ main(void)
 			assert(!uaicfw_survey_command(packet, n));
 		}
 		if (children && fault == NONE) {
-			radio.listen(radio.cookie, ignore_input, NULL);
+			radio.listen(radio.cookie, ignore_input, NULL, NULL);
 			stall_input(inputs[0]);
 			stall_input(inputs[1]);
 			run_usb_task(&device.sc_recover_task);
@@ -552,14 +681,14 @@ main(void)
 			stall_input(inputs[1]);
 			assert(!device.sc_recover_task.pending && device.sc_error == USBD_STALLED);
 		} else if (children && fault == EARLY_REPLY) {
-			radio.listen(radio.cookie, ignore_input, NULL);
+			radio.listen(radio.cookie, ignore_input, NULL, NULL);
 			stall_input(inputs[1]);
 			clear_error = true;
 			run_usb_task(&device.sc_recover_task);
 			clear_error = false;
 			assert(device.sc_error == USBD_IOERROR && !inputs[1]->pending);
 		} else if (children && fault == ON_DATA) {
-			radio.listen(radio.cookie, ignore_input, NULL);
+			radio.listen(radio.cookie, ignore_input, NULL, NULL);
 			stall_input(inputs[1]);
 			assert(device.sc_recover_task.pending);
 		}
@@ -573,6 +702,6 @@ main(void)
 	assert(uaicfw_detach(0, 0) == 0);
 	assert(!writes && errors == 1);
 	puts("PASS: both bulk-IN endpoints, early and late FullMAC replies, "
-	     "bounded endpoint recovery, passive command admission and cleanup");
+	     "DC record boundaries, generation and queue admission, recovery and cleanup");
 	return 0;
 }

@@ -26,11 +26,20 @@
 #define	UAICFW_TX_SIZE		(AICWF_TX_MSG_OFFSET + AICWF_MSG_HDR_LEN + \
 				 UAICFW_PARAM_MAX)
 #define	UAICFW_RX_SIZE		2048
+#define	UAICFW_PAYLOAD_MAX	0xfff	/* DC USB record length field */
 #define	UAICFW_TIMEOUT_MS	500
 
 struct uaicfw_pipe {
 	struct usbd_pipe *pipe;
 	struct usbd_xfer *xfer;
+};
+
+/* Only a full IN transfer can leave a record for the next transfer. */
+struct uaicfw_rx_stream {
+	size_t pending;
+	uint64_t serial;
+	bool deliver;
+	uint8_t buf[UAICFW_PAYLOAD_MAX + AICWF_RXHDR_LEN + UAICFW_RX_SIZE];
 };
 
 struct uaicfw_endpoints {
@@ -52,10 +61,12 @@ struct uaicfw_softc {
 	struct usb_task sc_recover_task;
 	unsigned int sc_stalled, sc_retried;
 	uaicfw_input_fn sc_input;
+	uaicfw_serial_fn sc_serial;
 	void *sc_input_arg;
 	struct aicwf_version sc_fw_version;
 	struct uaicfw_pipe sc_tx;
 	struct uaicfw_pipe sc_rx[2];
+	struct uaicfw_rx_stream sc_stream[2];
 	struct uaicfw_request *sc_request;
 	uint8_t sc_reply[UAICFW_PARAM_MAX];
 	usbd_status sc_error;
@@ -193,25 +204,69 @@ uaicfw_recover_rx(void *arg)
 	}
 }
 
-/* Both IN pipes can carry firmware messages. The transfer owns the bytes. */
-static usbd_status
-uaicfw_receive(struct uaicfw_softc *sc, const uint8_t *p, size_t len)
+/* DC USB pads each configuration record to four bytes. DATA has no pad. */
+static size_t
+uaicfw_record_size(const uint8_t *p, size_t payload, size_t *raw)
 {
+	if (p[2] & AICWF_TYPE_CFG) {
+		*raw = AICWF_HDR_LEN + payload;
+		return roundup(*raw, 4);
+	}
+	*raw = AICWF_RXHDR_LEN + payload;
+	return *raw;
+}
+
+/* Validate the complete records before notifying either consumer. */
+static usbd_status
+uaicfw_receive(struct uaicfw_softc *sc, struct uaicfw_rx_stream *stream,
+    const uint8_t *p, size_t len)
+{
+	static const uint8_t zeros[AICWF_HDR_LEN];
 	struct uaicfw_request *req = sc->sc_request;
-	struct aicwf_rx_frame frame;
 	const uint8_t *answer = NULL;
-	int step;
+	const bool full = len == UAICFW_RX_SIZE;
+	size_t end = 0, tail = 0;
 
 	KASSERT(mutex_owned(&sc->sc_rx_lock));
-	while ((step = aicwf_frame_decode(p, len, &frame)) > 0) {
-		const uint8_t *msg = p + AICWF_HDR_LEN;
-		uint16_t id, param_len;
+	if (len > UAICFW_RX_SIZE || stream->pending > sizeof(stream->buf) - len)
+		return USBD_INVAL;
+	const uint64_t serial = sc->sc_serial == NULL ? 0 :
+	    sc->sc_serial(sc->sc_input_arg);
+	if (stream->pending != 0) {
+		memcpy(stream->buf + stream->pending, p, len);
+		len += stream->pending;
+		p = stream->buf;
+	}
+	while (end < len) {
+		const uint8_t *rec = p + end;
+		const size_t left = len - end;
+		size_t raw, wire;
 
-		p += step;
-		len -= step;
-		if (frame.type != AICWF_TYPE_MSG)
+		if (left < AICWF_HDR_LEN) {
+			if (full)
+				tail = left;
+			else if (memcmp(rec, zeros, left) != 0)
+				return USBD_INVAL;
+			break;
+		}
+		const size_t payload = le16dec(rec);
+		if (payload == 0)
+			break;		/* End of the transfer. */
+		if (payload > UAICFW_PAYLOAD_MAX)
+			return USBD_INVAL;
+		wire = uaicfw_record_size(rec, payload, &raw);
+		if (wire > left && full) {
+			tail = left;
+			break;
+		}
+		if (raw > left)
+			return USBD_INVAL;
+		end += wire < left ? wire : left;
+		if ((rec[2] & 0x7f) != AICWF_TYPE_MSG)
 			continue;
-		if (!aicwf_reply_decode(msg, frame.len, &id, &param_len))
+		const uint8_t *msg = rec + AICWF_HDR_LEN;
+		uint16_t id, param_len;
+		if (!aicwf_reply_decode(msg, payload, &id, &param_len))
 			return USBD_INVAL;
 		if (id == AICWF_DBG_ERROR_IND)
 			return USBD_IOERROR;
@@ -222,14 +277,31 @@ uaicfw_receive(struct uaicfw_softc *sc, const uint8_t *p, size_t len)
 			return USBD_INVAL;
 		answer = msg + AICWF_RX_MSG_PARAM;
 	}
-	if (step < 0)
-		return USBD_INVAL;
 	if (answer != NULL) {
 		if (req->len != 0)
 			memcpy(sc->sc_reply, answer, req->len);
 		req->status = USBD_NORMAL_COMPLETION;
 		cv_broadcast(&sc->sc_cv);
 	}
+	if (sc->sc_input != NULL) {
+		for (size_t pos = 0; pos < end;) {
+			const bool continued = pos == 0 && stream->pending != 0;
+			const uint8_t *rec = p + pos;
+			size_t raw;
+			pos += uaicfw_record_size(rec, le16dec(rec), &raw);
+			if (!continued || stream->deliver)
+				sc->sc_input(sc->sc_input_arg, rec, raw,
+				    continued ? stream->serial : serial);
+		}
+	}
+	if (tail != 0) {
+		if (end != 0 || stream->pending == 0) {
+			stream->serial = serial;
+			stream->deliver = sc->sc_input != NULL;
+		}
+		memmove(stream->buf, p + end, tail);
+	}
+	stream->pending = tail;
 	return USBD_NORMAL_COMPLETION;
 }
 
@@ -237,7 +309,9 @@ static void
 uaicfw_rxeof(struct usbd_xfer *xfer, void *priv, usbd_status status)
 {
 	struct uaicfw_softc * const sc = priv;
-	const unsigned int bit = xfer == sc->sc_rx[0].xfer ? 1U : 2U;
+	const unsigned int index = xfer == sc->sc_rx[0].xfer ? 0 : 1;
+	const unsigned int bit = 1U << index;
+	struct uaicfw_rx_stream *stream = &sc->sc_stream[index];
 	uint32_t actual;
 
 	mutex_enter(&sc->sc_rx_lock);
@@ -246,7 +320,7 @@ uaicfw_rxeof(struct usbd_xfer *xfer, void *priv, usbd_status status)
 		return;
 	}
 	if (status == USBD_STALLED && sc->sc_input != NULL &&
-	    (sc->sc_retried & bit) == 0) {
+	    stream->pending == 0 && (sc->sc_retried & bit) == 0) {
 		sc->sc_retried |= bit;
 		sc->sc_stalled |= bit;
 		usb_add_task(sc->sc_udev, &sc->sc_recover_task, USB_TASKQ_DRIVER);
@@ -256,11 +330,7 @@ uaicfw_rxeof(struct usbd_xfer *xfer, void *priv, usbd_status status)
 	if (status == USBD_NORMAL_COMPLETION) {
 		sc->sc_retried &= ~bit;
 		usbd_get_xfer_status(xfer, NULL, NULL, &actual, NULL);
-		status = actual > UAICFW_RX_SIZE ? USBD_INVAL :
-		    uaicfw_receive(sc, usbd_get_buffer(xfer), actual);
-		if (status == USBD_NORMAL_COMPLETION && sc->sc_input != NULL &&
-		    actual >= AICWF_HDR_LEN)
-			sc->sc_input(sc->sc_input_arg, usbd_get_buffer(xfer), actual);
+		status = uaicfw_receive(sc, stream, usbd_get_buffer(xfer), actual);
 	}
 	if (status != USBD_NORMAL_COMPLETION) {
 		sc->sc_error = status;
@@ -398,11 +468,16 @@ uaicfw_errno(usbd_status status)
 }
 
 static void
-uaicfw_listen(void *arg, uaicfw_input_fn fn, void *cookie)
+uaicfw_listen(void *arg, uaicfw_input_fn fn, uaicfw_serial_fn serial,
+    void *cookie)
 {
 	struct uaicfw_softc * const sc = arg;
 	mutex_enter(&sc->sc_rx_lock);
+	/* Partial records belong to the listener that saw their first byte. */
+	for (size_t i = 0; i < __arraycount(sc->sc_stream); i++)
+		sc->sc_stream[i].deliver = false;
 	sc->sc_input = fn;
+	sc->sc_serial = serial;
 	sc->sc_input_arg = cookie;
 	mutex_exit(&sc->sc_rx_lock);
 }

@@ -49,44 +49,58 @@ aicwf_usb_write(struct aicwf_softc *sc, size_t len, u_int reserve,
 
 /* Reserve queue space for the command or scan completion in either pipe. */
 static unsigned
-aicwf_usb_queue_limit(const uint8_t *p, size_t len)
+aicwf_usb_queue_limit(const uint8_t *p, size_t len, bool receive_only)
 {
-	struct aicwf_rx_frame frame;
-	unsigned limit = 0;
-	int step;
+	uint16_t id, plen;
 
-	while ((step = aicwf_frame_decode(p, len, &frame)) > 0) {
-		uint16_t id, plen;
-		if (frame.type == AICWF_TYPE_MSG &&
-		    aicwf_reply_decode(p + AICWF_HDR_LEN, frame.len, &id, &plen)) {
-			switch (id) {
-			case AICWF_MM_GET_MAC_ADDR_CFM:
-			case AICWF_MM_ADD_IF_CFM:
-			case AICWF_MM_REMOVE_IF_CFM:
-			case AICWF_SCANU_START_ACK:
-			case AICWF_SCANU_START_CFM:
-				return 32;
-			case AICWF_SCANU_RESULT_IND:
-				limit = 24;
-				break;
-			}
-		}
-		p += step;
-		len -= step;
+	if (len < AICWF_HDR_LEN)
+		return 0;
+	const uint8_t type = p[2] & 0x7f;
+	if ((type & AICWF_TYPE_CFG) == 0)
+		return receive_only ? 0 : 16;
+	if (type == AICWF_TYPE_TX_CFM)
+		return !receive_only && len == AICWF_HDR_LEN + 8 ? 32 : 0;
+	if (type != AICWF_TYPE_MSG ||
+	    !aicwf_reply_decode(p + AICWF_HDR_LEN, len - AICWF_HDR_LEN,
+	    &id, &plen))
+		return 0;
+	switch (id) {
+	case AICWF_MM_GET_MAC_ADDR_CFM:
+	case AICWF_MM_ADD_IF_CFM:
+	case AICWF_MM_REMOVE_IF_CFM:
+	case AICWF_SCANU_START_ACK:
+	case AICWF_SCANU_START_CFM:
+		return 32;
+	case AICWF_SCANU_RESULT_IND:
+		return 24;
+	default:
+		return receive_only ? 0 : 32;
 	}
-	return limit;
+}
+
+static uint64_t
+aicwf_usb_serial(void *cookie)
+{
+	struct aicwf_usb_softc * const usc = cookie;
+	struct aicwf_softc * const sc = &usc->wifi;
+	uint64_t serial;
+
+	mutex_spin_enter(&sc->sc_epoch_lock);
+	serial = sc->sc_rx_serial;
+	mutex_spin_exit(&sc->sc_epoch_lock);
+	return serial;
 }
 
 /* The USB callback cannot take net80211's sleep locks. */
 static void
-aicwf_usb_input(void *cookie, const uint8_t *p, size_t len)
+aicwf_usb_input(void *cookie, const uint8_t *p, size_t len, uint64_t serial)
 {
 	struct aicwf_usb_softc * const usc = cookie;
 	struct aicwf_softc * const sc = &usc->wifi;
 	struct aicwf_usb_packet *packet;
 
 	mutex_enter(&usc->lock);
-	if (usc->count >= aicwf_usb_queue_limit(p, len)) {
+	if (usc->count >= aicwf_usb_queue_limit(p, len, sc->sc_receive_only)) {
 		mutex_exit(&usc->lock);
 		return;
 	}
@@ -94,9 +108,7 @@ aicwf_usb_input(void *cookie, const uint8_t *p, size_t len)
 	if (packet != NULL) {
 		packet->len = len;
 		memcpy(packet->data, p, len);
-		mutex_spin_enter(&sc->sc_epoch_lock);
-		packet->serial = sc->sc_rx_serial;
-		mutex_spin_exit(&sc->sc_epoch_lock);
+		packet->serial = serial;
 		SIMPLEQ_INSERT_TAIL(&usc->packets, packet, link);
 		usc->count++;
 		if (!usc->scheduled) {
@@ -153,7 +165,8 @@ aicwf_usb_attach(device_t parent, device_t self, void *aux)
 	    PRI_NONE, IPL_SOFTUSB, WQ_MPSAFE);
 	if (error != 0)
 		goto fail;
-	usc->bus.listen(usc->bus.cookie, aicwf_usb_input, usc);
+	usc->bus.listen(usc->bus.cookie, aicwf_usb_input, aicwf_usb_serial,
+	    usc);
 	error = aicwf_station_setup(sc);
 	if (error != 0)
 		goto fail;
@@ -172,7 +185,7 @@ aicwf_usb_detach(device_t self, int flags)
 
 	if (!usc->prepared)
 		return 0;
-	usc->bus.listen(usc->bus.cookie, NULL, NULL);
+	usc->bus.listen(usc->bus.cookie, NULL, NULL, NULL);
 	aicwf_quiesce(&usc->wifi);
 	if (usc->rxq != NULL) {
 		workqueue_wait(usc->rxq, &usc->rxwork);

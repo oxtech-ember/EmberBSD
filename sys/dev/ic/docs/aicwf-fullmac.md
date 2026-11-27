@@ -34,6 +34,14 @@ WPA configuration and association return `EOPNOTSUPP`. The USB adapter opens
 the command OUT pipe and both IN pipes. It never opens the data OUT pipe.
 Both IN pipes can deliver firmware messages.
 
+DC USB DATA records contain a 60-byte receive descriptor and the declared
+payload. The next record starts immediately. Configuration records have a
+four-byte header and their payload is padded to four bytes. The USB adapter
+retains an incomplete record separately on each bulk IN endpoint after a
+full 2048-byte transfer. A short transfer must contain the complete payload.
+It may omit the last configuration record's trailing pad. The station receives
+one complete record with the generation from its first transfer.
+
 The driver waits up to four seconds for scan completion after the start
 confirmation. A late completion retires its original scan. If the VIF creation
 times out, further scans return `EBUSY` until the firmware confirms a
