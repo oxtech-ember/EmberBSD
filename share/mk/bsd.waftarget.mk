@@ -30,7 +30,9 @@ _WAF_HOST_ENV= WAFLOCK=${WAF_OBJDIR:Q}/.lock-wscript PYTHONHASHSEED=1 \
 	PYTHONPATH= PYTHONHOME= SHELL=${HOST_SH:Q}
 
 .if defined(HOST_SH)
-.SHELL: name=${_HOST_SH_SPEC} path=${HOST_SH}
+# sys.mk selects the specification. A make run with -r reads no sys.mk;
+# it then uses the sh specification.
+.SHELL: name=${_HOST_SH_SPEC:Ush} path=${HOST_SH}
 .endif
 .PHONY: waf-target-configure waf-target-build
 waf-target-configure:
