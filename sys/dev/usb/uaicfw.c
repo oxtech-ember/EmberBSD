@@ -765,7 +765,19 @@ uaicfw_mountroot(device_t self)
 		.cookie = sc, .write = uaicfw_write, .data = uaicfw_data,
 		.listen = uaicfw_listen,
 	};
-	(void)config_found(self, &aa, NULL, CFARGS(.iattr = "aicwfusbbus"));
+	const usbd_status status = uaicfw_out_state(sc);
+
+	/* A terminal RX failure can occur while the root disk is mounting. */
+	if (status != USBD_NORMAL_COMPLETION) {
+		aprint_error_dev(self, "station transport unavailable: %s\n",
+		    usbd_errstr(status));
+	} else if (config_found(self, &aa, NULL,
+	    CFARGS(.iattr = "aicwfusbbus")) == NULL) {
+		aprint_error_dev(self, "station driver unavailable\n");
+	}
+	/* config_found also returns a device when its attach routine fails. */
+	if (!aa.if_attached)
+		uaicfw_stop(sc);
 }
 
 static void
@@ -775,6 +787,8 @@ uaicfw_attach(device_t parent, device_t self, void *aux)
 	struct usbd_interface * const iface = uiaa->uiaa_iface;
 	struct uaicfw_softc * const sc = device_private(self);
 	struct uaicfw_endpoints eps;
+	const usb_config_descriptor_t *desc;
+	const char *phase = "bulk IN setup";
 	uint32_t chip, sub;
 	uint8_t cfm[AICWF_VERSION_LEN];
 	usbd_status status;
@@ -801,39 +815,41 @@ uaicfw_attach(device_t parent, device_t self, void *aux)
 	}
 	sc->sc_iface = iface;
 	sc->sc_data_ep = eps.out[0];
+	phase = "command pipe setup";
 	status = uaicfw_open(iface, eps.out[1], UAICFW_TX_SIZE, &sc->sc_tx);
-	if (status == USBD_NORMAL_COMPLETION)
-		status = uaicfw_read_id(sc, UAICFW_IDENT_REG, &chip);
-	if (status == USBD_NORMAL_COMPLETION)
-		status = uaicfw_read_id(sc, UAICFW_SUBID_REG, &sub);
+	if (status != USBD_NORMAL_COMPLETION)
+		goto fail;
+	phase = "chip identification";
+	status = uaicfw_read_id(sc, UAICFW_IDENT_REG, &chip);
+	if (status != USBD_NORMAL_COMPLETION)
+		goto fail;
+	phase = "subrevision identification";
+	status = uaicfw_read_id(sc, UAICFW_SUBID_REG, &sub);
 	if (status != USBD_NORMAL_COMPLETION)
 		goto fail;
 	aprint_normal_dev(self, "chip ID 0x%02x, sub-ID 0x%02x\n",
 	    (unsigned int)((chip >> 16) & 0xff), (unsigned int)(sub & 0xff));
 
-	/* A missing reply leaves the FullMAC state unknown. */
+	phase = "MM_VERSION";
 	status = uaicfw_command(sc, AICWF_MM_VERSION_REQ, NULL, 0,
 	    AICWF_MM_VERSION_CFM, cfm, sizeof(cfm));
-	if (status == USBD_NORMAL_COMPLETION) {
-		aicwf_version_decode(cfm, &sc->sc_fw_version);
-		aprint_normal_dev(self, "FullMAC version 0x%08x, features 0x%08x\n",
-		    sc->sc_fw_version.lmac, sc->sc_fw_version.features);
-		const usb_config_descriptor_t *desc =
-		    usbd_get_config_descriptor(uiaa->uiaa_device);
-		if (((chip >> 16) & 0xff) == 7 && (sub & 0xff) == 1 &&
-		    sc->sc_fw_version.lmac == 0x06040301 && desc != NULL &&
-		    desc->bNumInterface == 3) {
-			config_mountroot(self, uaicfw_mountroot);
-		}
-	} else {
+	if (status != USBD_NORMAL_COMPLETION)
+		goto fail;
+	aicwf_version_decode(cfm, &sc->sc_fw_version);
+	aprint_normal_dev(self, "FullMAC version 0x%08x, features 0x%08x\n",
+	    sc->sc_fw_version.lmac, sc->sc_fw_version.features);
+	desc = usbd_get_config_descriptor(uiaa->uiaa_device);
+	if (((chip >> 16) & 0xff) != 7 || (sub & 0xff) != 1 ||
+	    sc->sc_fw_version.lmac != 0x06040301 || desc == NULL ||
+	    desc->bNumInterface != 3) {
+		aprint_error_dev(self, "unsupported WLAN firmware or USB configuration\n");
 		uaicfw_stop(sc);
-		aprint_verbose_dev(self, "FullMAC version unavailable: %s\n",
-		    usbd_errstr(status));
+		return;
 	}
+	config_mountroot(self, uaicfw_mountroot);
 	return;
 fail:
-	aprint_error_dev(self, "firmware identification failed: %s\n",
-	    usbd_errstr(status));
+	aprint_error_dev(self, "%s failed: %s\n", phase, usbd_errstr(status));
 	uaicfw_stop(sc);
 }
 

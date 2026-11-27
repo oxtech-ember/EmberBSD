@@ -4,6 +4,7 @@
 #include <assert.h>
 #include <errno.h>
 #include <stdbool.h>
+#include <stdarg.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -116,12 +117,14 @@ static void *device_private(device_t);
 #define CFATTACH_DECL_NEW(...)
 #define aprint_naive(...) ((void)0)
 #define aprint_normal(...) ((void)0)
-#define aprint_error_dev(dev, ...) (errors++)
+#define aprint_error_dev(dev, ...) report_error(__VA_ARGS__)
+static void report_error(const char *, ...);
+static const char *usbd_errstr(usbd_status status)
+{ return status == USBD_TIMEOUT ? "timeout" : "USB error"; }
 #define aprint_normal_dev(dev, fmt, first, second) \
 	report((fmt), (first), (second))
-#define aprint_verbose_dev(dev, ...) (unavailable++)
 
-static unsigned identified, versions, unavailable;
+static unsigned identified, versions;
 
 static void
 report(const char *fmt, uint32_t first, uint32_t second)
@@ -200,7 +203,16 @@ struct aicwf_softc {
 	uint64_t sc_port_serial, sc_rx_serial, sc_rx_assoc, sc_rx_join;
 	bool sc_join_accepted, sc_join_open;
 };
-struct aicwf_usb_softc { struct uaicfw_attach_args bus; };
+struct aicwf_usb_softc {
+	struct uaicfw_attach_args bus;
+	struct aicwf_softc wifi;
+	kmutex_t lock;
+	void *rxq;
+	bool prepared;
+};
+struct aicwf_bus_ops {
+	int (*write)(struct aicwf_softc *, size_t, unsigned int, bool *);
+};
 #define mutex_spin_enter mutex_enter
 #define mutex_spin_exit mutex_exit
 #include "station-write.h"
@@ -257,6 +269,18 @@ static enum fault fault;
 static unsigned opens, allocs, writes, reads, errors;
 static uint32_t requested;
 static unsigned children;
+static bool child_present = true;
+static int station_error, ifattach_error;
+static char last_error[128];
+static void
+report_error(const char *format, ...)
+{
+	va_list args;
+	va_start(args, format);
+	vsnprintf(last_error, sizeof(last_error), format, args);
+	va_end(args);
+	errors++;
+}
 static struct uaicfw_attach_args radio;
 static void (*mountroot_hook)(device_t);
 static usb_config_descriptor_t *usbd_get_config_descriptor(void *device)
@@ -267,8 +291,7 @@ static int config_mountroot_cancel(device_t dev)
 { mountroot_hook = NULL; return 0; }
 static int config_detach_children(device_t dev, int flags) { return 0; }
 #define CFARGS(...) 0
-static device_t config_found(device_t dev, struct uaicfw_attach_args *a, void *pr, int cf)
-{ children++; radio = *a; return 1; }
+static void *config_found(device_t, struct uaicfw_attach_args *, void *, int);
 static struct usbd_xfer *inputs[2];
 
 static usb_interface_descriptor_t *
@@ -558,7 +581,9 @@ usbd_get_xfer_status(
 #include "probe.h"
 
 static struct uaicfw_softc device;
-static void *device_private(device_t self) { return &device; }
+static struct aicwf_usb_softc child;
+static void *device_private(device_t self)
+{ return self == 0 ? (void *)&device : (void *)&child; }
 
 /* Stop may mark the device while the sender sleeps in xfer allocation. */
 static void
@@ -574,6 +599,40 @@ cancel_data_open(void)
 static void
 ignore_input(void *cookie, const uint8_t *p, size_t len, uint64_t serial)
 {
+}
+
+/* Run both sides of the synchronous station attachment. */
+#define SIMPLEQ_INIT(q) ((void)0)
+#define workqueue_create(q, ...) (*(q) = &child, 0)
+#define aicwf_usb_input ignore_input
+static uint64_t aicwf_usb_serial(void *cookie) { return 0; }
+static void
+aicwf_prepare(struct aicwf_softc *sc, device_t self,
+    const struct aicwf_bus_ops *ops, void *cookie, bool dc)
+{ assert(self == 1 && cookie == &child && dc && ops->write == aicwf_usb_write); }
+static int aicwf_station_setup(struct aicwf_softc *sc)
+{ assert(sc->sc_receive_only && device.sc_input != NULL); return station_error; }
+static int aicwf_ifattach(struct aicwf_softc *sc) { return ifattach_error; }
+static int
+aicwf_usb_detach(device_t self, int flags)
+{
+	child.bus.listen(child.bus.cookie, NULL, NULL, NULL);
+	child.prepared = false;
+	return 0;
+}
+#include "station-attach.h"
+static void *
+config_found(device_t parent, struct uaicfw_attach_args *a, void *pr, int cf)
+{
+	assert(!a->if_attached);
+	if (!child_present)
+		return NULL;
+	children++;
+	memset(&child, 0, sizeof(child));
+	aicwf_usb_attach(parent, 1, a);
+	assert(a->if_attached == (station_error == 0 && ifattach_error == 0));
+	radio = child.bus;
+	return &child;
 }
 
 static void
@@ -941,6 +1000,43 @@ security_checks(void)
 	data_test = OUT_IDLE;
 }
 
+
+/* A successful version reply can precede a failed mountroot handoff. */
+static void
+mountroot_failure_checks(struct usbif_attach_arg *a)
+{
+	for (unsigned int i = 0; i < 5; i++) {
+		fault = NONE;
+		writes = reads = errors = children = 0;
+		config.bNumInterface = 3;
+		memset(&device, 0, sizeof(device));
+		uaicfw_attach(0, 0, a);
+		assert(mountroot_hook && opens == 3 && allocs == 3 && !errors);
+		if (i < 2) {
+			struct usbd_xfer *x = inputs[i];
+			assert(x->pending);
+			x->pending = false;
+			x->cb(x, x->arg, USBD_IOERROR);
+		}
+		child_present = i != 2;
+		station_error = i == 3 ? EIO : 0;
+		ifattach_error = i == 4 ? ENOMEM : 0;
+		mountroot_hook(0);
+		assert(children == (i >= 3) && device.sc_stopping);
+		assert(!opens && !allocs && writes == 3);
+		if (i < 2)
+			assert(errors == 1 && strstr(last_error, "transport unavailable"));
+		if (i == 2)
+			assert(errors == 1 && strstr(last_error, "driver unavailable"));
+		if (i >= 3)
+			assert(errors == 1 && strstr(last_error, "station setup failed") &&
+			    !child.prepared && device.sc_input == NULL);
+		assert(uaicfw_detach(0, 0) == 0);
+		child_present = true;
+		station_error = ifattach_error = 0;
+	}
+}
+
 static void
 command_deadline_checks(struct usbif_attach_arg *a)
 {
@@ -982,16 +1078,24 @@ main(void)
 	a.uiaa_product--;
 	for (fault = NONE; fault <= WRONG_FAMILY; fault++) {
 		opens = allocs = writes = reads = errors = identified = 0;
-		versions = unavailable = children = 0;
+		versions = children = 0;
 		config.bNumInterface = fault == WRONG_FAMILY ? 1 : 3;
 		memset(&device, 0, sizeof(device));
 		uaicfw_attach(0, 0, &a);
 		bool have_id = fault == NONE || fault == VERSION_TIMEOUT ||
 		    fault == VERSION_SHORT || fault == ON_DATA || fault == EARLY_REPLY || fault >= WRONG_FAMILY;
-		assert(identified == have_id && errors == !have_id);
+		assert(identified == have_id);
 		bool running = fault == NONE || fault == ON_DATA || fault == EARLY_REPLY || fault >= WRONG_FAMILY;
 		assert(versions == running);
-		assert(unavailable == (have_id && !running));
+		assert(errors == (!running || fault == WRONG_FAMILY));
+		if (have_id && !running)
+			assert(strstr(last_error, "MM_VERSION failed"));
+		if (fault == VERSION_TIMEOUT)
+			assert(strstr(last_error, "timeout"));
+		if (fault == WRONG_FAMILY)
+			assert(strstr(last_error, "unsupported WLAN"));
+		if (!running || fault == WRONG_FAMILY)
+			assert(device.sc_stopping && !opens && !allocs);
 		assert(!have_id || (writes == 3 && reads == 3));
 		if (fault == OTHER || fault == EMPTY_RX)
 			assert(reads == 1 && writes == 1);
@@ -1067,6 +1171,7 @@ main(void)
 		}
 		assert(uaicfw_detach(0, 0) == 0 && !opens && !allocs);
 	}
+	mountroot_failure_checks(&a);
 	command_deadline_checks(&a);
 	writes = errors = 0;
 	iface.eps[2].bEndpointAddress = 1;

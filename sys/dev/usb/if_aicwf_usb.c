@@ -216,11 +216,12 @@ aicwf_usb_attach(device_t parent, device_t self, void *aux)
 	struct aicwf_usb_softc * const usc = device_private(self);
 	static const struct aicwf_bus_ops ops = { .write = aicwf_usb_write };
 	struct aicwf_softc * const sc = &usc->wifi;
+	struct uaicfw_attach_args * const aa = aux;
 	int error;
 
 	aprint_naive("\n");
 	aprint_normal(": AIC8800DC station, passive receive only\n");
-	usc->bus = *(struct uaicfw_attach_args *)aux;
+	usc->bus = *aa;
 	mutex_init(&usc->lock, MUTEX_DEFAULT, IPL_SOFTUSB);
 	SIMPLEQ_INIT(&usc->packets);
 	aicwf_prepare(sc, self, &ops, usc, true);
@@ -236,8 +237,10 @@ aicwf_usb_attach(device_t parent, device_t self, void *aux)
 	if (error != 0)
 		goto fail;
 	error = aicwf_ifattach(sc);
-	if (error == 0)
+	if (error == 0) {
+		aa->if_attached = true;
 		return;
+	}
 fail:
 	aprint_error_dev(self, "station setup failed: %d\n", error);
 	(void)aicwf_usb_detach(self, 0);
