@@ -5,6 +5,8 @@
  * Hardware facts: Luckfox SDK 6dcbca0d8a51, aic8800_fdrv/aicwf_usb.c
  * and aicwf_compat_8800dc.c.
  */
+#include "opt_fdt.h"
+
 #include <sys/param.h>
 #include <sys/condvar.h>
 #include <sys/device.h>
@@ -14,6 +16,11 @@
 #include <sys/systm.h>
 
 #include <net/if_ether.h>
+
+#ifdef FDT
+#include <dev/fdt/fdtvar.h>
+#include <dev/ofw/openfirm.h>
+#endif
 
 #include <dev/ic/aicwf_command.h>
 #include <dev/ic/aicwf_sta.h>
@@ -54,6 +61,7 @@ struct uaicfw_request {
 	uint16_t id;
 	size_t len;
 	usbd_status status;
+	bool optional;
 };
 
 struct uaicfw_data_reply {
@@ -258,6 +266,7 @@ uaicfw_receive(struct uaicfw_softc *sc, struct uaicfw_rx_stream *stream,
 	static const uint8_t zeros[AICWF_HDR_LEN];
 	struct uaicfw_request *req = sc->sc_request;
 	const uint8_t *answer = NULL;
+	bool bad_sample = false;
 	const bool full = len == UAICFW_RX_SIZE;
 	size_t end = 0, tail = 0;
 
@@ -307,11 +316,19 @@ uaicfw_receive(struct uaicfw_softc *sc, struct uaicfw_rx_stream *stream,
 		if (req == NULL || req->id != id)
 			continue;
 		if (answer != NULL || req->status != USBD_IN_PROGRESS ||
-		    param_len != req->len)
-			return USBD_INVAL;
+		    param_len != req->len) {
+			if (!req->optional)
+				return USBD_INVAL;
+			/* This complete record belongs to the optional sample. */
+			bad_sample = true;
+			continue;
+		}
 		answer = msg + AICWF_RX_MSG_PARAM;
 	}
-	if (answer != NULL) {
+	if (bad_sample) {
+		req->status = USBD_INVAL;
+		cv_broadcast(&sc->sc_cv);
+	} else if (answer != NULL) {
 		if (req->len != 0)
 			memcpy(sc->sc_reply, answer, req->len);
 		req->status = USBD_NORMAL_COMPLETION;
@@ -408,11 +425,25 @@ uaicfw_wait_reply(struct uaicfw_softc *sc, const usbd_status *reply,
 	return *reply;
 }
 
+static void
+uaicfw_clear_out_stall(struct uaicfw_softc *sc, struct uaicfw_pipe *pipe)
+{
+	usbd_status error = usbd_clear_endpoint_stall(pipe->pipe);
+
+	if (error != USBD_NORMAL_COMPLETION && pipe == &sc->sc_tx) {
+		mutex_enter(&sc->sc_rx_lock);
+		sc->sc_error = error;
+		cv_broadcast(&sc->sc_cv);
+		mutex_exit(&sc->sc_rx_lock);
+	}
+}
+
 static usbd_status
 uaicfw_command(struct uaicfw_softc *sc, uint16_t cmd, const void *param,
-    size_t request_len, uint16_t cfm, void *reply, size_t reply_len)
+    size_t request_len, uint16_t cfm, void *reply, size_t reply_len,
+    bool optional)
 {
-	struct uaicfw_request req = { cfm, reply_len, USBD_IN_PROGRESS };
+	struct uaicfw_request req = { cfm, reply_len, USBD_IN_PROGRESS, optional };
 	struct usbd_xfer *xfer;
 	uint32_t actual, start;
 	uint8_t *buf;
@@ -440,11 +471,16 @@ uaicfw_command(struct uaicfw_softc *sc, uint16_t cmd, const void *param,
 	    UAICFW_TIMEOUT_MS, NULL);
 	start = getticks();
 	status = usbd_sync_transfer(xfer);
+	if (optional && status == USBD_STALLED)
+		uaicfw_clear_out_stall(sc, &sc->sc_tx);
 	if (status == USBD_NORMAL_COMPLETION) {
 		usbd_get_xfer_status(xfer, NULL, NULL, &actual, NULL);
 		if (actual != len)
 			status = USBD_SHORT_XFER;
 	}
+	/* A failed OUT transaction differs from a missing read confirmation. */
+	const bool out_failed = status != USBD_NORMAL_COMPLETION &&
+	    status != USBD_STALLED;
 	mutex_enter(&sc->sc_rx_lock);
 	if (sc->sc_stopping)
 		status = USBD_CANCELLED;
@@ -452,10 +488,14 @@ uaicfw_command(struct uaicfw_softc *sc, uint16_t cmd, const void *param,
 		status = sc->sc_error;
 	else if (status == USBD_NORMAL_COMPLETION)
 		status = uaicfw_wait_reply(sc, &req.status, start);
-	/* A late reply has no sequence number. Do not reuse its command ID. */
-	if (status != USBD_NORMAL_COMPLETION)
-		sc->sc_error = status;
-	else if (reply_len != 0)
+	/*
+	 * Optional reads stop at the first failure. The station has a
+	 * different set of command IDs. Keep genuine RX pipe errors.
+	 */
+	if (status != USBD_NORMAL_COMPLETION) {
+		if (!optional || out_failed)
+			sc->sc_error = status;
+	} else if (reply_len != 0)
 		memcpy(reply, sc->sc_reply, reply_len);
 	sc->sc_request = NULL;
 done:
@@ -464,20 +504,92 @@ done:
 	return status;
 }
 
+/* These are the only readable fields. No caller supplies a device address. */
+enum uaicfw_field {
+	UAICFW_CHIP, UAICFW_SUBID, UAICFW_USB_CONFIG, UAICFW_XTAL, UAICFW_BBPLL
+};
+
 static usbd_status
-uaicfw_read_id(struct uaicfw_softc *sc, uint32_t reg, uint32_t *value)
+uaicfw_read_field(struct uaicfw_softc *sc, enum uaicfw_field field,
+    uint32_t *value)
 {
+	static const uint32_t regs[] = {
+		[UAICFW_CHIP] = UAICFW_IDENT_REG,
+		[UAICFW_SUBID] = UAICFW_SUBID_REG,
+		[UAICFW_USB_CONFIG] = 0x40200024,
+		[UAICFW_XTAL] = 0x40500148,
+		[UAICFW_BBPLL] = 0x40505010,
+	};
 	uint8_t req[4], cfm[8];
 	usbd_status status;
 
-	le32enc(req, reg);
-	status = uaicfw_command(sc, AICWF_DBG_MEM_READ_REQ, req,
-	    sizeof(req), AICWF_DBG_MEM_READ_CFM, cfm, sizeof(cfm));
+	if ((unsigned)field >= __arraycount(regs))
+		return USBD_INVAL;
+	le32enc(req, regs[field]);
+	status = uaicfw_command(sc, AICWF_DBG_MEM_READ_REQ, req, sizeof(req),
+	    AICWF_DBG_MEM_READ_CFM, cfm, sizeof(cfm), field > UAICFW_SUBID);
 	if (status == USBD_NORMAL_COMPLETION &&
-	    !aicwf_read_confirm(cfm, sizeof(cfm), reg, value))
+	    !aicwf_read_confirm(cfm, sizeof(cfm), regs[field], value))
 		return USBD_INVAL;
 	return status;
 }
+
+#ifdef FDT
+/*
+ * Luckfox rkwifibt 223f2479: aicwf_usb_config and set_bbpll_config.
+ * Report the factory branches, without applying either setting. These are
+ * the last register reads on this attachment, also after a missing reply.
+ */
+static void
+uaicfw_lyra_conditions(device_t self, struct uaicfw_softc *sc,
+    const struct usbif_attach_arg *a, const struct uaicfw_endpoints *eps)
+{
+	static const char * const boards[] = { "luckfox,lyra-zero-w", NULL };
+	const char *usb = "unknown", *pll = "unknown";
+	uint32_t val;
+
+	if (fdtbus_get_data() == NULL ||
+	    !of_compatible(OF_finddevice("/"), boards) ||
+	    a->uiaa_vendor != USB_VENDOR_AICSEMI ||
+	    a->uiaa_product != USB_PRODUCT_AICSEMI_AIC8800DC ||
+	    a->uiaa_configno != 1 || a->uiaa_ifaceno != 2 || a->uiaa_port != 1 ||
+	    a->uiaa_class != UICLASS_VENDOR || a->uiaa_subclass != 0xff ||
+	    a->uiaa_proto != 0xff || sc->sc_fw_version.features != 0xb011fa5f ||
+	    eps->in[0] != 0x81 || eps->in[1] != 0x82 ||
+	    eps->out[0] != 1 || eps->out[1] != 2)
+		return;
+	const usb_interface_descriptor_t *iface =
+	    usbd_get_interface_descriptor(a->uiaa_iface);
+	if (iface == NULL || iface->bNumEndpoints != 4)
+		return;
+	for (unsigned i = 0; i < iface->bNumEndpoints; i++) {
+		const usb_endpoint_descriptor_t *ep =
+		    usbd_interface2endpoint_descriptor(a->uiaa_iface, i);
+		if (ep == NULL || UGETW(ep->wMaxPacketSize) != 512)
+			return;
+	}
+	if (uaicfw_read_field(sc, UAICFW_USB_CONFIG, &val) !=
+	    USBD_NORMAL_COMPLETION)
+		goto done;
+	usb = (val & 0xffff) == 0x0119 ? "needed" : "skip";
+	if (uaicfw_read_field(sc, UAICFW_XTAL, &val) !=
+	    USBD_NORMAL_COMPLETION)
+		goto done;
+	if ((val & 1) == 0) {
+		pll = "skip (no CPU crystal)";
+	} else {
+		pll = "unknown (CPU crystal)";
+		if (uaicfw_read_field(sc, UAICFW_BBPLL, &val) ==
+		    USBD_NORMAL_COMPLETION)
+			pll = (val >> 29) == 3 ?
+			    "skip (CPU crystal, setting present)" :
+			    "needed (CPU crystal)";
+	}
+done:
+	aprint_normal_dev(self, "factory USB setup %s, BBPLL setup %s\n",
+	    usb, pll);
+}
+#endif
 
 static void
 uaicfw_stop(struct uaicfw_softc *sc)
@@ -599,13 +711,7 @@ uaicfw_send(struct uaicfw_softc *sc, struct uaicfw_pipe *p, size_t len,
 		*attempted = true;
 	status = usbd_sync_transfer(xfer);
 	if (status == USBD_STALLED) {
-		usbd_status clear = usbd_clear_endpoint_stall(p->pipe);
-		if (clear != USBD_NORMAL_COMPLETION && p == &sc->sc_tx) {
-			mutex_enter(&sc->sc_rx_lock);
-			sc->sc_error = clear;
-			cv_broadcast(&sc->sc_cv);
-			mutex_exit(&sc->sc_rx_lock);
-		}
+		uaicfw_clear_out_stall(sc, p);
 	} else if (status == USBD_NORMAL_COMPLETION) {
 		usbd_get_xfer_status(xfer, NULL, NULL, &actual, NULL);
 		if (actual != len)
@@ -820,11 +926,11 @@ uaicfw_attach(device_t parent, device_t self, void *aux)
 	if (status != USBD_NORMAL_COMPLETION)
 		goto fail;
 	phase = "chip identification";
-	status = uaicfw_read_id(sc, UAICFW_IDENT_REG, &chip);
+	status = uaicfw_read_field(sc, UAICFW_CHIP, &chip);
 	if (status != USBD_NORMAL_COMPLETION)
 		goto fail;
 	phase = "subrevision identification";
-	status = uaicfw_read_id(sc, UAICFW_SUBID_REG, &sub);
+	status = uaicfw_read_field(sc, UAICFW_SUBID, &sub);
 	if (status != USBD_NORMAL_COMPLETION)
 		goto fail;
 	aprint_normal_dev(self, "chip ID 0x%02x, sub-ID 0x%02x\n",
@@ -832,7 +938,7 @@ uaicfw_attach(device_t parent, device_t self, void *aux)
 
 	phase = "MM_VERSION";
 	status = uaicfw_command(sc, AICWF_MM_VERSION_REQ, NULL, 0,
-	    AICWF_MM_VERSION_CFM, cfm, sizeof(cfm));
+	    AICWF_MM_VERSION_CFM, cfm, sizeof(cfm), false);
 	if (status != USBD_NORMAL_COMPLETION)
 		goto fail;
 	aicwf_version_decode(cfm, &sc->sc_fw_version);
@@ -846,6 +952,9 @@ uaicfw_attach(device_t parent, device_t self, void *aux)
 		uaicfw_stop(sc);
 		return;
 	}
+#ifdef FDT
+	uaicfw_lyra_conditions(self, sc, uiaa, &eps);
+#endif
 	config_mountroot(self, uaicfw_mountroot);
 	return;
 fail:
