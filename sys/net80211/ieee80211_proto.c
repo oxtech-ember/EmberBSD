@@ -69,6 +69,7 @@ __KERNEL_RCSID(0, "$NetBSD: ieee80211_proto.c,v 1.37 2021/07/24 21:31:38 andvar 
 #include <net80211/ieee80211_netbsd.h>
 #include <net80211/ieee80211_var.h>
 #include <net80211/ieee80211_sae.h>
+#include <net80211/ieee80211_sta_soft.h>
 
 #include <net/bpf.h>
 
@@ -1060,6 +1061,7 @@ ieee80211_newstate(struct ieee80211com *ic, enum ieee80211_state nstate, int arg
 		return EINVAL;
 	if (ieee80211_sae_state(ic, nstate) != 0)
 		return EACCES;
+	ieee80211_sta_soft_state(ic, nstate);
 	ostate = ic->ic_state;
 	IEEE80211_DPRINTF(ic, IEEE80211_MSG_STATE, "%s: %s -> %s\n", __func__,
 		ieee80211_state_name[ostate], ieee80211_state_name[nstate]);

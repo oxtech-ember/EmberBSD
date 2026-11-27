@@ -39,6 +39,7 @@ struct ieee80211_rxba_tid {
 	uint64_t last_rx;
 	uint16_t head, window, request_params, timeout, request_ssn;
 	uint8_t token;
+	bool resync;		/* the next MPDU can set the head */
 };
 struct ieee80211_rxba_candidate {
 	struct ieee80211_rxba_tid *fresh;
@@ -576,6 +577,26 @@ ieee80211_rxba_input(struct ieee80211com *ic, struct ieee80211_node *ni,
 	cost = rxba_cost(m);
 	if (cost == 0)
 		goto drop;
+	/*
+	 * The station was away from the channel and the originator can have
+	 * dropped MPDUs and moved its window; a BlockAckReq was then lost. A
+	 * forward step of 2^11 or more looks like an old MPDU (10.25.6.6), so
+	 * the window would never move again. The first MPDU after the absence
+	 * outside the window starts it. A retransmission of the last window
+	 * before the head stays old and keeps the flag. CCMP still rejects a
+	 * replayed MPDU.
+	 */
+	if (r->resync) {
+		unsigned delta = rxba_delta(seq, r->head);
+
+		if (delta < r->window)
+			r->resync = false;
+		else if (delta < 4096 - r->window) {
+			r->resync = false;
+			rxba_advance(r, r->window, rxba_deliver, &owner);
+			r->head = seq;
+		}
+	}
 	incoming.m = incoming.tail = m;
 	incoming.charged = cost;
 	incoming.seq = seq;
@@ -590,6 +611,18 @@ ieee80211_rxba_input(struct ieee80211com *ic, struct ieee80211_node *ni,
 drop:
 	m_freem(m);
 	return 1;
+}
+
+/* The station returns to the channel after an absence (connected scan). */
+void
+ieee80211_rxba_resync(struct ieee80211com *ic, struct ieee80211_node *ni)
+{
+	unsigned tid;
+
+	(void)ic;
+	for (tid = 0; tid < IEEE80211_RXBA_TIDS; tid++)
+		if (ni->ni_rxba.tid[tid] != NULL)
+			ni->ni_rxba.tid[tid]->resync = true;
 }
 
 int

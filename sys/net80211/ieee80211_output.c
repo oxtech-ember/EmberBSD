@@ -883,6 +883,9 @@ ieee80211_encap(struct ieee80211com *ic, struct mbuf *m,
 	switch (ic->ic_opmode) {
 	case IEEE80211_M_STA:
 		wh->i_fc[1] = IEEE80211_FC1_DIR_TODS;
+		/* A station in power save mode sets the bit in each frame. */
+		if (ni->ni_flags & IEEE80211_NODE_PWR_MGT)
+			wh->i_fc[1] |= IEEE80211_FC1_PWR_MGT;
 		IEEE80211_ADDR_COPY(wh->i_addr1, ni->ni_bssid);
 		IEEE80211_ADDR_COPY(wh->i_addr2, eh.ether_shost);
 		IEEE80211_ADDR_COPY(wh->i_addr3, eh.ether_dhost);

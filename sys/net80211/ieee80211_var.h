@@ -100,6 +100,7 @@ struct ieee80211_he_cap;
 
 struct ieee80211req_sta_mgmt;
 struct ieee80211_sae;
+struct ieee80211_sta_soft;
 
 /*
  * Common connected-scan tuple.  Hardware operation/drain state stays in the
@@ -165,6 +166,11 @@ struct ieee80211com {
 				    struct ieee80211req_sta_mgmt *);
 	struct ieee80211_sta_scan_state ic_sta_scan;
 	struct ieee80211_sta_action_state ic_sta_action;
+	/* Host-MLME station management (ieee80211_sta_soft.h); NULL if unused. */
+	struct ieee80211_sta_soft *ic_sta_soft;
+	/* Signal of the frame in ieee80211_input_dbm(), if the radio gives it. */
+	int8_t			ic_rx_dbm;
+	bool			ic_rx_dbm_valid;
 	void			(*ic_newassoc)(struct ieee80211_node *, int);
 	void			(*ic_updateslot)(struct ifnet *);
 	void			(*ic_set_tim)(struct ieee80211_node *, int);

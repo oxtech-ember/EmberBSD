@@ -399,6 +399,34 @@ static void test_window_and_wrap(void)
  CHECK(f.ni.ni_rxba.tid[0]->head==15);
  unit_close(&f);
 }
+/* A connected-scan absence: the originator moved 2^11 or more ahead. */
+static void test_resync_after_absence(void)
+{
+ struct unit_fixture f;if(!unit_setup(&f,10,64,0))return;
+ unit_input(&f,10,10);unit_input(&f,12,12);
+ CHECK(rxba_output_count==1 && f.ni.ni_rxba.tid[0]->head==11);
+ /* Without a resync the step looks old and the window stays. */
+ unit_input(&f,3010,3010);
+ CHECK(rxba_output_count==1 && f.ni.ni_rxba.tid[0]->head==11);
+ ieee80211_rxba_resync(&f.ic,&f.ni);
+ unit_input(&f,3011,3011);
+ CHECK(rxba_output_count==3 && rxba_output_seq[1]==12 && rxba_output_seq[2]==3011);
+ CHECK(f.ni.ni_rxba.tid[0]->head==3012 && !f.ni.ni_rxba.tid[0]->resync);
+ /* The flag serves one MPDU; an old MPDU is again discarded. */
+ unit_input(&f,3010,3010);CHECK(rxba_output_count==3);
+ /* A retransmission just behind the head keeps the flag. */
+ ieee80211_rxba_resync(&f.ic,&f.ni);unit_input(&f,3009,3009);
+ CHECK(rxba_output_count==3 && f.ni.ni_rxba.tid[0]->resync);
+ unit_input(&f,3012,3012);
+ CHECK(rxba_output_count==4 && !f.ni.ni_rxba.tid[0]->resync);
+ /* An MPDU inside the window keeps the held order. */
+ unit_input(&f,3015,3015);ieee80211_rxba_resync(&f.ic,&f.ni);
+ unit_input(&f,3014,3014);
+ CHECK(rxba_output_count==4 && f.ni.ni_rxba.tid[0]->head==3013);
+ unit_input(&f,3013,3013);
+ CHECK(rxba_output_count==7 && rxba_output_seq[4]==3013 && rxba_output_seq[6]==3015);
+ unit_close(&f);
+}
 static void test_key_and_mic_order(void)
 {
  struct unit_fixture f;if(!unit_setup(&f,10,64,0))return;
@@ -1139,7 +1167,7 @@ int RXBA_SHARED_MAIN(void)
  test_prepend_fast_path_avoids_allocation();
  test_prepend_fallback_ownership();
  test_txba_originator();
- test_csa_action_exit();test_absolute_deadline();test_window_and_wrap();test_key_and_mic_order();test_candidate_preflight();test_actual_key_lifecycle();test_actual_node_reuse();test_beacon_contract_purge();test_ht20_real_ccmp_budget();test_actual_bar_and_delba();test_clock_serial_quarantine();test_owned_storage_budget();test_null_crypto_order();test_owned_admission_withdrawal();test_premature_addba_declined();test_actual_allocation_failures();test_repeat_replace_and_tid_deadlines();test_invalid_queued_frames();test_negotiated_amsdu_crypto_order();test_storage_walk_bounds();test_amsdu_current_without_ba();
+ test_csa_action_exit();test_absolute_deadline();test_window_and_wrap();test_resync_after_absence();test_key_and_mic_order();test_candidate_preflight();test_actual_key_lifecycle();test_actual_node_reuse();test_beacon_contract_purge();test_ht20_real_ccmp_budget();test_actual_bar_and_delba();test_clock_serial_quarantine();test_owned_storage_budget();test_null_crypto_order();test_owned_admission_withdrawal();test_premature_addba_declined();test_actual_allocation_failures();test_repeat_replace_and_tid_deadlines();test_invalid_queued_frames();test_negotiated_amsdu_crypto_order();test_storage_walk_bounds();test_amsdu_current_without_ba();
  printf("RX BA actual primitive/CCMP units: %u checks, %u failures\n",checks,failures);
  return failures!=0;
 }

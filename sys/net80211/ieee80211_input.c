@@ -70,6 +70,7 @@ __KERNEL_RCSID(0, "$NetBSD: ieee80211_input.c,v 1.117 2022/11/19 07:57:51 yamt E
 #include <net80211/ieee80211_sae.h>
 #include <net80211/ieee80211_beacon_ies.h>
 #include <net80211/ieee80211_amsdu.h>
+#include <net80211/ieee80211_sta_soft.h>
 
 #include <net/bpf.h>
 
@@ -930,6 +931,23 @@ out:
 		bpf_mtap3(ic->ic_rawbpf, m, BPF_D_IN);
 		m_freem(m);
 	}
+	return type;
+}
+
+/*
+ * As ieee80211_input(), with the absolute signal level in dBm. The scan
+ * cache then holds dBm for this radio, as for ieee80211_scan_observe().
+ */
+int
+ieee80211_input_dbm(struct ieee80211com *ic, struct mbuf *m,
+	struct ieee80211_node *ni, int rssi, int dbm, u_int32_t rstamp)
+{
+	int type;
+
+	ic->ic_rx_dbm = (int8_t)MAX(MIN(dbm, 0), -128);
+	ic->ic_rx_dbm_valid = true;
+	type = ieee80211_input(ic, m, ni, rssi, rstamp);
+	ic->ic_rx_dbm_valid = false;
 	return type;
 }
 
@@ -2572,6 +2590,8 @@ ieee80211_recv_mgmt_beacon(struct ieee80211com *ic, struct mbuf *m0,
 	if (!ieee80211_scan_parse(ic, wh, m0->m_len,
 	    ieee80211_chan2ieee(ic, ic->ic_curchan), &scan, &ies))
 		return;
+	scan.sp_rssi_dbm = ic->ic_rx_dbm;
+	scan.sp_rssi_dbm_valid = ic->ic_rx_dbm_valid;
 
 	if (ni != ic->ic_bss) {
 		ni = ieee80211_refine_node_for_beacon(ic, ni,
@@ -3519,6 +3539,11 @@ ieee80211_recv_mgmt(struct ieee80211com *ic, struct mbuf *m0,
 			if (ieee80211_sta_csa_action(ic, ni, wh, body, (size_t)len))
 				return;
 		}
+		/* The station management owner takes WNM frames of its BSS. */
+		if (m0->m_len == m0->m_pkthdr.len && len >= 1 &&
+		    ieee80211_sta_soft_action(ic, ni, wh,
+		    mtod(m0, const uint8_t *) + sizeof(*wh), (size_t)len))
+			return;
 		if (m0->m_len < (int)sizeof(*wh) || (len != 9 && len != 6) ||
 		    ic->ic_opmode != IEEE80211_M_STA || ni == NULL ||
 		    ni != ic->ic_bss ||

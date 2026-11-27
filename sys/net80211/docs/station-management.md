@@ -137,6 +137,60 @@ the legacy S_SCAN transition behind that drain, and retires it at a terminal
 event or successful firmware DOWN acknowledgement. The aicwf adapter keeps its
 single native scan busy until the firmware completion indication.
 
+## Host-MLME station management
+
+`ieee80211_sta_soft.h` is the `ic_sta_mgmt` owner for a radio whose MLME
+runs in net80211: management frames pass through `ieee80211_input()` and
+`ieee80211_mgmt_output()`. The adapter calls `ieee80211_sta_soft_attach()`
+after `ieee80211_ifattach()` and `ieee80211_sta_soft_detach()` before
+`ieee80211_ifdetach()`. It supplies one operation, `sso_tune`.
+
+GET reports `IEEE80211_STA_CAP_BTM` and `IEEE80211_STA_CAP_SCAN`. The
+generation is the low 32 bits of the association epoch of `ic_bss`. The
+supplicant sends ENABLE for an RSN association with CCMP and PSK, or SAE
+with required PMF. Then:
+
+- A BSS Transition Management Request of the BSS goes to the supplicant as
+  `RTM_IEEE80211_STA_RX`. net80211 accepts only an unfragmented frame from
+  the BSS to the station, with a complete body. With SAE, the shared PMF
+  consumer has already decrypted and verified the robust Action frame.
+  `ieee80211_sta_soft_rx_admit()` is the pure part of this rule.
+- STA_TX queues a BTM Query or Response body through
+  `ieee80211_send_action()`, the common PMF transport. The radio gives no
+  ACK result to net80211, so the STA_TX notice follows at once with both
+  ACK flags clear.
+- STA_SCAN runs a passive connected scan. Before the radio leaves the
+  operating channel, the station sends a Null frame with the Power
+  Management bit set (IEEE Std 802.11-2024, 11.2.3), and data frames carry
+  the bit while it is set. The station listens 120 ms on each channel, at
+  most two channels per absence, then returns for 100 ms and sends a Null
+  frame with the bit clear. The plan leaves out the operating channel: its
+  beacons arrive between absences. The adapter passes frames of the listen
+  channel to `ieee80211_sta_soft_rx_scan()`, which adds beacons and Probe
+  Responses to the scan cache with `ieee80211_scan_observe()`.
+- A state change out of RUN, DISABLE, CANCEL_SCAN or detach ends the scan
+  with an aborted notice. The radio returns before the notice.
+- An AP can keep sending during an absence and move its block-ack window
+  by 2^11 or more; such MPDUs look old. After each return the owner calls
+  `ieee80211_rxba_resync()`: the first MPDU outside the window starts it
+  again, and a retransmission from the last window stays old.
+
+`sso_tune(c)` moves the radio to the 20 MHz primary channel `c` and holds
+station TX in its queues; `sso_tune(NULL)` restores the operating channel
+and width. The call can sleep and runs from the common work queue with the
+kernel lock. The adapter serializes it with its own state work, refuses a
+tune while a state change waits, and ends a listen period before that work
+changes the radio. The adapter also pauses its beacon-loss supervision.
+
+A radio that reports the absolute signal level uses `ieee80211_input_dbm()`.
+The scan cache then holds dBm for all entries of the radio. The supplicant
+compares candidates with these values, so one radio must not mix dBm and
+relative levels.
+
+The owner sends no probe request and has no Neighbor Report or Radio
+Measurement support. `tests/sta-soft.py` checks the admission rule. The
+scan engine and the frame paths are checked on hardware only.
+
 ## Foreground scan requests
 
 A stop or reset can move the station from SCAN to INIT before the last

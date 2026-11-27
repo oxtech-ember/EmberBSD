@@ -184,6 +184,8 @@ struct ieee80211com {
 	unsigned ic_caps, ic_flags, ic_opmode, ic_state, ic_curmode, ic_phytype;
 	unsigned ic_lintval, ic_mgt_timer, ic_bmisstimeout, ic_fragthreshold, ic_rtsthreshold;
 	unsigned ic_flags_ext, ic_bmiss_count, ic_sta_assoc;
+	int8_t ic_rx_dbm;
+	bool ic_rx_dbm_valid;
 	uint8_t ic_chan_active[32];
 	struct ieee80211_channel ic_channels[256];
 	uint8_t ic_myaddr[6];

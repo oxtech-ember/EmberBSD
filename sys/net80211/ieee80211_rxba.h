@@ -120,6 +120,7 @@ int ieee80211_rxba_action(struct ieee80211com *, struct ieee80211_node *,
 int ieee80211_rxba_bar(struct ieee80211com *, struct ieee80211_node *,
     const uint8_t *, size_t);
 int ieee80211_rxba_input(struct ieee80211com *, struct ieee80211_node *, struct mbuf *);
+void ieee80211_rxba_resync(struct ieee80211com *, struct ieee80211_node *);
 void ieee80211_rxba_age(struct ieee80211com *, struct ieee80211_node *, uint64_t);
 unsigned ieee80211_rxba_mask(struct ieee80211com *, struct ieee80211_node *);
 int ieee80211_rxba_response_check(struct ieee80211com *, struct ieee80211_node *,
