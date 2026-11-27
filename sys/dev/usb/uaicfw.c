@@ -384,13 +384,37 @@ uaicfw_rxeof(struct usbd_xfer *xfer, void *priv, usbd_status status)
 	}
 }
 
+/* Deduct USB submission time from the confirmation wait. */
+static usbd_status
+uaicfw_wait_reply(struct uaicfw_softc *sc, const usbd_status *reply,
+    uint32_t start)
+{
+	const uint32_t timeout = mstohz(UAICFW_TIMEOUT_MS);
+	int error = 0;
+
+	KASSERT(mutex_owned(&sc->sc_rx_lock));
+	while (!sc->sc_stopping && sc->sc_error == USBD_NORMAL_COMPLETION &&
+	    *reply == USBD_IN_PROGRESS) {
+		const uint32_t elapsed = (uint32_t)getticks() - start;
+		if (error == EWOULDBLOCK || elapsed >= timeout)
+			return USBD_TIMEOUT;
+		error = cv_timedwait(&sc->sc_cv, &sc->sc_rx_lock,
+		    timeout - elapsed);
+	}
+	if (sc->sc_stopping)
+		return USBD_CANCELLED;
+	if (sc->sc_error != USBD_NORMAL_COMPLETION)
+		return sc->sc_error;
+	return *reply;
+}
+
 static usbd_status
 uaicfw_command(struct uaicfw_softc *sc, uint16_t cmd, const void *param,
     size_t request_len, uint16_t cfm, void *reply, size_t reply_len)
 {
 	struct uaicfw_request req = { cfm, reply_len, USBD_IN_PROGRESS };
 	struct usbd_xfer *xfer;
-	uint32_t actual;
+	uint32_t actual, start;
 	uint8_t *buf;
 	size_t len;
 	usbd_status status;
@@ -414,6 +438,7 @@ uaicfw_command(struct uaicfw_softc *sc, uint16_t cmd, const void *param,
 
 	usbd_setup_xfer(xfer, NULL, buf, len, USBD_FORCE_SHORT_XFER,
 	    UAICFW_TIMEOUT_MS, NULL);
+	start = getticks();
 	status = usbd_sync_transfer(xfer);
 	if (status == USBD_NORMAL_COMPLETION) {
 		usbd_get_xfer_status(xfer, NULL, NULL, &actual, NULL);
@@ -421,19 +446,12 @@ uaicfw_command(struct uaicfw_softc *sc, uint16_t cmd, const void *param,
 			status = USBD_SHORT_XFER;
 	}
 	mutex_enter(&sc->sc_rx_lock);
-	while (status == USBD_NORMAL_COMPLETION && !sc->sc_stopping &&
-	    sc->sc_error == USBD_NORMAL_COMPLETION &&
-	    req.status == USBD_IN_PROGRESS) {
-		if (cv_timedwait(&sc->sc_cv, &sc->sc_rx_lock,
-		    mstohz(UAICFW_TIMEOUT_MS)) == EWOULDBLOCK)
-			status = USBD_TIMEOUT;
-	}
 	if (sc->sc_stopping)
 		status = USBD_CANCELLED;
 	else if (sc->sc_error != USBD_NORMAL_COMPLETION)
 		status = sc->sc_error;
 	else if (status == USBD_NORMAL_COMPLETION)
-		status = req.status;
+		status = uaicfw_wait_reply(sc, &req.status, start);
 	/* A late reply has no sequence number. Do not reuse its command ID. */
 	if (status != USBD_NORMAL_COMPLETION)
 		sc->sc_error = status;
@@ -638,7 +656,7 @@ uaicfw_data(void *arg, enum uaicfw_data_kind kind, const uint8_t *packet,
 	const uint8_t *desc;
 	uint8_t *buf;
 	size_t wire;
-	uint32_t start, timeout;
+	uint32_t start;
 	usbd_status status;
 
 	if (attempted != NULL)
@@ -725,27 +743,12 @@ uaicfw_data(void *arg, enum uaicfw_data_kind kind, const uint8_t *packet,
 		sc->sc_data_reply = &reply;
 		mutex_exit(&sc->sc_rx_lock);
 	}
-	timeout = mstohz(UAICFW_TIMEOUT_MS);
 	start = getticks();
 	status = uaicfw_send(sc, &sc->sc_data, wire, attempted);
 	if (confirm) {
 		mutex_enter(&sc->sc_rx_lock);
-		while (status == USBD_NORMAL_COMPLETION && !sc->sc_stopping &&
-		    sc->sc_error == USBD_NORMAL_COMPLETION &&
-		    reply.status == USBD_IN_PROGRESS) {
-			const uint32_t elapsed = (uint32_t)getticks() - start;
-			if (elapsed >= timeout ||
-			    (cv_timedwait(&sc->sc_cv, &sc->sc_rx_lock,
-			    timeout - elapsed) == EWOULDBLOCK &&
-			    reply.status == USBD_IN_PROGRESS && !sc->sc_stopping &&
-			    sc->sc_error == USBD_NORMAL_COMPLETION))
-				status = USBD_TIMEOUT;
-		}
-		if (status == USBD_NORMAL_COMPLETION) {
-			status = sc->sc_stopping ? USBD_CANCELLED : sc->sc_error;
-			if (status == USBD_NORMAL_COMPLETION)
-				status = reply.status;
-		}
+		if (status == USBD_NORMAL_COMPLETION)
+			status = uaicfw_wait_reply(sc, &reply.status, start);
 		sc->sc_data_reply = NULL;
 		mutex_exit(&sc->sc_rx_lock);
 	}

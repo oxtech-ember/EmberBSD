@@ -213,6 +213,9 @@ enum data_out_test {
 static enum data_out_test data_test;
 static unsigned data_writes;
 static uint32_t clock_ticks;
+static enum { CMD_NORMAL, CMD_NO_CFM, CMD_CFM_AT_DEADLINE, CMD_OUT_EXPIRED }
+    command_timing;
+static unsigned command_waits;
 static bool stopping_on_alloc;
 static void cancel_data_open(void);
 static int getticks(void) { return (int)clock_ticks; }
@@ -489,7 +492,10 @@ static usbd_status
 usbd_sync_transfer(struct usbd_xfer *x)
 {
 	assert(x->pipe->addr < 0x80 && x->cb == NULL);
-	return emulate_transfer(x);
+	usbd_status status = emulate_transfer(x);
+	if (command_timing != CMD_NORMAL && x->pipe->addr == 2 && writes == 3)
+		clock_ticks += command_timing == CMD_OUT_EXPIRED ? 500 : 200;
+	return status;
 }
 
 static void
@@ -508,6 +514,19 @@ static int
 cv_timedwait(kcondvar_t *cv, kmutex_t *m, int ticks)
 {
 	assert(ticks > 0 && ticks <= 500 && *m);
+	if (command_timing != CMD_NORMAL && writes == 3) {
+		assert(command_timing != CMD_OUT_EXPIRED);
+		assert(ticks == 300 - 100 * (int)command_waits);
+		command_waits++;
+		clock_ticks += 100;
+		if (command_timing == CMD_CFM_AT_DEADLINE && command_waits == 3) {
+			mutex_exit(m);
+			deliver();
+			mutex_enter(m);
+			return EWOULDBLOCK;
+		}
+		return 0;
+	}
 	if (data_test == OUT_WAKE) {
 		static unsigned wakes;
 		assert(ticks == 500 - (int)(100 * wakes++));
@@ -922,6 +941,25 @@ security_checks(void)
 	data_test = OUT_IDLE;
 }
 
+static void
+command_deadline_checks(struct usbif_attach_arg *a)
+{
+	fault = NONE;
+	for (command_timing = CMD_NO_CFM; command_timing <= CMD_OUT_EXPIRED;
+	    command_timing++) {
+		config.bNumInterface = 3;
+		command_waits = writes = reads = 0;
+		clock_ticks = UINT32_MAX - 250;
+		memset(&device, 0, sizeof(device));
+		uaicfw_attach(0, 0, a);
+		assert(writes == 3 && device.sc_request == NULL);
+		assert(command_waits == (command_timing == CMD_OUT_EXPIRED ? 0 : 3));
+		assert((mountroot_hook != NULL) == (command_timing == CMD_CFM_AT_DEADLINE));
+		assert(uaicfw_detach(0, 0) == 0 && !opens && !allocs);
+	}
+	command_timing = CMD_NORMAL;
+}
+
 int
 main(void)
 {
@@ -1029,6 +1067,7 @@ main(void)
 		}
 		assert(uaicfw_detach(0, 0) == 0 && !opens && !allocs);
 	}
+	command_deadline_checks(&a);
 	writes = errors = 0;
 	iface.eps[2].bEndpointAddress = 1;
 	assert(uaicfw_match(0, 0, &a) == UMATCH_NONE);
