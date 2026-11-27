@@ -18,6 +18,10 @@ Use `always` or a local interval such as `23:00-03:00` for automatic restarts.
 The start script also checks manually staged trials when automatic updates
 are disabled.
 
+The client checks the time interval after it verifies the channel signature.
+If a channel is not yet valid, check the system clock and NTP synchronization.
+If the channel has expired and the clock is correct, the publisher must refresh it.
+
 Run `ember-update check` to refresh available updates. Run `ember-update apply`
 to prepare the selected packages and OS sets. On a two-slot device the
 default policy leaves the new slot ready for the next restart.

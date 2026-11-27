@@ -8,7 +8,7 @@ struct delivery {
 	struct snapshot_ref ref;
 	struct release release;
 };
-int eu_snapshot(struct delivery *, const char *, const char *, const char *);
+const char *eu_snapshot(struct delivery *, const char *, const char *, const char *);
 void eu_snapshot_free(struct delivery *);
 int eu_payload(const struct delivery *, const struct artifact *, const char *,
 	       unsigned char **, size_t *);

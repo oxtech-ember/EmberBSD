@@ -137,29 +137,32 @@ done:
 	return ok;
 }
 
-int
+const char *
 eu_snapshot(struct delivery *d, const char *base, const char *channel,
 	    const char *anchor)
 {
 	char url[8192];
 	unsigned char *buf = NULL;
 	size_t n;
-	int ok = -1;
+	const char *error = "cannot verify signed channel and release";
+	const char *channel_error;
 	memset(d, 0, sizeof(*d));
 	if (!valid_origin(base) || !eu_slug(channel) || strlen(channel) > 127 ||
-	    strlen(base) > 1024) {
-		errno = EINVAL;
-		return -1;
-	}
+	    strlen(base) > 1024)
+		return "invalid release origin or channel name";
 	d->base = strdup(base);
 	d->channel = strdup(channel);
 	if (!d->base || !d->channel)
 		goto done;
 	snprintf(url, sizeof(url), "%s/%s.p7m", base, channel);
 	if (receive(url, NULL, EU_MAX_CMS, NULL, &buf, &n) < 0 ||
-	    !(d->pointer = eu_cms_json(buf, n, anchor)) ||
-	    !eu_channel(d->pointer, channel, time(NULL), &d->ref))
+	    !(d->pointer = eu_cms_json(buf, n, anchor)))
 		goto done;
+	channel_error = eu_channel_error(d->pointer, channel, time(NULL), &d->ref);
+	if (channel_error != NULL) {
+		error = channel_error;
+		goto done;
+	}
 	free(buf);
 	buf = NULL;
 	snprintf(url, sizeof(url), "%s/%s", base, d->ref.path);
@@ -171,14 +174,12 @@ eu_snapshot(struct delivery *d, const char *base, const char *channel,
 	if (!d->metadata)
 		goto done;
 	*strrchr(d->metadata, '/') = 0;
-	ok = 0;
+	error = NULL;
 done:
 	free(buf);
-	if (ok) {
+	if (error != NULL)
 		eu_snapshot_free(d);
-		errno = EINVAL;
-	}
-	return ok;
+	return error;
 }
 
 void

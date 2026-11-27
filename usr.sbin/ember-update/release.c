@@ -209,8 +209,9 @@ release_cycle(const struct slots *s, const struct hardware *h,
 	trusted(ANCHOR, false);
 	checkpoint();
 	report("checking", NULL);
-	if (eu_snapshot(&d, ORIGIN, policy->channel, ANCHOR) < 0)
-		fail("cannot verify signed channel and release");
+	const char *error = eu_snapshot(&d, ORIGIN, policy->channel, ANCHOR);
+	if (error != NULL)
+		fail(error);
 	channel_floor(&d);
 	checkpoint();
 	if (!request && !h->single && policy->os && !h->custom) {

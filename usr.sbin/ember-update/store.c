@@ -200,8 +200,9 @@ store_catalog(void)
 		struct delivery d;
 		struct packages list;
 		trusted(ANCHOR, false);
-		if (eu_snapshot(&d, ORIGIN, policy.channel, ANCHOR) < 0)
-			errx(1, "cannot verify package catalog release");
+		const char *error = eu_snapshot(&d, ORIGIN, policy.channel, ANCHOR);
+		if (error != NULL)
+			errx(1, "%s", error);
 		if (compatible &&
 		    (d.ref.issued < int_field(cached, "issued_at") ||
 		     (d.ref.issued == int_field(cached, "issued_at") &&
