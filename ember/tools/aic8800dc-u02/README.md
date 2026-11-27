@@ -46,6 +46,22 @@ Missing files, changed bytes, and mixed releases cause a nonzero exit.
 This check establishes the identity of host files. Radio calibration and
 firmware readiness require separate observations on the device.
 
+## How the factory station uses the files
+
+On USB DC U02, the normal station driver loads the WLAN patch and configures
+its tables before starting the FullMAC stack. Both factory drivers use
+`CONFIG_DPD` and `CONFIG_FORCE_DPD_CALIB`. The latter still permits reuse.
+The driver first checks the digital predistortion (DPD) result in radio RAM.
+It reuses a valid result. Otherwise it loads `fmacfw_calib_8800dc_u02.bin`
+and runs calibration on that radio. The file contains a calibration program.
+The resulting coefficients belong to the individual radio.
+
+In these two modules, only RF test mode calls `aicwf_dpd_result_apply_8800dc`.
+The normal station path has no DPD result file to install. The later
+`MM_SET_RF_CALIB` request is a separate operation after stack start.
+When comparing drivers, check the early DPD path separately from this request.
+[Factory startup](https://github.com/EliSofke/LuckfoxLyraSDK/blob/6dcbca0d8a517d79bd8fb4205ca4966b136604bc/external/rkwifibt/drivers/aic8800/aic8800/aic8800_fdrv/rwnx_platform.c#L1630-L1653) ·
+[DPD check and calibration](https://github.com/EliSofke/LuckfoxLyraSDK/blob/6dcbca0d8a517d79bd8fb4205ca4966b136604bc/external/rkwifibt/drivers/aic8800/aic8800/aic8800_fdrv/aicwf_compat_8800dc.c#L2445-L2537)
 
 ## License
 
