@@ -137,6 +137,8 @@ void	rtw89_nb_detach(struct rtw89_nb *);
 void	rtw89_nb_get_macaddr(struct rtw89_nb *, uint8_t *);
 int	rtw89_nb_start(struct rtw89_nb *, const uint8_t *);
 void	rtw89_nb_stop(struct rtw89_nb *);
+int	rtw89_nb_suspend(struct rtw89_nb *);
+int	rtw89_nb_resume(struct rtw89_nb *);
 int	rtw89_nb_set_channel(struct rtw89_nb *, unsigned int, unsigned int);
 void	rtw89_nb_scan_start(struct rtw89_nb *);
 void	rtw89_nb_scan_end(struct rtw89_nb *);

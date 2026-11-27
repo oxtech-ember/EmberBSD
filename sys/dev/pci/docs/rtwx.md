@@ -313,8 +313,9 @@ API emulation, to separate inherited findings from port findings.
 - Clang found a NULL dereference in `rtw89_queue_work()` when the system
   work queue does not exist. This is fixed.
 - Cppcheck and Clang reported a NULL `dev_get_drvdata()` result in the
-  unused Linux suspend and resume handlers. The handlers are not built on
-  NetBSD.
+  Linux suspend and resume handlers. Those wrappers are not built on
+  NetBSD; the PMF handlers call the shared `rtw89_pci_suspend_hw()` and
+  `rtw89_pci_resume_hw()` directly.
 - Two Cppcheck `%zu`/`%zx` reports in the glue are false positives: the
   arguments are `size_t`. Inline suppressions name the reason.
 - Cppcheck reports one cast in the NetBSD header `sys/pslist.h`. It is
@@ -323,6 +324,30 @@ API emulation, to separate inherited findings from port findings.
 No executable host contract exists for the driver yet, so no Valgrind
 or sanitizer run applies. The physical checks above are the only runtime
 evidence.
+
+## Power management
+
+`rtwx` registers PMF suspend and resume handlers. The network class stop
+runs first and stops the MAC; a suspend while the interface still runs is
+refused. The suspend handler joins the interrupt and NAPI handlers, drains
+the last firmware notifications and writes the Linux PCI suspend sequence
+(`rtw89_pci_suspend_hw()`). The resume handler checks the PCI identity,
+writes the resume sequence and allows the next start. A start before a
+successful resume returns `EIO`.
+
+Stop closes SER recovery (`rtw89_ser_pause()`): it cancels the handler
+and alarm work and drops queued events, so a stop during L1 recovery
+cannot leave firmware in `SER_HANDLING`. The next start clears the SER
+state (`rtw89_ser_resume()`). Core stop uses its own `CORE_STARTED` flag,
+because SER clears `RUNNING`. The PCI start restores the normal interrupt
+mask before it enables interrupts, and recovery does not enable the
+interrupts of a stopped device.
+
+`ember/tests/rtwx-pmf.py` runs the actual registration through the shared
+network PMF lifecycle. On a QBOOK15 laptop, ten `drvctl -S rtwx0` and
+`drvctl -Q rtwx0` cycles returned success; each time the station joined
+the AP again, ping passed again after 16 s, and TCP over Wi-Fi moved
+85-94 Mbit/s. A system sleep (ACPI S3) with this driver is not tested.
 
 ## Link recovery regression
 

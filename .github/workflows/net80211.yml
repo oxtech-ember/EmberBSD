@@ -26,6 +26,7 @@ name: Native net80211 crypto, scan, aggregation and WME contracts
       - 'ember/tools/bsd-sae-contract.*'
       - 'ember/tools/rtw89-link-loss-contract.*'
       - 'ember/tests/rtwx-watchdog.*'
+      - 'ember/tests/rtwx-pmf.*'
       - 'sys/dev/pci/rtw89/if_rtw89.c'
       - 'ember/tools/aicwf-vht-test.c'
       - 'ember/tools/aicwf-sta-contract.c'
@@ -97,6 +98,7 @@ name: Native net80211 crypto, scan, aggregation and WME contracts
       - 'ember/tools/bsd-sae-contract.*'
       - 'ember/tools/rtw89-link-loss-contract.*'
       - 'ember/tests/rtwx-watchdog.*'
+      - 'ember/tests/rtwx-pmf.*'
       - 'sys/dev/pci/rtw89/if_rtw89.c'
       - 'ember/tools/aicwf-vht-test.c'
       - 'ember/tools/aicwf-sta-contract.c'
@@ -188,7 +190,9 @@ jobs:
             /ember/tools/bsd-sae-contract.*
             /ember/tools/rtw89-link-loss-contract.*
             /ember/tests/rtwx-watchdog.*
+            /ember/tests/rtwx-pmf.*
             /sys/dev/pci/rtw89/if_rtw89.c
+            /sys/kern/kern_pmf.c
             /ember/tools/aicwf-vht-test.c
             /ember/tools/aicwf-sta-contract.c
             /ember/tools/bwfm-sta-contract.c
@@ -299,6 +303,7 @@ jobs:
           python3 sys/net80211/tests/sta-soft.py --cc gcc --build-dir "$RUNNER_TEMP/sta-soft"
           python3 sys/net80211/tests/scan-abort.py --cc gcc --build-dir "$RUNNER_TEMP/scan-abort"
           CC=gcc python3 ember/tests/rtwx-watchdog.py . "$RUNNER_TEMP/rtwx-watchdog"
+          CC=gcc python3 ember/tests/rtwx-pmf.py . "$RUNNER_TEMP/rtwx-pmf"
           python3 ember/tools/rtw89-link-loss-contract.py --source-root "$PWD" \
             --work-dir "$RUNNER_TEMP/rtw89-link-loss" --cc "$(command -v gcc)"
       - name: Analyze unoptimized actual source paths

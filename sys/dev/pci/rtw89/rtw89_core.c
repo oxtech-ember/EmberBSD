@@ -3564,6 +3564,7 @@ int rtw89_core_start(struct rtw89_dev *rtwdev)
 	ieee80211_queue_delayed_work(rtwdev->hw, &rtwdev->track_work,
 				     RTW89_TRACK_WORK_PERIOD);
 
+	set_bit(RTW89_FLAG_CORE_STARTED, rtwdev->flags);
 	set_bit(RTW89_FLAG_RUNNING, rtwdev->flags);
 
 	rtw89_btc_ntfy_radio_state(rtwdev, BTC_RFCTRL_WL_ON);
@@ -3577,8 +3578,7 @@ void rtw89_core_stop(struct rtw89_dev *rtwdev)
 {
 	struct rtw89_btc *btc = &rtwdev->btc;
 
-	/* Prvent to stop twice; enter_ips and ops_stop */
-	if (!test_bit(RTW89_FLAG_RUNNING, rtwdev->flags))
+	if (!test_and_clear_bit(RTW89_FLAG_CORE_STARTED, rtwdev->flags))
 		return;
 
 	rtw89_btc_ntfy_radio_state(rtwdev, BTC_RFCTRL_WL_OFF);

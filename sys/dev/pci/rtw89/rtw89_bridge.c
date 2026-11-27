@@ -44,6 +44,8 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #include "core.h"
 #include "debug.h"
 #include "mac.h"
+#include "pci.h"
+#include "ser.h"
 #include "txrx.h"
 #include "rtw89_nb.h"
 
@@ -69,6 +71,9 @@ struct rtw89_nb {
 	bool			 started;
 	bool			 vif_added;
 	bool			 tx_quiet;
+	/* PMF: hardware suspended, or a failed suspend left it unusable. */
+	bool			 pmf_suspended;
+	bool			 pmf_unready;
 	/* EDCA from net80211, applied by wme_work in thread context. */
 	struct work_struct	 wme_work;
 	spinlock_t		 wme_lock;
@@ -674,6 +679,9 @@ rtw89_nb_start(struct rtw89_nb *nb, const uint8_t *addr)
 	struct ieee80211_hw *hw = nb->hw;
 	int ret;
 
+	/* Class stop drains native state work before PMF changes this gate. */
+	if (nb->pmf_suspended || nb->pmf_unready)
+		return EIO;
 	if (nb->started)
 		return 0;
 	if (nb->vif == NULL) {
@@ -692,13 +700,17 @@ rtw89_nb_start(struct rtw89_nb *nb, const uint8_t *addr)
 	nb->sta_state = IEEE80211_STA_NOTEXIST;
 	hw->conf.flags = 0;
 
+	rtw89_ser_resume(nb_to_rtwdev(nb));
 	ret = hw->ops->start(hw);
-	if (ret)
+	if (ret) {
+		rtw89_ser_pause(nb_to_rtwdev(nb));
 		return -ret;
+	}
 	nb->started = true;
 
 	ret = hw->ops->add_interface(hw, nb->vif);
 	if (ret) {
+		rtw89_ser_pause(nb_to_rtwdev(nb));
 		hw->ops->stop(hw);
 		nb->started = false;
 		return -ret;
@@ -712,11 +724,52 @@ rtw89_nb_start(struct rtw89_nb *nb, const uint8_t *addr)
 	return 0;
 }
 
+int
+rtw89_nb_suspend(struct rtw89_nb *nb)
+{
+	int ret;
+
+	if (nb->started)
+		return EBUSY;
+	if (nb->pmf_suspended)
+		return 0;
+	nb->pmf_unready = true;
+	/* IRQ and NAPI have stopped. Drain their last queued C2H notifications. */
+	flush_workqueue(nb->wq);
+	ret = rtw89_pci_suspend_hw(nb_to_rtwdev(nb));
+	if (ret) {
+		/* A failed PMF suspend does not receive a driver resume callback. */
+		if (rtw89_pci_resume_hw(nb_to_rtwdev(nb)) == 0)
+			nb->pmf_unready = false;
+		return ret < 0 ? -ret : ret;
+	}
+	nb->pmf_suspended = true;
+	return 0;
+}
+
+int
+rtw89_nb_resume(struct rtw89_nb *nb)
+{
+	int ret;
+
+	if (!nb->pmf_suspended && !nb->pmf_unready)
+		return 0;
+	ret = rtw89_pci_resume_hw(nb_to_rtwdev(nb));
+	if (ret)
+		return ret < 0 ? -ret : ret;
+	nb->pmf_suspended = false;
+	nb->pmf_unready = false;
+	return 0;
+}
+
 void
 rtw89_nb_stop(struct rtw89_nb *nb)
 {
 	struct ieee80211_hw *hw = nb->hw;
 
+	/* Recovery must finish before core stop can shut down the MAC. */
+	rtw89_ser_pause(nb_to_rtwdev(nb));
+	cancel_work_sync(&nb_to_rtwdev(nb)->ips_work);
 	if (!nb->started)
 		return;
 	spin_lock(&nb->wme_lock);

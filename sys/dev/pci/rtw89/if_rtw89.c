@@ -58,6 +58,7 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #include <sys/sysctl.h>
 #include <sys/systm.h>
 #include <sys/workqueue.h>
+#include <sys/xcall.h>
 
 #include <net/bpf.h>
 #include <net/if.h>
@@ -153,6 +154,8 @@ static int	rtw89_match(device_t, cfdata_t, void *);
 static void	rtw89_attach(device_t, device_t, void *);
 static int	rtw89_detach(device_t, int);
 static void	rtw89_attach_hook(device_t);
+static bool	rtw89_suspend(device_t, const pmf_qual_t *);
+static bool	rtw89_resume(device_t, const pmf_qual_t *);
 
 static int	rtw89_init(struct ifnet *);
 static void	rtw89_stop(struct ifnet *, int);
@@ -418,10 +421,50 @@ rtw89_attach_hook(device_t self)
 	    sc->sc_nss == 2 ? 15 : 7, sc->sc_nss);
 
 	aprint_normal_dev(self, "address %s\n", ether_sprintf(ic->ic_myaddr));
-	if (pmf_device_register(self, NULL, NULL))
+	if (pmf_device_register(self, rtw89_suspend, rtw89_resume))
 		pmf_class_network_register(self, ifp);
 	else
 		aprint_error_dev(self, "couldn't establish power handler\n");
+}
+
+static bool
+rtw89_suspend(device_t self, const pmf_qual_t *qual)
+{
+	struct rtw89_softc *sc = device_private(self);
+	struct ifnet *ifp = &sc->sc_ec.ec_if;
+	int error;
+
+	IFNET_LOCK(ifp);
+	if (sc->sc_running) {
+		IFNET_UNLOCK(ifp);
+		return false;
+	}
+	/* Class stop disables IRQ/NAPI. Join handlers before PCI power changes. */
+	xc_barrier(XC_HIGHPRI_IPL(IPL_SOFTNET));
+	error = rtw89_nb_suspend(sc->sc_nb);
+	IFNET_UNLOCK(ifp);
+	return error == 0;
+}
+
+static bool
+rtw89_resume(device_t self, const pmf_qual_t *qual)
+{
+	struct rtw89_softc *sc = device_private(self);
+	struct ifnet *ifp = &sc->sc_ec.ec_if;
+	pcireg_t identity;
+	int error;
+
+	IFNET_LOCK(ifp);
+	/* The PCI parent has restored configuration access before this callback. */
+	identity = pci_conf_read(sc->sc_pc, sc->sc_tag, PCI_ID_REG);
+	if (PCI_VENDOR(identity) != RTW89_PCI_VENDOR ||
+	    PCI_PRODUCT(identity) != sc->sc_product) {
+		IFNET_UNLOCK(ifp);
+		return false;
+	}
+	error = rtw89_nb_resume(sc->sc_nb);
+	IFNET_UNLOCK(ifp);
+	return error == 0;
 }
 
 static int

@@ -24,8 +24,13 @@ struct ifnet {
 static bool registration_ok = true, locked;
 static unsigned stops, starts, kicks, diagnostics;
 static int init_error;
-static bool pmf_device_register(device_t dev, void *suspend, void *resume) {
-    (void)dev; assert(suspend == NULL && resume == NULL);
+/* The PCI PMF test covers these driver callbacks separately. */
+static bool rtw89_suspend(device_t dev, const pmf_qual_t *qual) { return true; }
+static bool rtw89_resume(device_t dev, const pmf_qual_t *qual) { return true; }
+static bool pmf_device_register(device_t dev,
+    bool (*suspend)(device_t,const pmf_qual_t *),
+    bool (*resume)(device_t,const pmf_qual_t *)) {
+    (void)dev; (void)suspend; (void)resume;
     return registration_ok;
 }
 #define aprint_error_dev(...) (++diagnostics)

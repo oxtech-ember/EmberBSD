@@ -218,10 +218,15 @@ static int ser_send_msg(struct rtw89_ser *ser, u8 event)
 	msg->event = event;
 
 	spin_lock_irq(&ser->msg_q_lock);
+	if (test_bit(RTW89_SER_DRV_STOP_RUN, ser->flags)) {
+		spin_unlock_irq(&ser->msg_q_lock);
+		kfree(msg);
+		return -EIO;
+	}
 	list_add(&msg->list, &ser->msg_q);
-	spin_unlock_irq(&ser->msg_q_lock);
-
+	/* Serialize the final queue operation with the stop gate. */
 	ieee80211_queue_work(rtwdev->hw, &ser->ser_hdl_work);
+	spin_unlock_irq(&ser->msg_q_lock);
 	return 0;
 }
 
@@ -238,12 +243,16 @@ static void ser_set_alarm(struct rtw89_ser *ser, u32 ms, u8 event)
 {
 	struct rtw89_dev *rtwdev = container_of(ser, struct rtw89_dev, ser);
 
-	if (test_bit(RTW89_SER_DRV_STOP_RUN, ser->flags))
+	spin_lock_irq(&ser->msg_q_lock);
+	if (test_bit(RTW89_SER_DRV_STOP_RUN, ser->flags)) {
+		spin_unlock_irq(&ser->msg_q_lock);
 		return;
+	}
 
 	ser->alarm_event = event;
 	ieee80211_queue_delayed_work(rtwdev->hw, &ser->ser_alarm_work,
 				     msecs_to_jiffies(ms));
+	spin_unlock_irq(&ser->msg_q_lock);
 }
 
 static void ser_del_alarm(struct rtw89_ser *ser)
@@ -739,14 +748,39 @@ int rtw89_ser_init(struct rtw89_dev *rtwdev)
 	return 0;
 }
 
-int rtw89_ser_deinit(struct rtw89_dev *rtwdev)
+void rtw89_ser_pause(struct rtw89_dev *rtwdev)
 {
-	struct rtw89_ser *ser = (struct rtw89_ser *)&rtwdev->ser;
+	struct rtw89_ser *ser = &rtwdev->ser;
+	struct ser_msg *msg;
 
+	spin_lock_irq(&ser->msg_q_lock);
 	set_bit(RTW89_SER_DRV_STOP_RUN, ser->flags);
+	spin_unlock_irq(&ser->msg_q_lock);
 	cancel_delayed_work_sync(&ser->ser_alarm_work);
 	cancel_work_sync(&ser->ser_hdl_work);
+	while ((msg = __rtw89_ser_dequeue_msg(ser)))
+		kfree(msg);
+	/* Keep the gate closed until a new, powered start rearms recovery. */
+	ser->state = SER_IDLE_ST;
+	ser->alarm_event = SER_EV_NONE;
+	ser->prehandle_l1 = false;
+}
+
+void rtw89_ser_resume(struct rtw89_dev *rtwdev)
+{
+	struct rtw89_ser *ser = &rtwdev->ser;
+
+	spin_lock_irq(&ser->msg_q_lock);
+	clear_bit(RTW89_FLAG_SER_HANDLING, rtwdev->flags);
+	clear_bit(RTW89_FLAG_CRASH_SIMULATING, rtwdev->flags);
+	bitmap_zero(ser->flags, RTW89_NUM_OF_SER_FLAGS);
 	clear_bit(RTW89_SER_DRV_STOP_RUN, ser->flags);
+	spin_unlock_irq(&ser->msg_q_lock);
+}
+
+int rtw89_ser_deinit(struct rtw89_dev *rtwdev)
+{
+	rtw89_ser_pause(rtwdev);
 	return 0;
 }
 

@@ -8,6 +8,8 @@
 
 int rtw89_ser_init(struct rtw89_dev *rtwdev);
 int rtw89_ser_deinit(struct rtw89_dev *rtwdev);
+void rtw89_ser_pause(struct rtw89_dev *rtwdev);
+void rtw89_ser_resume(struct rtw89_dev *rtwdev);
 int rtw89_ser_notify(struct rtw89_dev *rtwdev, u32 err);
 void rtw89_ser_recfg_done(struct rtw89_dev *rtwdev);
 

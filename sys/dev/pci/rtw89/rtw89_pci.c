@@ -729,9 +729,11 @@ static void rtw89_pci_ops_recovery_start(struct rtw89_dev *rtwdev)
 	unsigned long flags;
 
 	spin_lock_irqsave(&rtwpci->irq_lock, flags);
-	rtw89_chip_disable_intr(rtwdev, rtwpci);
+	if (rtwpci->running)
+		rtw89_chip_disable_intr(rtwdev, rtwpci);
 	rtw89_chip_config_intr_mask(rtwdev, RTW89_PCI_INTR_MASK_RECOVERY_START);
-	rtw89_chip_enable_intr(rtwdev, rtwpci);
+	if (rtwpci->running)
+		rtw89_chip_enable_intr(rtwdev, rtwpci);
 	spin_unlock_irqrestore(&rtwpci->irq_lock, flags);
 }
 
@@ -741,9 +743,11 @@ static void rtw89_pci_ops_recovery_complete(struct rtw89_dev *rtwdev)
 	unsigned long flags;
 
 	spin_lock_irqsave(&rtwpci->irq_lock, flags);
-	rtw89_chip_disable_intr(rtwdev, rtwpci);
+	if (rtwpci->running)
+		rtw89_chip_disable_intr(rtwdev, rtwpci);
 	rtw89_chip_config_intr_mask(rtwdev, RTW89_PCI_INTR_MASK_RECOVERY_COMPLETE);
-	rtw89_chip_enable_intr(rtwdev, rtwpci);
+	if (rtwpci->running)
+		rtw89_chip_enable_intr(rtwdev, rtwpci);
 	spin_unlock_irqrestore(&rtwpci->irq_lock, flags);
 }
 
@@ -767,6 +771,11 @@ static irqreturn_t rtw89_pci_interrupt_threadfn(int irq, void *dev)
 	unsigned long flags;
 
 	spin_lock_irqsave(&rtwpci->irq_lock, flags);
+	/* A queued thread can run after stop has disabled the device. */
+	if (unlikely(!rtwpci->running)) {
+		spin_unlock_irqrestore(&rtwpci->irq_lock, flags);
+		return IRQ_HANDLED;
+	}
 	rtw89_chip_recognize_intrs(rtwdev, rtwpci, &isrs);
 	spin_unlock_irqrestore(&rtwpci->irq_lock, flags);
 
@@ -1528,8 +1537,15 @@ static void rtw89_pci_disable_intr_lock(struct rtw89_dev *rtwdev)
 
 static int rtw89_pci_ops_start(struct rtw89_dev *rtwdev)
 {
+	struct rtw89_pci *rtwpci = (struct rtw89_pci *)rtwdev->priv;
+	unsigned long flags;
+
 	rtw89_core_napi_start(rtwdev);
-	rtw89_pci_enable_intr_lock(rtwdev);
+	spin_lock_irqsave(&rtwpci->irq_lock, flags);
+	rtw89_chip_config_intr_mask(rtwdev, RTW89_PCI_INTR_MASK_RESET);
+	rtwpci->running = true;
+	rtw89_chip_enable_intr(rtwdev, rtwpci);
+	spin_unlock_irqrestore(&rtwpci->irq_lock, flags);
 
 	return 0;
 }
@@ -3737,12 +3753,8 @@ static int rtw89_pci_napi_poll(struct napi_struct *napi, int budget)
 	return work_done;
 }
 
-#ifndef __NetBSD__
-/* Linux power management; NetBSD has no suspend support in this driver. */
-static int __maybe_unused rtw89_pci_suspend(struct device *dev)
+int rtw89_pci_suspend_hw(struct rtw89_dev *rtwdev)
 {
-	struct ieee80211_hw *hw = dev_get_drvdata(dev);
-	struct rtw89_dev *rtwdev = hw->priv;
 	enum rtw89_core_chip_id chip_id = rtwdev->chip->chip_id;
 
 	rtw89_write32_set(rtwdev, R_AX_RSV_CTRL, B_AX_WLOCK_1C_BIT6);
@@ -3761,23 +3773,26 @@ static int __maybe_unused rtw89_pci_suspend(struct device *dev)
 	return 0;
 }
 
-static void rtw89_pci_l2_hci_ldo(struct rtw89_dev *rtwdev)
+static int rtw89_pci_l2_hci_ldo(struct rtw89_dev *rtwdev)
 {
+	int ret;
+
 	if (rtwdev->chip->chip_id == RTL8852C)
-		return;
+		return 0;
 
 	/* Hardware need write the reg twice to ensure the setting work */
-	rtw89_pci_write_config_byte(rtwdev, RTW89_PCIE_RST_MSTATE,
-				    RTW89_PCIE_BIT_CFG_RST_MSTATE);
-	rtw89_pci_write_config_byte(rtwdev, RTW89_PCIE_RST_MSTATE,
-				    RTW89_PCIE_BIT_CFG_RST_MSTATE);
+	ret = rtw89_pci_write_config_byte(rtwdev, RTW89_PCIE_RST_MSTATE,
+					RTW89_PCIE_BIT_CFG_RST_MSTATE);
+	if (ret)
+		return ret;
+	return rtw89_pci_write_config_byte(rtwdev, RTW89_PCIE_RST_MSTATE,
+					   RTW89_PCIE_BIT_CFG_RST_MSTATE);
 }
 
-static int __maybe_unused rtw89_pci_resume(struct device *dev)
+int rtw89_pci_resume_hw(struct rtw89_dev *rtwdev)
 {
-	struct ieee80211_hw *hw = dev_get_drvdata(dev);
-	struct rtw89_dev *rtwdev = hw->priv;
 	enum rtw89_core_chip_id chip_id = rtwdev->chip->chip_id;
+	int ret;
 
 	rtw89_write32_set(rtwdev, R_AX_RSV_CTRL, B_AX_WLOCK_1C_BIT6);
 	rtw89_write32_clr(rtwdev, R_AX_RSV_CTRL, B_AX_R_DIS_PRST);
@@ -3793,12 +3808,31 @@ static int __maybe_unused rtw89_pci_resume(struct device *dev)
 		rtw89_write32_clr(rtwdev, R_AX_PCIE_PS_CTRL_V1,
 				  B_AX_SEL_REQ_ENTR_L1);
 	}
-	rtw89_pci_l2_hci_ldo(rtwdev);
-	rtw89_pci_filter_out(rtwdev);
+	ret = rtw89_pci_l2_hci_ldo(rtwdev);
+	if (ret)
+		return ret;
+	ret = rtw89_pci_filter_out(rtwdev);
+	if (ret)
+		return ret;
 	rtw89_pci_link_cfg(rtwdev);
 	rtw89_pci_l1ss_cfg(rtwdev);
 
 	return 0;
+}
+
+#ifndef __NetBSD__
+static int __maybe_unused rtw89_pci_suspend(struct device *dev)
+{
+	struct ieee80211_hw *hw = dev_get_drvdata(dev);
+
+	return rtw89_pci_suspend_hw(hw->priv);
+}
+
+static int __maybe_unused rtw89_pci_resume(struct device *dev)
+{
+	struct ieee80211_hw *hw = dev_get_drvdata(dev);
+
+	return rtw89_pci_resume_hw(hw->priv);
 }
 
 #endif /* !__NetBSD__ */

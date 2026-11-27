@@ -7,6 +7,9 @@
 
 #include "txrx.h"
 
+int rtw89_pci_suspend_hw(struct rtw89_dev *);
+int rtw89_pci_resume_hw(struct rtw89_dev *);
+
 #define MDIO_PG0_G1 0
 #define MDIO_PG1_G1 1
 #define MDIO_PG0_G2 2
