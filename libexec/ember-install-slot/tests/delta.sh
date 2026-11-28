@@ -4,6 +4,7 @@
 set -eu
 tool=$(realpath "$1")
 parent=$2
+stage=$(realpath "${3:-$(dirname "$0")/../stage-ffs}")
 work=$(mktemp -d "$parent/delta.XXXXXXXX")
 nested=
 cleanup()
@@ -69,9 +70,14 @@ if setextattr -q user note original "$src/attributes" 2>/dev/null; then
 else
 	rm "$src/attributes" "$dst/attributes"
 fi
+mkdir -p "$src/app/tmp" "$src/app/var/run" "$src/var/run" "$src/var/db/ember-update/incoming"
+echo installed >"$src/app/tmp/required"
+echo configured >"$src/app/var/run/site"
+echo excluded >"$src/var/run/volatile"
+echo excluded >"$src/var/db/ember-update/incoming/stale"
 mkdir "$src/tmp/user" "$dst/tmp/old"
 echo cached >"$dst/tmp/old/unused"
-(cd "$src" && find -x . -path './tmp/?*' -prune -o -print0) >"$work/all"
+"$stage" snapshot-paths "$src" >"$work/all"
 "$tool" "$src" "$dst" <"$work/all" >"$work/changed" 2>"$work/stats"
 cat "$work/stats"
 tr '\0' '\n' <"$work/changed" | grep -Fxq './sparse'
@@ -99,8 +105,16 @@ break" "$dst/line
 break"
 test ! -e "$dst/stale" && test -d "$dst/tmp" && test -z "$(ls -A "$dst/tmp")"
 mkdir "$work/reference"
-(cd "$src" && tar --one-file-system -cpf "$work/reference.tar" --exclude './tmp/?*' .)
+(cd "$src" && tar --one-file-system -cpf "$work/reference.tar" --null --no-recursion -T "$work/all")
 (cd "$work/reference" && tar -xpf "$work/reference.tar")
+for t in "$work/reference" "$dst"; do
+	test "$(cat "$t/app/tmp/required")" = installed
+	test "$(cat "$t/app/var/run/site")" = configured
+	test -d "$t/var/run" && test ! -e "$t/var/run/volatile"
+	test ! -e "$t/var/db/ember-update/incoming"
+	test "$(stat -f %i "$t/hard1")" = "$(stat -f %i "$t/hard2")"
+	cmp "$src/sparse" "$t/sparse"
+done
 for t in "$work/reference" "$dst"; do
 	(cd "$t" && mtree -c -n -k type,uid,gid,mode,flags,nlink,size,link,sha256) >"$t.mtree"
 done

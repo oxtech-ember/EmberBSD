@@ -53,6 +53,23 @@ if [ "$1" = obsolete-base ]; then
 	exit $?
 fi
 
+# Print literal snapshot paths in traversal order. Keep empty mount points.
+if [ "$1" = snapshot-paths ]; then
+	[ "$#" -eq 2 ] || exit 2
+	cd "$2"
+	export LC_ALL=C
+	exec find -sx . \( \
+	    -path './boot/?*' -o -path './tmp/?*' -o -path './proc/?*' -o \
+	    -path './dev/pts/?*' -o -path './var/tmp/?*' -o -path './var/run/?*' -o \
+	    -path './var/cache/?*' -o -path './var/shm/?*' -o \
+	    -path './var/db/ember-update/incoming' -o -path './var/db/ember-os-update/incoming' -o \
+	    -path './var/db/ember-os-update/attempt.json' -o -path './var/db/ember-update/attempt.json' -o \
+	    -path './var/db/emberbsd-sdk/client.lock' \) -prune -o -print0
+fi
+
+[ "$#" -eq 6 ] || exit 2
+case "$3:$4" in packages:prepare|full:prepare|full:prepare-kernel) ;; *) exit 2 ;; esac
+case "$5" in A|B) ;; *) exit 2 ;; esac
 work=$1
 device=$2
 method=$3
@@ -83,32 +100,9 @@ fssconfig -x "$fstdev" / "$work/backing"
 fst=$fstdev
 mount -r -t ffs "/dev/$fst" "$snap"
 snap_mounted=yes
-# Keep these directories as empty mount points. Omit temporary update state.
-cat >"$work/excludes" <<'EOF'
-./boot/?*
-./tmp/?*
-./proc/?*
-./dev/pts/?*
-./var/tmp/?*
-./var/run/?*
-./var/cache/?*
-./var/shm/?*
-./var/db/ember-update/incoming
-./var/db/ember-os-update/incoming
-./var/db/ember-os-update/attempt.json
-./var/db/ember-update/attempt.json
-./var/db/emberbsd-sdk/client.lock
-EOF
-snapshot_paths()
-{
-	set --
-	while IFS= read -r pattern; do set -- "$@" -path "$pattern" -o; done <"$work/excludes"
-	(cd "$snap" && find -x . \( "$@" -false \) -prune -o -print0)
-}
-
 copy_tree()
 {
-	(cd "$snap" && exec tar --one-file-system -cpf - "$@") >"$work/tree" &
+	(cd "$snap" && exec tar --one-file-system -cpf - --null --no-recursion -T "$1") >"$work/tree" &
 	writer=$!
 	ok=0
 	if ! tar -xpf "$work/tree" -C "$root"; then
@@ -120,15 +114,15 @@ copy_tree()
 	return "$ok"
 }
 
+"$0" snapshot-paths "$snap" >"$work/paths"
 mkfifo "$work/tree"
 raw=/dev/r${device##*/}
 copied=
 if [ "$method" = packages ] && fsck_ffs -n "$raw" &&
     mount -t ffs -o async,noatime "$device" "$root"; then
 	target_mounted=yes
-	snapshot_paths >"$work/paths"
 	if /usr/libexec/ember-install-slot delta "$2" "$work" <"$work/paths" >"$work/changed"; then
-		if copy_tree --null --no-recursion -T "$work/changed"; then copied=yes; fi
+		if copy_tree "$work/changed"; then copied=yes; fi
 	else
 		rc=$?
 		[ "$rc" -eq 3 ] || exit "$rc"
@@ -143,7 +137,7 @@ if [ -z "$copied" ]; then
 	newfs -O 1 "$raw"
 	mount -t ffs -o async,noatime "$device" "$root"
 	target_mounted=yes
-	copy_tree -X "$work/excludes" .
+	copy_tree "$work/paths"
 fi
 umount "$snap"
 snap_mounted=
