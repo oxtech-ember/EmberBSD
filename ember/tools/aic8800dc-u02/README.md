@@ -98,6 +98,29 @@ When comparing drivers, check the early DPD path separately from this request.
 [Factory startup](https://github.com/EliSofke/LuckfoxLyraSDK/blob/6dcbca0d8a517d79bd8fb4205ca4966b136604bc/external/rkwifibt/drivers/aic8800/aic8800/aic8800_fdrv/rwnx_platform.c#L1630-L1653) ·
 [DPD check and calibration](https://github.com/EliSofke/LuckfoxLyraSDK/blob/6dcbca0d8a517d79bd8fb4205ca4966b136604bc/external/rkwifibt/drivers/aic8800/aic8800/aic8800_fdrv/aicwf_compat_8800dc.c#L2445-L2537)
 
+## Compare USB station drivers
+
+The USB driver in the UGREEN V1.6 tree assigns 88dc to the FullMAC driver.
+Its station initialization loads the WLAN patch, applies its configuration
+and calls early DPD calibration. The WLAN patch, patch table and calibration
+program in that tree match the Luckfox 261020 files byte for byte.
+Both text configuration files differ. Keep the files from one verified kit.
+[USB binding](https://github.com/oliveagle/ugreen_aic880dc_wifi_usb/blob/691a41d1c3ca80e44bd35f0fe33f2cdc2f1f5f72/drivers/aic8800/aic_load_fw/aicwf_usb.c#L1855-L1866) ·
+[Station initialization](https://github.com/oliveagle/ugreen_aic880dc_wifi_usb/blob/691a41d1c3ca80e44bd35f0fe33f2cdc2f1f5f72/drivers/aic8800/aic8800_fdrv/rwnx_platform.c#L1605-L1627)
+
+The Lyra Ultra W Yocto recipe selects a separate Linux driver revision.
+Its firmware directory also has the three matching 261020 binaries.
+The selected driver loads the patch and issues the later RF calibration
+request. Its source omits the early U02 DPD helper used on the Zero W.
+[Yocto recipe and driver revision](https://github.com/OOHehir/luckfox-lyra-ultra-yocto/blob/b37253cb8c17ec4530235fe211ab806d8db177c5/meta-rockchip-rk3506/recipes-connectivity/aic8800dc/aic8800dc-wifi-bt_1.0.bb#L1-L18) ·
+[RF calibration in that revision](https://github.com/Kiborgik/aic8800dc-linux-patched/blob/ef97a943cde794131160f4591538297e3f5fe1a8/drivers/aic8800/aic8800_fdrv/aicwf_compat_8800dc.c#L1930-L1965)
+
+K230 RT-Smart implements the same early check for an existing DPD result.
+The host driver checks the DPD state in the radio again after calibration.
+If the result is still invalid, RT-Smart stops startup. Use the files that
+match the tested release and check that the station can scan and join.
+[RT-Smart DPD result checks](https://github.com/canmv-k230/rtsmart/blob/eae08a28e47b01c984ed0c4421e66358a7295de6/kernel/bsp/maix3/drivers/extdrv/aic8800/aic8800_firmware.c#L2929-L3007)
+
 ## License
 
 The EmberBSD host tools use the BSD-2-Clause license. The generated table
