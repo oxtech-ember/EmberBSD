@@ -57,6 +57,30 @@ reply. The factory driver samples the selector, then applies both clock
 settings. Clock frequency and completion of power setup require separate
 checks.
 
+### Configure the onboard clock and PMU
+
+On the Lyra Zero W, the onboard radio is on port 1 of the CH334F on
+RK3506 OTG1. The driver identifies the USB function, radio revision and
+FullMAC interface before setup. The supported cold state has chip 0x07,
+sub-ID 0x01, USB setup skipped, no CPU crystal, a zero clock selector and
+the extended PMU mask. Other initial conditions keep the passive path.
+
+For this state, the driver applies both factory clock settings in order,
+then the 15 masked settings from the non-H DCDC table. The two factory
+driver modules contain identical tables. The factory header defines each
+confirmation as two 32-bit words. The native driver checks both lengths,
+the echoed register and the selected settings. Three divider writes also
+set a DENOM_UPDATE bit. The driver checks the divider in the reply
+and accepts either value of the update request bit. The factory host driver checks
+the confirmation ID. Its boot log does not report the confirmation data.
+
+A failure stops attachment. The log identifies the step and reports
+length or echo errors. A missed confirmation leaves the effect of the
+last command unknown. Rebinding the onboard radio during that boot keeps
+it stopped. Completion confirms the command sequence. Supply voltage,
+PLL lock, WLAN patch loading, DPD and station operation need separate
+checks.
+
 ## How the factory station uses the files
 
 On USB DC U02, the normal station driver loads the WLAN patch and configures

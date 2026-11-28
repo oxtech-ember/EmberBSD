@@ -53,7 +53,26 @@ struct usbd_pipe {
 	unsigned addr;
 };
 
-struct usbd_device;
+typedef struct { uint16_t idVendor, idProduct, bcdDevice; } usb_device_descriptor_t;
+struct usbd_bus { struct usbd_device *ub_roothub; device_t ub_usbctl; };
+struct usbd_port { unsigned up_portno; };
+struct usbd_device {
+	struct usbd_device *ud_myhub;
+	struct usbd_bus *ud_bus;
+	struct usbd_port *ud_powersrc;
+	usb_device_descriptor_t desc;
+};
+static usb_device_descriptor_t *usbd_get_device_descriptor(struct usbd_device *d)
+{ return &d->desc; }
+#define DEVHANDLE_TYPE_OF 1
+static int device_parent(device_t d) { return d == 3 ? 2 : 0; }
+static int device_handle(device_t d) { return d; }
+static int devhandle_type(int h) { return h ? DEVHANDLE_TYPE_OF : 0; }
+static int devhandle_to_of(int h) { return h; }
+static unsigned atomic_cas_uint(unsigned *v, unsigned old, unsigned n)
+{ unsigned before = *v; if (before == old) *v = n; return before; }
+#define atomic_load_relaxed(v) (*(v))
+#define atomic_store_relaxed(v,n) (*(v) = (n))
 struct usb_task { void (*fn)(void *); void *arg; bool pending; };
 #define USB_TASKQ_MPSAFE 1
 #define USB_TASKQ_DRIVER 1
@@ -128,7 +147,13 @@ static const char *usbd_errstr(usbd_status status)
 static bool target_board;
 static int board_tree;
 static const void *fdtbus_get_data(void) { return &board_tree; }
-static int OF_finddevice(const char *name) { assert(strcmp(name, "/") == 0); return 1; }
+static int OF_finddevice(const char *name)
+{
+	if (strcmp(name, "/soc/usb@ff780000") == 0)
+		return 2;
+	assert(strcmp(name, "/") == 0);
+	return 1;
+}
 static bool of_compatible(int node, const char * const *boards)
 {
 	assert(node == 1 && strcmp(boards[0], "luckfox,lyra-zero-w") == 0);
@@ -140,12 +165,18 @@ static unsigned int chip_id = 7, sub_id = 1;
 static uint32_t features = 0xb011fa5f;
 static uint32_t chip_flags;
 static char condition_line[128];
+static unsigned power_confirmed;
 
 static void
 report(const char *fmt, ...)
 {
 	va_list ap;
 	va_start(ap, fmt);
+	if (strcmp(fmt, "clock/PMU sequence confirmed\n") == 0) {
+		power_confirmed++;
+		va_end(ap);
+		return;
+	}
 	if (strncmp(fmt, "factory", 7) == 0) {
 		vsnprintf(condition_line, sizeof(condition_line), fmt, ap);
 		condition_reports++;
@@ -298,6 +329,15 @@ static const uint32_t condition_fields[] = { 0x40200024, 0x40500148, 0x40505010,
 static uint32_t field_values[4];
 static unsigned current_field;
 static unsigned condition_reads, fail_at;
+static unsigned power_writes, power_fail_at;
+static uint32_t power_hash, power_reg, power_reply;
+static uint16_t power_cfm;
+static bool power_update_clear;
+static uint32_t power_value_error;
+enum power_fault { POWER_OK, POWER_TIMEOUT, POWER_LENGTH, POWER_ADDR,
+    POWER_VALUE, POWER_OUT_ERROR, POWER_TRAILING };
+static enum power_fault power_fault;
+static char power_error[128];
 enum condition_fault { CONDITION_OK, CONDITION_ECHO, CONDITION_LENGTH,
     CONDITION_TIMEOUT, CONDITION_OUT_STALL, CONDITION_PIPE, CONDITION_FW, CONDITION_FRAME,
     CONDITION_CLEAR_FAIL, CONDITION_OUT_IO, CONDITION_OUT_CANCEL,
@@ -313,6 +353,8 @@ report_error(const char *format, ...)
 	va_list args;
 	va_start(args, format);
 	vsnprintf(last_error, sizeof(last_error), format, args);
+	if (strncmp(last_error, "clock/PMU step ", 15) == 0)
+		snprintf(power_error, sizeof(power_error), "%s", last_error);
 	va_end(args);
 	errors++;
 }
@@ -485,6 +527,8 @@ emulate_transfer(struct usbd_xfer *x)
 		    16, 0, 0x11, 0, 0, 0, 0, 0, 0, 4, 1, 0, 100, 0, 4, 0};
 		static const uint8_t version_hdr[16] = {
 		    12, 0, 0x11, 0, 0, 0, 0, 0, 4, 0, 0, 0, 100, 0, 0, 0 };
+		const uint16_t cmd = le16dec(b + 8);
+		power_cfm = 0;
 		if (writes < 2) {
 			assert(x->len == 20 && memcmp(b, hdr, sizeof(hdr)) == 0);
 			requested = le32dec(b + 16);
@@ -523,8 +567,26 @@ emulate_transfer(struct usbd_xfer *x)
 				writes++;
 				return USBD_STALLED;
 			}
+		} else if (cmd == 0x0402 || cmd == 0x0411) {
+			power_writes++;
+			assert(condition_reads == 3 && power_writes <= 17);
+			const size_t param_len = power_writes <= 2 ? 8 : 12;
+			assert(cmd == (param_len == 8 ? 0x0402 : 0x0411));
+			assert(x->len == 16 + param_len && le16dec(b + 14) == param_len);
+			power_reg = le32dec(b + 16);
+			uint32_t mask = param_len == 8 ? UINT32_MAX : le32dec(b + 20);
+			power_reply = le32dec(b + x->len - 4) | ~mask;
+			if (power_update_clear && power_writes >= 5 && power_writes <= 7)
+				power_reply &= ~(power_writes == 5 ? 0x80U : 0x40U);
+			power_cfm = cmd + 1;
+			for (size_t j = 16; j < x->len; j++)
+				power_hash = (power_hash ^ b[j]) * UINT32_C(16777619);
+			if (power_writes == power_fail_at && power_fault == POWER_OUT_ERROR) {
+				writes++;
+				return USBD_IOERROR;
+			}
 		} else {
-			assert(writes == 3 + condition_reads && x->len == 20 &&
+			assert(writes == 3 + condition_reads + power_writes && x->len == 20 &&
 			    le16dec(b + 8) == AICWF_MM_GET_MAC_ADDR_REQ);
 			assert(b[16] == 1 && !b[17] && !b[18] && !b[19]);
 		}
@@ -556,6 +618,19 @@ emulate_transfer(struct usbd_xfer *x)
 		le16enc(b + 4, 0x1004);
 		b += 16;
 
+		if (power_cfm != 0) {
+			const bool fail = power_writes == power_fail_at;
+			const unsigned len = fail && power_fault == POWER_LENGTH ? 0 : 8;
+			const unsigned wire = len + (fail && power_fault == POWER_TRAILING ? 4 : 0);
+			le16enc(b, 12 + wire);
+			b[2] = AICWF_TYPE_MSG;
+			le16enc(b + 4, power_cfm);
+			le16enc(b + 10, len);
+			le32enc(b + 16, power_reg ^ (fail && power_fault == POWER_ADDR ? 4U : 0U));
+			le32enc(b + 20, power_reply ^ (fail && power_fault == POWER_VALUE ? power_value_error : 0U));
+			x->actual = 63 + 16 + 16 + wire;
+			return USBD_NORMAL_COMPLETION;
+		}
 		if (writes == 3) {
 			le16enc(b, 12 + 28);
 			b[2] = 0x11;
@@ -641,6 +716,8 @@ cv_timedwait(kcondvar_t *cv, kmutex_t *m, int ticks)
 		return 0; /* A different condition used this condition variable. */
 	}
 	assert(ticks == 500);
+	if (power_cfm && power_writes == power_fail_at && power_fault == POWER_TIMEOUT)
+		return EWOULDBLOCK;
 	if (condition_fault == CONDITION_TIMEOUT && condition_reads != 0 &&
 	    condition_reads == fail_at)
 		return EWOULDBLOCK;
@@ -783,7 +860,7 @@ static void
 survey_queue_checks(void)
 {
 	struct uaicfw_softc sc = { 0 };
-	struct uaicfw_request req = { AICWF_MM_ADD_IF_CFM, 2, USBD_IN_PROGRESS, false };
+	struct uaicfw_request req = { AICWF_MM_ADD_IF_CFM, 2, USBD_IN_PROGRESS, false, NULL };
 	uint8_t records[240] = { 0 };
 	uint8_t first[UAICFW_RX_SIZE];
 	uint8_t rest[24];
@@ -1242,6 +1319,117 @@ condition_checks(struct usbif_attach_arg *a)
 	target_board = false;
 }
 
+static void
+power_checks(struct usbif_attach_arg a)
+{
+	struct usbd_device root = { 0 };
+	struct usbd_bus bus = { &root, 3 };
+	struct usbd_port hubport = { 1 };
+	struct usbd_device hub = { &root, &bus, &hubport, { 0x1a86, 0x8091, 0 } };
+	struct usbd_device wlan = { &hub, &bus, NULL, { 0xa69c, 0x88dc, 0x0100 } };
+	a.uiaa_device = &wlan;
+	target_board = true;
+	chip_flags = 1U << 25;
+	condition_fault = CONDITION_OK;
+	fault = NONE;
+	fail_at = 0;
+	config.bNumInterface = 3;
+	memset(field_values, 0, sizeof(field_values));
+	/* Verified against the full and masked tables in both factory ELFs. */
+	for (unsigned int i = 0; i < 36; i++) {
+		uaicfw_lyra_power_busy = 0; /* A separate boot for each case. */
+		memset(&device, 0, sizeof(device));
+		power_writes = power_confirmed = condition_reads = writes = errors = children = 0;
+		power_hash = UINT32_C(2166136261);
+		power_error[0] = '\0';
+		power_update_clear = i >= 32;
+		power_value_error = 4;
+		power_fail_at = i >= 1 && i <= 17 ? i : 0;
+		power_fault = power_fail_at ? POWER_TIMEOUT : POWER_OK;
+		switch (i) {
+		case 18: power_fail_at = 2; power_fault = POWER_VALUE; break;
+		case 19: power_fail_at = 3; power_fault = POWER_ADDR; break;
+		case 20: power_fail_at = 3; power_fault = POWER_LENGTH; break;
+		case 21: power_fail_at = 15; power_fault = POWER_OUT_ERROR; break;
+		case 22: chip_flags = 0; break;
+		case 23: field_values[0] = 0x119; break;
+		case 24: field_values[1] = 1; break;
+		case 25: field_values[3] = 6; break;
+		case 26: hub.desc.idProduct++; break;
+		case 27: hubport.up_portno++; break;
+		case 28: wlan.desc.bcdDevice++; break;
+		case 29: bus.ub_usbctl++; break;
+		case 30: hub.ud_myhub = NULL; break;
+		case 31: power_fail_at = 16; power_fault = POWER_TRAILING; break;
+		case 33: case 34: case 35:
+			power_fail_at = i - 28;
+			power_value_error = power_fail_at == 5 ? 0x10 : 1;
+			power_fault = POWER_VALUE;
+			break;
+		}
+		uaicfw_attach(0, 0, &a);
+		if (i == 0 || i == 32) {
+			assert(power_writes == 17 && power_confirmed == 1);
+			assert(power_hash == UINT32_C(0xfd3968ad));
+			assert(uaicfw_lyra_power_busy == 0);
+		} else if (power_fail_at) {
+			assert(power_writes == power_fail_at && power_confirmed == 0);
+			assert(mountroot_hook == NULL && device.sc_stopping);
+			assert(!opens && !allocs && !children && power_error[0]);
+			if (power_fault == POWER_LENGTH)
+				assert(strstr(power_error, "length 0/0, expected 8/8"));
+			if (power_fault == POWER_TRAILING)
+				assert(strstr(power_error, "length 8/12, expected 8/8"));
+			if (power_fault == POWER_ADDR)
+				assert(strstr(power_error, "register echo mismatch"));
+			if (power_fault == POWER_VALUE) {
+				char detail[48];
+				snprintf(detail, sizeof(detail), "selected bits differ by %#x",
+				    power_value_error);
+				assert(strstr(power_error, detail));
+			}
+			assert(uaicfw_detach(0, 0) == 0);
+			memset(&device, 0, sizeof(device));
+			writes = condition_reads = 0;
+			/* A re-enumeration can change the reported firmware and USB version. */
+			features ^= 1;
+			wlan.desc.bcdDevice++;
+			uaicfw_attach(0, 0, &a);
+			assert(writes == 0 && condition_reads == 0 && !opens && !allocs);
+			assert(device.sc_stopping && !mountroot_hook && !children);
+			features ^= 1;
+		} else {
+			assert(power_writes == 0 && power_confirmed == 0);
+		}
+		if (!power_fail_at) {
+			assert(mountroot_hook);
+			mountroot_hook(0);
+			assert(children == 1 && !errors && device.sc_input);
+			if (i == 0) {
+				const uint16_t cmds[] = { 0x0402, 0x0411 };
+				uint8_t packet[64], args[12] = { 0 };
+				for (size_t j = 0; j < __arraycount(cmds); j++) {
+					size_t n = aicwf_command_encode(packet, sizeof(packet),
+					    cmds[j], args, j == 0 ? 8 : 12);
+					bool attempted = true;
+					assert(radio.write(radio.cookie, packet, n,
+					    &attempted) == EOPNOTSUPP && !attempted);
+				}
+			}
+		}
+		assert(uaicfw_detach(0, 0) == 0 && !opens && !allocs);
+		hub.ud_myhub = &root;
+		hub.desc.idProduct = 0x8091;
+		hubport.up_portno = 1;
+		wlan.desc.bcdDevice = 0x0100;
+		bus.ub_usbctl = 3;
+		chip_flags = 1U << 25;
+		memset(field_values, 0, sizeof(field_values));
+	}
+	power_writes = power_fail_at = condition_reads = chip_flags = 0;
+	target_board = false;
+}
+
 int
 main(void)
 {
@@ -1359,6 +1547,7 @@ main(void)
 	}
 	mountroot_failure_checks(&a);
 	condition_checks(&a);
+	power_checks(a);
 	command_deadline_checks(&a);
 	writes = errors = 0;
 	iface.eps[2].bEndpointAddress = 1;
@@ -1368,6 +1557,7 @@ main(void)
 	assert(uaicfw_detach(0, 0) == 0);
 	assert(!writes && errors == 1);
 	puts("PASS: both bulk-IN endpoints, early and late FullMAC replies, "
-	     "DC records, Ethernet, SAE, protected SA Query, TX tokens and cleanup");
+	     "DC clock/PMU setup, records, Ethernet, SAE, protected SA Query, "
+	     "TX tokens and cleanup");
 	return 0;
 }

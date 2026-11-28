@@ -8,6 +8,8 @@
 #include "opt_fdt.h"
 
 #include <sys/param.h>
+#include <sys/atomic.h>
+#include <sys/bus.h>
 #include <sys/condvar.h>
 #include <sys/device.h>
 #include <sys/endian.h>
@@ -29,6 +31,9 @@
 #include <dev/usb/usbdi.h>
 #include <dev/usb/usbdevs.h>
 #include <dev/usb/uaicfwvar.h>
+#ifdef FDT
+#include <dev/usb/usbdivar.h>
+#endif
 
 #define	UAICFW_IDENT_REG	0x40500000
 #define	UAICFW_SUBID_REG	0x00000020
@@ -57,11 +62,16 @@ struct uaicfw_endpoints {
 	uint8_t out[2];
 };
 
+struct uaicfw_reply_size {
+	uint16_t declared, wire;
+};
+
 struct uaicfw_request {
 	uint16_t id;
 	size_t len;
 	usbd_status status;
 	bool optional;
+	struct uaicfw_reply_size *size;
 };
 
 struct uaicfw_data_reply {
@@ -315,6 +325,12 @@ uaicfw_receive(struct uaicfw_softc *sc, struct uaicfw_rx_stream *stream,
 			return USBD_IOERROR;
 		if (req == NULL || req->id != id)
 			continue;
+		if (req->size != NULL) {
+			req->size->declared = param_len;
+			req->size->wire = payload - AICWF_RX_MSG_PARAM;
+			if (req->size->wire != req->len)
+				return USBD_INVAL;
+		}
 		if (answer != NULL || req->status != USBD_IN_PROGRESS ||
 		    param_len != req->len) {
 			if (!req->optional)
@@ -441,9 +457,10 @@ uaicfw_clear_out_stall(struct uaicfw_softc *sc, struct uaicfw_pipe *pipe)
 static usbd_status
 uaicfw_command(struct uaicfw_softc *sc, uint16_t cmd, const void *param,
     size_t request_len, uint16_t cfm, void *reply, size_t reply_len,
-    bool optional)
+    bool optional, struct uaicfw_reply_size *size)
 {
-	struct uaicfw_request req = { cfm, reply_len, USBD_IN_PROGRESS, optional };
+	struct uaicfw_request req = { cfm, reply_len, USBD_IN_PROGRESS,
+	    optional, size };
 	struct usbd_xfer *xfer;
 	uint32_t actual, start;
 	uint8_t *buf;
@@ -529,7 +546,7 @@ uaicfw_read_field(struct uaicfw_softc *sc, enum uaicfw_field field,
 		return USBD_INVAL;
 	le32enc(req, regs[field]);
 	status = uaicfw_command(sc, AICWF_DBG_MEM_READ_REQ, req, sizeof(req),
-	    AICWF_DBG_MEM_READ_CFM, cfm, sizeof(cfm), field > UAICFW_SUBID);
+	    AICWF_DBG_MEM_READ_CFM, cfm, sizeof(cfm), field > UAICFW_SUBID, NULL);
 	if (status == USBD_NORMAL_COMPLETION &&
 	    !aicwf_read_confirm(cfm, sizeof(cfm), regs[field], value))
 		return USBD_INVAL;
@@ -537,50 +554,152 @@ uaicfw_read_field(struct uaicfw_softc *sc, enum uaicfw_field field,
 }
 
 #ifdef FDT
+/* The board has one soldered WLAN function behind its CH334F on OTG1. */
+static bool
+uaicfw_lyra_onboard(struct usbd_device *dev)
+{
+	if (dev == NULL || dev->ud_myhub == NULL || dev->ud_bus == NULL ||
+	    !dev->ud_bus->ub_usbctl)
+		return false;
+	struct usbd_device *hub = dev->ud_myhub;
+	const usb_device_descriptor_t *dd = usbd_get_device_descriptor(hub);
+	if (hub->ud_myhub != dev->ud_bus->ub_roothub || hub->ud_myhub == NULL ||
+	    hub->ud_powersrc == NULL || hub->ud_powersrc->up_portno != 1 ||
+	    UGETW(dd->idVendor) != 0x1a86 || UGETW(dd->idProduct) != 0x8091)
+		return false;
+	const device_t hc = device_parent(dev->ud_bus->ub_usbctl);
+	if (!hc || devhandle_type(device_handle(hc)) != DEVHANDLE_TYPE_OF)
+		return false;
+	return devhandle_to_of(device_handle(hc)) ==
+	    OF_finddevice("/soc/usb@ff780000");
+}
+
+/*
+ * One physical radio per matched board. Hold this interlock across detach
+ * if a command failed: the device might already have applied the change.
+ */
+static unsigned int uaicfw_lyra_power_busy;
+
+/* The non-H DCDC sequence in rkwifibt 223f2479, with the extended PMU mask. */
+static usbd_status
+uaicfw_lyra_power(device_t self, struct uaicfw_softc *sc)
+{
+	static const struct {
+		uint32_t reg, mask, value, update;
+	} steps[] = {
+		{ 0x40500010, UINT32_MAX, 4, 0 },
+		{ 0x40500010, UINT32_MAX, 6, 0 },
+		{ 0x7000216c, 0x0000000c, 0x00000004, 0 },
+		{ 0x700021bc, 0x0000000c, 0x00000004, 0 },
+		{ 0x70002118, 0x000000f0, 0x000000a0, 0x80 },
+		{ 0x70002104, 0x0000007f, 0x00000042, 0x40 },
+		{ 0x7000210c, 0x0000007f, 0x00000042, 0x40 },
+		{ 0x70002170, 0x0000000f, 0x00000001, 0 },
+		{ 0x70002190, 0x0000003f, 0x00000018, 0 },
+		{ 0x700021cc, 0x000000f0, 0x00000000, 0 },
+		{ 0x700010a0, 0x00000800, 0x00000800, 0 },
+		{ 0x70001034, 0x1c100000, 0x08000000, 0 },
+		{ 0x70001038, 0x00000100, 0x00000100, 0 },
+		{ 0x70001094, 0x0000000c, 0x00000000, 0 },
+		{ 0x700021d0, 0x00000060, 0x00000060, 0 },
+		{ 0x70001000, 0x00508101, 0x00108101, 0 }, /* extended MCU mask */
+		{ 0x70001028, 0x0000003c, 0x00000004, 0 },
+	};
+	uint8_t req[12], reply[8];
+
+	if (atomic_cas_uint(&uaicfw_lyra_power_busy, 0, 1) != 0)
+		return USBD_IOERROR;
+	for (unsigned int i = 0; i < __arraycount(steps); i++) {
+		/* Linux lmac_msg.h: DBG_MEM_WRITE and DBG_MEM_MASK_WRITE. */
+		const bool masked = steps[i].mask != UINT32_MAX;
+		const uint16_t cmd = masked ? 0x0411 : 0x0402;
+		const size_t len = masked ? 12 : 8;
+		le32enc(req, steps[i].reg);
+		if (masked)
+			le32enc(req + 4, steps[i].mask);
+		le32enc(req + len - 4, steps[i].value);
+		struct uaicfw_reply_size observed = { UINT16_MAX, UINT16_MAX };
+		usbd_status status = uaicfw_command(sc, cmd, req, len, cmd + 1,
+		    reply, sizeof(reply), false, &observed);
+		if (status == USBD_NORMAL_COMPLETION) {
+			uint32_t value;
+			if (!aicwf_read_confirm(reply, sizeof(reply), steps[i].reg,
+			    &value)) {
+				aprint_error_dev(self, "clock/PMU step %u: "
+				    "register echo mismatch\n", i + 1);
+				return USBD_INVAL;
+			}
+			/* DENOM_UPDATE requests a latch. Check the divider setting. */
+			const uint32_t check = steps[i].mask & ~steps[i].update;
+			const uint32_t different = (value ^ steps[i].value) & check;
+			if (different != 0) {
+				aprint_error_dev(self, "clock/PMU step %u: "
+				    "selected bits differ by %#x\n", i + 1, different);
+				return USBD_INVAL;
+			}
+		}
+		if (status != USBD_NORMAL_COMPLETION) {
+			if (observed.declared != UINT16_MAX &&
+			    (observed.declared != sizeof(reply) ||
+			    observed.wire != sizeof(reply)))
+				aprint_error_dev(self, "clock/PMU step %u: "
+				    "confirmation length %u/%u, expected 8/8\n",
+				    i + 1, observed.declared, observed.wire);
+			else
+				aprint_error_dev(self, "clock/PMU step %u failed: %s\n",
+				    i + 1, usbd_errstr(status));
+			return status;
+		}
+	}
+	atomic_store_relaxed(&uaicfw_lyra_power_busy, 0);
+	aprint_normal_dev(self, "clock/PMU sequence confirmed\n");
+	return USBD_NORMAL_COMPLETION;
+}
+
 /*
  * Luckfox rkwifibt 223f2479: aicwf_usb_config and set_bbpll_config.
  * system_config_8800dc samples the clock selector before the PMU sequence.
  * Report the initial clock selection and factory PMU mask variant. Stop
  * these optional reads on the first missing confirmation.
  */
-static void
+static usbd_status
 uaicfw_lyra_conditions(device_t self, struct uaicfw_softc *sc,
     const struct usbif_attach_arg *a, const struct uaicfw_endpoints *eps,
-    uint32_t chip)
+    uint32_t chip, bool onboard)
 {
-	static const char * const boards[] = { "luckfox,lyra-zero-w", NULL };
 	const char *usb = "unknown", *pll = "unknown";
 	const char *clock_select = "unknown";
+	bool usb_skip = false, local_crystal = false, initial = false;
 	uint32_t val;
 
-	if (fdtbus_get_data() == NULL ||
-	    !of_compatible(OF_finddevice("/"), boards) ||
-	    a->uiaa_vendor != USB_VENDOR_AICSEMI ||
+	if (a->uiaa_vendor != USB_VENDOR_AICSEMI ||
 	    a->uiaa_product != USB_PRODUCT_AICSEMI_AIC8800DC ||
 	    a->uiaa_configno != 1 || a->uiaa_ifaceno != 2 || a->uiaa_port != 1 ||
 	    a->uiaa_class != UICLASS_VENDOR || a->uiaa_subclass != 0xff ||
 	    a->uiaa_proto != 0xff || sc->sc_fw_version.features != 0xb011fa5f ||
 	    eps->in[0] != 0x81 || eps->in[1] != 0x82 ||
 	    eps->out[0] != 1 || eps->out[1] != 2)
-		return;
+		return USBD_NORMAL_COMPLETION;
 	const usb_interface_descriptor_t *iface =
 	    usbd_get_interface_descriptor(a->uiaa_iface);
 	if (iface == NULL || iface->bNumEndpoints != 4)
-		return;
+		return USBD_NORMAL_COMPLETION;
 	for (unsigned i = 0; i < iface->bNumEndpoints; i++) {
 		const usb_endpoint_descriptor_t *ep =
 		    usbd_interface2endpoint_descriptor(a->uiaa_iface, i);
 		if (ep == NULL || UGETW(ep->wMaxPacketSize) != 512)
-			return;
+			return USBD_NORMAL_COMPLETION;
 	}
 	if (uaicfw_read_field(sc, UAICFW_USB_CONFIG, &val) !=
 	    USBD_NORMAL_COMPLETION)
 		goto done;
-	usb = (val & 0xffff) == 0x0119 ? "needed" : "skip";
+	usb_skip = (val & 0xffff) != 0x0119;
+	usb = usb_skip ? "skip" : "needed";
 	if (uaicfw_read_field(sc, UAICFW_XTAL, &val) !=
 	    USBD_NORMAL_COMPLETION)
 		goto done;
 	if ((val & 1) == 0) {
+		local_crystal = true;
 		pll = "skip (no CPU crystal)";
 	} else {
 		pll = "unknown (CPU crystal)";
@@ -594,6 +713,7 @@ uaicfw_lyra_conditions(device_t self, struct uaicfw_softc *sc,
 	    USBD_NORMAL_COMPLETION) {
 		switch (val) {
 		case 0:
+			initial = true;
 			clock_select = "zero";
 			break;
 		case 4:
@@ -612,6 +732,11 @@ done:
 	aprint_normal_dev(self, "factory USB setup %s, BBPLL setup %s, "
 	    "clock select %s, PMU mask %s\n", usb, pll, clock_select,
 	    (chip & (1U << 25)) ? "extended" : "base");
+	if (onboard && usb_skip && local_crystal && initial &&
+	    (chip & (1U << 25)) &&
+	    UGETW(usbd_get_device_descriptor(a->uiaa_device)->bcdDevice) == 0x0100)
+		return uaicfw_lyra_power(self, sc);
+	return USBD_NORMAL_COMPLETION;
 }
 #endif
 
@@ -930,6 +1055,18 @@ uaicfw_attach(device_t parent, device_t self, void *aux)
 	cv_init(&sc->sc_cv, "uaicfw");
 	sc->sc_udev = uiaa->uiaa_device;
 	usb_init_task(&sc->sc_recover_task, uaicfw_recover_rx, sc, USB_TASKQ_MPSAFE);
+#ifdef FDT
+	static const char * const boards[] = { "luckfox,lyra-zero-w", NULL };
+	const bool lyra = fdtbus_get_data() != NULL &&
+	    of_compatible(OF_finddevice("/"), boards);
+	const bool onboard = lyra && uiaa->uiaa_port == 1 &&
+	    uaicfw_lyra_onboard(uiaa->uiaa_device);
+	if (onboard && atomic_load_relaxed(&uaicfw_lyra_power_busy) != 0) {
+		phase = "previous onboard power setup";
+		status = USBD_IOERROR;
+		goto fail;
+	}
+#endif
 	if (!uaicfw_endpoints(iface, &eps)) {
 		aprint_error_dev(self, "unsupported firmware endpoint layout\n");
 		return;
@@ -962,7 +1099,7 @@ uaicfw_attach(device_t parent, device_t self, void *aux)
 
 	phase = "MM_VERSION";
 	status = uaicfw_command(sc, AICWF_MM_VERSION_REQ, NULL, 0,
-	    AICWF_MM_VERSION_CFM, cfm, sizeof(cfm), false);
+	    AICWF_MM_VERSION_CFM, cfm, sizeof(cfm), false, NULL);
 	if (status != USBD_NORMAL_COMPLETION)
 		goto fail;
 	aicwf_version_decode(cfm, &sc->sc_fw_version);
@@ -977,7 +1114,13 @@ uaicfw_attach(device_t parent, device_t self, void *aux)
 		return;
 	}
 #ifdef FDT
-	uaicfw_lyra_conditions(self, sc, uiaa, &eps, chip);
+	if (lyra) {
+		phase = "onboard power setup";
+		status = uaicfw_lyra_conditions(self, sc, uiaa, &eps, chip,
+		    onboard);
+		if (status != USBD_NORMAL_COMPLETION)
+			goto fail;
+	}
 #endif
 	config_mountroot(self, uaicfw_mountroot);
 	return;
