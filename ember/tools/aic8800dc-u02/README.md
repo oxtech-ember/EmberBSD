@@ -46,6 +46,20 @@ Missing files, changed bytes, and mixed releases cause a nonzero exit.
 This check establishes the identity of host files. Radio calibration and
 firmware readiness require separate observations on the device.
 
+The non-H U02 patch tables start with a 128-byte header. Each remaining row
+contains two 32-bit words. The NAND table is 896 bytes and has 96 rows.
+The 261020 table is 1,008 bytes and has 110 rows. The factory driver sends
+the header before the rows and prints the description from its file buffer.
+A matching build string can remain from an earlier run or an incomplete upload.
+[Factory patch table loader](https://github.com/EliSofke/LuckfoxLyraSDK/blob/6dcbca0d8a517d79bd8fb4205ca4966b136604bc/external/rkwifibt/drivers/aic8800/aic8800/aic8800_fdrv/aicwf_compat_8800dc.c#L1713-L1768)
+
+The YuzukiHD Zephyr component contains three non-H U02 arrays for the WLAN
+patch, patch table and calibration program. In little-endian byte order,
+all three match the NAND files. All three differ from the 261020 files.
+The component defaults to SDIO. Its USB option depends on `BROKEN`.
+[Zephyr firmware arrays](https://github.com/YuzukiHD/zephyr-components/blob/ed8886e9e29d5e49d01a6774cae916b71f0bf50a/aic8800/host/drv/fw/aic_fw.c#L192-L220) ·
+[Transport selection](https://github.com/YuzukiHD/zephyr-components/blob/ed8886e9e29d5e49d01a6774cae916b71f0bf50a/aic8800/Kconfig#L83-L96)
+
 ## Read startup conditions on Lyra
 
 At USB attach, `uaicfw` reports the initial clock selector for the matched
