@@ -84,6 +84,9 @@ install_file(const char *src, const char *dst, mode_t mode, enum install_method 
 	int in, out, n;
 	ssize_t count, pos, w;
 
+	/* Keep matching boot files on the inactive ESP. */
+	if (method == INSTALL_INACTIVE && install_files_equal(src, dst) == 1)
+		return;
 	in = open(src, O_RDONLY | O_NOFOLLOW);
 	if (in == -1)
 		err(1, "open %s", src);

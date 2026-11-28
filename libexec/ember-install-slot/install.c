@@ -611,16 +611,29 @@ fstab(const struct slot *s, const char *root, int dest)
 }
 
 static void
-populate(const struct slot *s, int dest, const struct input *in, const char *root)
+check_mount(const struct slot *s, int dest, const char *root)
 {
-	char work[MAXPATHLEN], path[MAXPATHLEN], sha[65];
-	struct statvfs mount;
+	struct statvfs mount, *all;
+	size_t n = strlen(root);
 	if (statvfs(root, &mount) || strcmp(mount.f_mntonname, root) ||
 	    strcmp(mount.f_mntfromname, s->device[dest]) || strcmp(mount.f_fstypename, "ffs") ||
 	    dest == s->running)
 		errx(1, "incorrect mounted destination");
+	int count = getmntinfo(&all, MNT_NOWAIT);
+	if (count <= 0)
+		err(1, "mount table");
+	for (int i = 0; i < count; i++)
+		if (!strncmp(all[i].f_mntonname, root, n) && all[i].f_mntonname[n] == '/')
+			errx(1, "nested mount in inactive root");
 	if (s->good != s->running || s->back != s->running || s->next >= 0 || s->prepared >= 0)
 		errx(1, "the inactive slot must be disarmed before installation");
+}
+
+static void
+populate(const struct slot *s, int dest, const struct input *in, const char *root)
+{
+	char work[MAXPATHLEN], path[MAXPATHLEN], sha[65];
+	check_mount(s, dest, root);
 	strlcpy(work, root, sizeof(work));
 	char *slash = strrchr(work, '/');
 	if (!slash || strcmp(slash, "/root"))
@@ -656,6 +669,29 @@ main(int argc, char **argv)
 	char work[] = "/var/run/ember-slot.XXXXXXXX";
 	char dir[MAXPATHLEN];
 	int dest, pos;
+	if (argc == 4 && !strcmp(argv[1], "delta")) {
+		char target[MAXPATHLEN], snap[MAXPATHLEN];
+		struct statvfs m;
+		struct stat st;
+		if (geteuid() || !realpath(argv[3], dir) || strcmp(dir, argv[3]) ||
+		    strncmp(dir, "/var/run/ember-slot.", sizeof("/var/run/ember-slot.") - 1) ||
+		    strchr(dir + sizeof("/var/run/ember-slot.") - 1, '/') ||
+		    lstat(dir, &st) || !S_ISDIR(st.st_mode) || st.st_uid || (st.st_mode & 077))
+			errx(1, "expected private stage directory");
+		slot_layout(&s);
+		slot_path(target, sizeof(target), dir, "root");
+		slot_path(snap, sizeof(snap), dir, "snapshot");
+		check_mount(&s, slot_id(argv[2]), target);
+		if (statvfs(snap, &m) || strcmp(m.f_mntonname, snap) ||
+		    strcmp(m.f_fstypename, "ffs") || !(m.f_flag & ST_RDONLY) ||
+		    strncmp(m.f_mntfromname, "/dev/fss", sizeof("/dev/fss") - 1) ||
+		    !m.f_mntfromname[sizeof("/dev/fss") - 1] ||
+		    strspn(m.f_mntfromname + sizeof("/dev/fss") - 1, "0123456789") !=
+		    strlen(m.f_mntfromname + sizeof("/dev/fss") - 1))
+			errx(1, "expected a read-only FFS snapshot");
+		install_delta(snap, target);
+		return 0;
+	}
 	if (argc == 3 && !strcmp(argv[1], "packages")) {
 		if (geteuid() != 0)
 			errx(1, "package installation requires root");
@@ -691,7 +727,8 @@ main(int argc, char **argv)
 	if (!mkdtemp(work))
 		err(1, "create slot work directory");
 	slot_begin_prepare(&s, dest);
-	run("/usr/libexec/ember-stage-ffs", work, s.device[dest], argv[pos], argv[pos + 1], dir,
+	run("/usr/libexec/ember-stage-ffs", work, s.device[dest],
+	    !in.os && !in.local ? "packages" : "full", argv[pos], argv[pos + 1], dir,
 	    NULL);
 	slot_receipt(&s, dest, in.digest);
 	return 0;

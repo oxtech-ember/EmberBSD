@@ -55,7 +55,8 @@ fi
 
 work=$1
 device=$2
-shift 2
+method=$3
+shift 3
 root=$work/root
 snap=$work/snapshot
 fst=
@@ -82,21 +83,68 @@ fssconfig -x "$fstdev" / "$work/backing"
 fst=$fstdev
 mount -r -t ffs "/dev/$fst" "$snap"
 snap_mounted=yes
-newfs -O 1 "/dev/r${device##*/}"
-mount -t ffs -o async "$device" "$root"
-target_mounted=yes
+# Keep these directories as empty mount points. Omit temporary update state.
+cat >"$work/excludes" <<'EOF'
+./boot/?*
+./tmp/?*
+./proc/?*
+./dev/pts/?*
+./var/tmp/?*
+./var/run/?*
+./var/cache/?*
+./var/shm/?*
+./var/db/ember-update/incoming
+./var/db/ember-os-update/incoming
+./var/db/ember-os-update/attempt.json
+./var/db/ember-update/attempt.json
+./var/db/emberbsd-sdk/client.lock
+EOF
+snapshot_paths()
+{
+	set --
+	while IFS= read -r pattern; do set -- "$@" -path "$pattern" -o; done <"$work/excludes"
+	(cd "$snap" && find -x . \( "$@" -false \) -prune -o -print0)
+}
+
+copy_tree()
+{
+	(cd "$snap" && exec tar --one-file-system -cpf - "$@") >"$work/tree" &
+	writer=$!
+	ok=0
+	if ! tar -xpf "$work/tree" -C "$root"; then
+		ok=1
+		kill "$writer" 2>/dev/null || :
+	fi
+	wait "$writer" || ok=1
+	writer=
+	return "$ok"
+}
+
 mkfifo "$work/tree"
-(cd "$snap" && exec tar --one-file-system -cpf - \
-    --exclude './boot/?*' --exclude './tmp/?*' --exclude './proc/?*' \
-    --exclude './dev/pts/?*' --exclude './var/tmp/?*' --exclude './var/run/?*' \
-    --exclude './var/cache/?*' --exclude './var/shm/?*' \
-    --exclude './var/db/ember-update/incoming' --exclude './var/db/ember-os-update/incoming' \
-    --exclude './var/db/ember-os-update/attempt.json' --exclude './var/db/ember-update/attempt.json' \
-    --exclude './var/db/emberbsd-sdk/client.lock' .) >"$work/tree" &
-writer=$!
-tar -xpf "$work/tree" -C "$root"
-wait "$writer"
-writer=
+raw=/dev/r${device##*/}
+copied=
+if [ "$method" = packages ] && fsck_ffs -n "$raw" &&
+    mount -t ffs -o async,noatime "$device" "$root"; then
+	target_mounted=yes
+	snapshot_paths >"$work/paths"
+	if /usr/libexec/ember-install-slot delta "$2" "$work" <"$work/paths" >"$work/changed"; then
+		if copy_tree --null --no-recursion -T "$work/changed"; then copied=yes; fi
+	else
+		rc=$?
+		[ "$rc" -eq 3 ] || exit "$rc"
+	fi
+	if [ -z "$copied" ]; then
+		logger -s -t ember-install-slot 'Cannot reuse the inactive FFS. Rebuild it from the snapshot.' || :
+		umount "$root"
+		target_mounted=
+	fi
+fi
+if [ -z "$copied" ]; then
+	newfs -O 1 "$raw"
+	mount -t ffs -o async,noatime "$device" "$root"
+	target_mounted=yes
+	copy_tree -X "$work/excludes" .
+fi
 umount "$snap"
 snap_mounted=
 fssconfig -u "$fst"

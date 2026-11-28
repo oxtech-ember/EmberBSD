@@ -13,7 +13,12 @@ dd if=/dev/zero of="$dir/active" bs=1m count=3
 cp "$dir/active" "$dir/inactive"
 active=$(sha256 -q "$dir/active")
 cp "$dir/active" "$work/kernel"
+touch -t 202001010000 "$dir/inactive"
+mtime=$(stat -f %m "$dir/inactive")
+"$tool" inactive "$work/kernel" "$dir/inactive"
+test "$(stat -f %m "$dir/inactive")" = "$mtime"
 printf 'replacement' | dd of="$work/kernel" conv=notrunc
+touch -r "$dir/inactive" "$work/kernel"
 if LC_ALL=C "$tool" atomic "$work/kernel" "$dir/inactive" 2>"$work/failure"; then
 	echo 'Test volume has room for a third kernel.' >&2
 	exit 1

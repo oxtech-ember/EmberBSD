@@ -103,7 +103,14 @@ The controller writes a root-owned directory with these files:
 * Package archives use `packages/NAME.tgz`, with NAME from the signed catalog.
 
 `/usr/libexec/ember-install-slot prepare SLOT DIR` writes the inactive slot.
-It copies the exact plan to `/var/db/ember-update/installed.json` and writes
+For a package-only plan, the installer takes a read-only snapshot of the running FFS root.
+It compares the inactive root with that snapshot and reuses matching regular files.
+It removes stale entries and transfers changes, including local settings and the package database.
+This reduces card writes. The comparison still reads file contents.
+The `ember-install-slot` syslog entry reports the number and size of reused files and the number of regular paths to copy.
+If the inactive FFS cannot be reused, the installer creates a fresh file system and copies the snapshot.
+OS and local kernel plans use the full copy. The boot adapter can also keep identical files on the ESP.
+After installation, the installer copies the exact plan to `/var/db/ember-update/installed.json` and writes
 the SHA-256 of that file as the boot receipt. The corresponding live operation
 is `ember-install-slot packages DIR` for a single-root profile.
 `ember-update apply-kernel DIR` requests `prepare-kernel SLOT DIR`. The local
@@ -225,6 +232,11 @@ envelopes and a separate local copy of the release anchor. The test checks
 both signatures, the hash binding, time limits, and altered envelopes.
 Run `tests/store.sh` for package selection, manual promotion and installed
 desktop binding. Set `CC`, `CPPFLAGS`, and `LDFLAGS` to select the host SDK.
+
+The FFS installer tests are in `libexec/ember-install-slot/tests` at the source root.
+Build the `delta.c` test driver with the installer's `delta.c`, `equal.c`, and target headers.
+On NetBSD, run `delta.sh DRIVER FFS_DIRECTORY` as root.
+It checks a reused file, changed content, hard links, metadata, stale entries and fallback.
 
 On NetBSD, run `tests/handoff.sh CLIENT INPUT PROFILE RC_SCRIPT` as root for
 the offline transition test. Use the artifacts listed in the test header.
