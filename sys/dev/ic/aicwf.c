@@ -601,13 +601,17 @@ aicwf_station_setup(struct aicwf_softc *sc)
 
 	error = aicwf_cmd(sc, AICWF_MM_RESET_REQ, NULL, 0,
 	    AICWF_MM_RESET_CFM, NULL, 0);
-	if (error != 0)
+	if (error != 0) {
+		aprint_error_dev(sc->sc_dev, "MM_RESET: error %d\n", error);
 		return error;
+	}
 
 	error = aicwf_fw_cmd(sc, AICWF_MM_VERSION_REQ, NULL, 0,
 	    AICWF_MM_VERSION_CFM, cfm, AICWF_VERSION_LEN);
-	if (error != 0)
+	if (error != 0) {
+		aprint_error_dev(sc->sc_dev, "MM_VERSION: error %d\n", error);
 		return error;
+	}
 	aicwf_version_decode(cfm, &fw_version);
 	aprint_verbose_dev(sc->sc_dev, "MAC 0x%08x, hardware 0x%08x 0x%08x, "
 	    "PHY 0x%08x 0x%08x, features 0x%08x, %u stations, %u interfaces\n",
@@ -622,7 +626,9 @@ aicwf_station_setup(struct aicwf_softc *sc)
 	    (fw_version.features & AICWF_FEATURE_MFP) != 0;
 	if (sc->sc_fw_bip_pending && !bip_mfp)
 		return EPROTO;
-	if (bip_mfp) {
+	/* The prepared DC U02 FullMAC reports MFP in its feature word. */
+	if (bip_mfp || (sc->sc_dc &&
+	    (fw_version.features & AICWF_FEATURE_MFP) != 0)) {
 		sc->sc_sae_caps = IEEE80211_SAE_CAP_EXTERNAL |
 		    IEEE80211_SAE_CAP_PMF | IEEE80211_SAE_CAP_SA_QUERY;
 		aprint_normal_dev(sc->sc_dev, "external SAE and firmware PMF available\n");
@@ -635,8 +641,10 @@ aicwf_station_setup(struct aicwf_softc *sc)
 		    "VHT enabled: 1 stream, MCS 0-9, maximum width 80 MHz\n");
 	error = aicwf_cmd(sc, AICWF_ME_CONFIG_REQ, req, AICWF_ME_CONFIG_LEN,
 	    AICWF_ME_CONFIG_CFM, NULL, 0);
-	if (error != 0)
+	if (error != 0) {
+		aprint_error_dev(sc->sc_dev, "ME_CONFIG: error %d\n", error);
 		return error;
+	}
 
 	memset(req, 0, sizeof(req));
 	n2g = aicwf_chan_list(sc, req, req + AICWF_CHAN_2G_MAX *
@@ -646,20 +654,26 @@ aicwf_station_setup(struct aicwf_softc *sc)
 	error = aicwf_cmd(sc, AICWF_ME_CHAN_CONFIG_REQ, req,
 	    AICWF_CHAN_MAX * AICWF_CHAN_LEN + 2,
 	    AICWF_ME_CHAN_CONFIG_CFM, NULL, 0);
-	if (error != 0)
+	if (error != 0) {
+		aprint_error_dev(sc->sc_dev, "ME_CHAN_CONFIG: error %d\n", error);
 		return error;
+	}
 
 	memset(req, 0, sizeof(req));
 	le32enc(req + 64, AICWF_UAPSD_TIMEOUT_MS);
 	le16enc(req + 68, AICWF_LP_CLK_PPM);
 	error = aicwf_cmd(sc, AICWF_MM_START_REQ, req, 72,
 	    AICWF_MM_START_CFM, NULL, 0);
-	if (error != 0)
+	if (error != 0) {
+		aprint_error_dev(sc->sc_dev, "MM_START: error %d\n", error);
 		return error;
+	}
 
 	error = aicwf_add_vif(sc);
-	if (error != 0)
+	if (error != 0) {
+		aprint_error_dev(sc->sc_dev, "MM_ADD_IF: error %d\n", error);
 		return error;
+	}
 	if (sc->sc_fw_bip_pending &&
 	    (error = sc->sc_ops->verify(sc)) != 0)
 		return error;
@@ -1545,7 +1559,8 @@ aicwf_sta_action_valid(const uint8_t *body, size_t len, bool to_ap)
 static bool
 aicwf_sta_supported(struct aicwf_softc *sc)
 {
-	return sc->sc_if_attached && sc->sc_fw_version == 0x06090101 &&
+	return sc->sc_if_attached && (sc->sc_fw_version == 0x06090101 ||
+	    (sc->sc_dc && sc->sc_fw_version == 0x06040301)) &&
 	    sc->sc_ic.ic_opmode == IEEE80211_M_STA;
 }
 

@@ -14,6 +14,7 @@
 #include <sys/device.h>
 #include <sys/endian.h>
 #include <sys/kernel.h>
+#include <sys/kmem.h>
 #include <sys/mutex.h>
 #include <sys/systm.h>
 
@@ -40,12 +41,17 @@
 #define	UAICFW_IDENT_REG	0x40500000
 #define	UAICFW_SUBID_REG	0x00000020
 #define	UAICFW_U02_RF_MISC	0x00120ebc	/* normal-mode RF status on Lyra */
+#define	UAICFW_U02_LMAC_ADDR	0x00150000	/* RAM_LMAC_FW_ADDR */
 #define	UAICFW_PARAM_MAX	1032	/* includes a 1024-byte block write */
 #define	UAICFW_TX_SIZE		(AICWF_TX_MSG_OFFSET + AICWF_MSG_HDR_LEN + \
 				 UAICFW_PARAM_MAX)
 #define	UAICFW_RX_SIZE		2048
 #define	UAICFW_PAYLOAD_MAX	0xfff	/* DC USB record length field */
 #define	UAICFW_TIMEOUT_MS	500
+#define	UAICFW_CALIB_TIMEOUT_MS	4000	/* RWNX_80211_CMD_TIMEOUT_MS */
+#define	UAICFW_MM_SET_RF_CONFIG_REQ	0x0067
+#define	UAICFW_MM_SET_RF_CALIB_REQ	0x0069
+#define	UAICFW_MM_SET_TXPWR_LVL_REQ	0x0077
 
 struct uaicfw_pipe {
 	struct usbd_pipe *pipe;
@@ -74,6 +80,7 @@ struct uaicfw_request {
 	size_t len;
 	usbd_status status;
 	bool optional;
+	uint16_t *got;	/* accept and report a length up to len */
 	struct uaicfw_reply_size *size;
 };
 
@@ -105,6 +112,7 @@ struct uaicfw_softc {
 	uint8_t sc_reply[UAICFW_PARAM_MAX];
 	usbd_status sc_error;
 	bool sc_stopping;
+	bool sc_station_ready;	/* patch, DPD, stack and RF are prepared */
 #ifdef FDT
 	bool sc_lyra_power_confirmed;
 #endif
@@ -327,8 +335,14 @@ uaicfw_receive(struct uaicfw_softc *sc, struct uaicfw_rx_stream *stream,
 		uint16_t id, param_len;
 		if (!aicwf_reply_decode(msg, payload, &id, &param_len))
 			return USBD_INVAL;
-		if (id == AICWF_DBG_ERROR_IND)
+		if (id == AICWF_DBG_ERROR_IND) {
+			const uint8_t *e = msg + AICWF_RX_MSG_PARAM;
+			printf("uaicfw: firmware error indication, %u bytes:"
+			    " %08x %08x\n", param_len,
+			    param_len >= 4 ? le32dec(e) : 0,
+			    param_len >= 8 ? le32dec(e + 4) : 0);
 			return USBD_IOERROR;
+		}
 		if (req == NULL || req->id != id)
 			continue;
 		if (req->size != NULL) {
@@ -338,7 +352,8 @@ uaicfw_receive(struct uaicfw_softc *sc, struct uaicfw_rx_stream *stream,
 				return USBD_INVAL;
 		}
 		if (answer != NULL || req->status != USBD_IN_PROGRESS ||
-		    param_len != req->len) {
+		    (req->got != NULL ? param_len > req->len :
+		    param_len != req->len)) {
 			if (!req->optional)
 				return USBD_INVAL;
 			/* This complete record belongs to the optional sample. */
@@ -351,8 +366,13 @@ uaicfw_receive(struct uaicfw_softc *sc, struct uaicfw_rx_stream *stream,
 		req->status = USBD_INVAL;
 		cv_broadcast(&sc->sc_cv);
 	} else if (answer != NULL) {
-		if (req->len != 0)
-			memcpy(sc->sc_reply, answer, req->len);
+		const uint16_t got = req->got != NULL ?
+		    le16dec(answer - AICWF_RX_MSG_PARAM + 6) : req->len;
+		memset(sc->sc_reply, 0, req->len);
+		if (got != 0)
+			memcpy(sc->sc_reply, answer, got);
+		if (req->got != NULL)
+			*req->got = got;
 		req->status = USBD_NORMAL_COMPLETION;
 		cv_broadcast(&sc->sc_cv);
 	}
@@ -408,6 +428,9 @@ uaicfw_rxeof(struct usbd_xfer *xfer, void *priv, usbd_status status)
 		status = uaicfw_receive(sc, stream, usbd_get_buffer(xfer), actual);
 	}
 	if (status != USBD_NORMAL_COMPLETION) {
+		if (status != USBD_CANCELLED)
+			printf("uaicfw: receive pipe %u stopped: %s\n", index,
+			    usbd_errstr(status));
 		sc->sc_error = status;
 		cv_broadcast(&sc->sc_cv);
 	}
@@ -426,9 +449,9 @@ uaicfw_rxeof(struct usbd_xfer *xfer, void *priv, usbd_status status)
 /* Deduct USB submission time from the confirmation wait. */
 static usbd_status
 uaicfw_wait_reply(struct uaicfw_softc *sc, const usbd_status *reply,
-    uint32_t start)
+    uint32_t start, unsigned int timeout_ms)
 {
-	const uint32_t timeout = mstohz(UAICFW_TIMEOUT_MS);
+	const uint32_t timeout = mstohz(timeout_ms);
 	int error = 0;
 
 	KASSERT(mutex_owned(&sc->sc_rx_lock));
@@ -461,12 +484,13 @@ uaicfw_clear_out_stall(struct uaicfw_softc *sc, struct uaicfw_pipe *pipe)
 }
 
 static usbd_status
-uaicfw_command(struct uaicfw_softc *sc, uint16_t cmd, const void *param,
+uaicfw_command_wait(struct uaicfw_softc *sc, uint16_t cmd, const void *param,
     size_t request_len, uint16_t cfm, void *reply, size_t reply_len,
-    bool optional, struct uaicfw_reply_size *size)
+    bool optional, struct uaicfw_reply_size *size, unsigned int timeout_ms,
+    uint16_t *got)
 {
 	struct uaicfw_request req = { cfm, reply_len, USBD_IN_PROGRESS,
-	    optional, size };
+	    optional, got, size };
 	struct usbd_xfer *xfer;
 	uint32_t actual, start;
 	uint8_t *buf;
@@ -510,7 +534,7 @@ uaicfw_command(struct uaicfw_softc *sc, uint16_t cmd, const void *param,
 	else if (sc->sc_error != USBD_NORMAL_COMPLETION)
 		status = sc->sc_error;
 	else if (status == USBD_NORMAL_COMPLETION)
-		status = uaicfw_wait_reply(sc, &req.status, start);
+		status = uaicfw_wait_reply(sc, &req.status, start, timeout_ms);
 	/*
 	 * Optional reads stop at the first failure. The station has a
 	 * different set of command IDs. Keep genuine RX pipe errors.
@@ -527,11 +551,22 @@ done:
 	return status;
 }
 
+static usbd_status
+uaicfw_command(struct uaicfw_softc *sc, uint16_t cmd, const void *param,
+    size_t request_len, uint16_t cfm, void *reply, size_t reply_len,
+    bool optional, struct uaicfw_reply_size *size)
+{
+	return uaicfw_command_wait(sc, cmd, param, request_len, cfm, reply,
+	    reply_len, optional, size, UAICFW_TIMEOUT_MS, NULL);
+}
+
 /* These are the only readable fields. No caller supplies a device address. */
 enum uaicfw_field {
 	UAICFW_CHIP, UAICFW_SUBID, UAICFW_USB_CONFIG, UAICFW_XTAL, UAICFW_BBPLL,
 	UAICFW_CLOCK_SELECT, UAICFW_U02_RF_MISC_PTR, UAICFW_DPD_MASK0,
-	UAICFW_DPD_MASK1, UAICFW_DPD_MASK2, UAICFW_DPD_RESERVED
+	UAICFW_DPD_MASK1, UAICFW_DPD_MASK2, UAICFW_DPD_RESERVED,
+	UAICFW_U02_WIFISETTING_PTR, UAICFW_U02_LDPC_PTR, UAICFW_U02_AGC_PTR,
+	UAICFW_U02_TXGAIN_PTR, UAICFW_U02_LMAC_ENTRY
 };
 
 static usbd_status
@@ -551,6 +586,13 @@ uaicfw_read_field(struct uaicfw_softc *sc, enum uaicfw_field field,
 		[UAICFW_DPD_MASK1] = UAICFW_U02_RF_MISC + 4,
 		[UAICFW_DPD_MASK2] = UAICFW_U02_RF_MISC + 8,
 		[UAICFW_DPD_RESERVED] = UAICFW_U02_RF_MISC + 12,
+		/* aicwf_patch_config_8800dc: normal-mode setting pointers. */
+		[UAICFW_U02_WIFISETTING_PTR] = 0x00010164,
+		[UAICFW_U02_LDPC_PTR] = 0x00010164 + 0x8,
+		[UAICFW_U02_AGC_PTR] = 0x00010164 + 0xc,
+		[UAICFW_U02_TXGAIN_PTR] = 0x00010164 + 0x10,
+		/* start_from_bootrom: RAM_LMAC_FW_ADDR. */
+		[UAICFW_U02_LMAC_ENTRY] = UAICFW_U02_LMAC_ADDR,
 	};
 	uint8_t req[4], cfm[8];
 	usbd_status status;
@@ -592,19 +634,22 @@ uaicfw_u02_dpd_marker(struct uaicfw_softc *sc)
 	return "absent";
 }
 
-/* Summarize the release only after all file snapshots match. */
-struct uaicfw_kit {
-	size_t wlan_size;
-	const char *release;
-	unsigned rows;
-};
-
 enum uaicfw_asset {
 #define U02_FILE(id, name)	U02_##id,
 #define U02_RELEASE(label, digest)
 #include "uaicfw_kit.def"
 #undef U02_RELEASE
 #undef U02_FILE
+	U02_NASSETS
+};
+
+/* Summarize the release only after all file snapshots match. */
+struct uaicfw_kit {
+	size_t wlan_size;
+	const char *release;
+	unsigned rows;
+	void *buf[U02_NASSETS];
+	size_t size[U02_NASSETS];
 };
 
 static const char * const uaicfw_assets[] = {
@@ -624,6 +669,16 @@ static const struct {
 #undef U02_RELEASE
 #undef U02_FILE
 };
+
+static void
+uaicfw_kit_release(struct uaicfw_kit *kit)
+{
+	for (size_t i = 0; i < __arraycount(kit->buf); i++) {
+		if (kit->buf[i] != NULL)
+			firmware_free(kit->buf[i], kit->size[i]);
+		kit->buf[i] = NULL;
+	}
+}
 
 static bool
 uaicfw_kit_tables(const uint8_t *buf, size_t size)
@@ -665,12 +720,16 @@ uaicfw_kit_prepare(struct uaicfw_kit *kit)
 		size_t size;
 
 		error = firmware_open("aic8800dc", name, &fh);
-		if (error)
+		if (error) {
+			uaicfw_kit_release(&result);
 			return error;
+		}
 		error = firmware_read_alloc(fh, 40284, &buf, &size);
 		const int close_error = firmware_close(fh);
-		if (error)
+		if (error) {
+			uaicfw_kit_release(&result);
 			return error;
+		}
 		error = close_error;
 		if (!error && i == U02_TABLES && !uaicfw_kit_tables(buf, size))
 			error = EFTYPE;
@@ -683,8 +742,11 @@ uaicfw_kit_prepare(struct uaicfw_kit *kit)
 		}
 		if (error) {
 			firmware_free(buf, size);
+			uaicfw_kit_release(&result);
 			return error;
 		}
+		result.buf[i] = buf;
+		result.size[i] = size;
 
 		SHA256_Init(&file);
 		SHA256_Update(&file, buf, size);
@@ -695,7 +757,6 @@ uaicfw_kit_prepare(struct uaicfw_kit *kit)
 		SHA256_Update(&sum, digest, sizeof(digest));
 		if (i == U02_WLAN)
 			result.wlan_size = size;
-		firmware_free(buf, size);
 	}
 	SHA256_Final(digest, &sum);
 	for (size_t i = 0; i < sizeof(digest); i++) {
@@ -710,6 +771,7 @@ uaicfw_kit_prepare(struct uaicfw_kit *kit)
 			return 0;
 		}
 	}
+	uaicfw_kit_release(&result);
 	return EFTYPE;
 }
 
@@ -898,6 +960,434 @@ done:
 		return uaicfw_lyra_power(self, sc);
 	return USBD_NORMAL_COMPLETION;
 }
+
+/*
+ * Normal-mode U02 ROM patch and DPD preparation before the first
+ * MM_SET_STACK_START: rkwifibt 223f2479, rwnx_plat_patch_load with
+ * CONFIG_FORCE_DPD_CALIB, aicwf_plat_patch_load_8800dc,
+ * aicwf_patch_config_8800dc and aicwf_dpd_calib_8800dc.
+ */
+#define	UAICFW_DBG_MEM_WRITE_REQ	0x0402
+#define	UAICFW_DBG_MEM_WRITE_CFM	0x0403
+#define	UAICFW_DBG_MEM_BLOCK_WRITE_REQ	0x040b
+#define	UAICFW_DBG_MEM_BLOCK_WRITE_CFM	0x040c
+#define	UAICFW_DBG_START_APP_REQ	0x040d
+#define	UAICFW_DBG_START_APP_CFM	0x040e
+#define	UAICFW_START_APP_FNCALL		4
+#define	UAICFW_START_APP_DUMMY		5
+#define	UAICFW_DBG_MEM_MASK_WRITE_REQ	0x0411
+#define	UAICFW_DBG_MEM_MASK_WRITE_CFM	0x0412
+#define	UAICFW_U02_WDT_REG		0x4010300c	/* wdt_tbl_masked */
+#define	UAICFW_BLOCK_MAX		512	/* dbg_mem_block_write_req */
+#define	UAICFW_U02_PATCH_ADDR		0x00180000	/* ROM_FMAC_PATCH_ADDR */
+#define	UAICFW_U02_CALIB_ADDR		0x00130000	/* ROM_FMAC_CALIB_ADDR */
+#define	UAICFW_U02_CALIB_ENTRY		0x00130009
+#define	UAICFW_U02_TBL_DESC		128	/* patch table descriptor */
+
+enum uaicfw_u02_table {
+	U02T_WIFISETTING = 3, U02T_LDPC = 4, U02T_AGC = 5, U02T_TXGAIN = 6
+};
+
+struct uaicfw_u02_load {
+	uint8_t *blk;
+	unsigned blocks, empty, rejected, rows;
+	uint32_t first_error;
+};
+
+static usbd_status
+uaicfw_mem_write(struct uaicfw_softc *sc, uint32_t addr, uint32_t value)
+{
+	uint8_t req[8], cfm[8];
+	uint32_t echo;
+	usbd_status status;
+
+	le32enc(req, addr);
+	le32enc(req + 4, value);
+	status = uaicfw_command(sc, UAICFW_DBG_MEM_WRITE_REQ, req, sizeof(req),
+	    UAICFW_DBG_MEM_WRITE_CFM, cfm, sizeof(cfm), false, NULL);
+	if (status == USBD_NORMAL_COMPLETION &&
+	    !aicwf_read_confirm(cfm, sizeof(cfm), addr, &echo))
+		return USBD_INVAL;
+	return status;
+}
+
+/* rwnx_plat_bin_fw_upload_2: 512-byte blocks in a zero-filled request. */
+static usbd_status
+uaicfw_mem_block_write(struct uaicfw_softc *sc, struct uaicfw_u02_load *ld,
+    uint32_t addr, const uint8_t *data, size_t len)
+{
+	uint8_t cfm[4];
+	uint16_t got;
+	usbd_status status;
+
+	for (size_t off = 0; off < len; off += UAICFW_BLOCK_MAX) {
+		const size_t n = MIN(UAICFW_BLOCK_MAX, len - off);
+		memset(ld->blk, 0, 8 + UAICFW_BLOCK_MAX);
+		le32enc(ld->blk, addr + off);
+		le32enc(ld->blk + 4, n);
+		memcpy(ld->blk + 8, data + off, n);
+		status = uaicfw_command_wait(sc, UAICFW_DBG_MEM_BLOCK_WRITE_REQ,
+		    ld->blk, 8 + UAICFW_BLOCK_MAX, UAICFW_DBG_MEM_BLOCK_WRITE_CFM,
+		    cfm, sizeof(cfm), false, NULL, UAICFW_TIMEOUT_MS, &got);
+		if (status != USBD_NORMAL_COMPLETION)
+			return status;
+		ld->blocks++;
+		/* dbg_mem_block_write_cfm carries wstatus. The factory ignores it. */
+		if (got == 0) {
+			ld->empty++;
+		} else if (got != sizeof(cfm) || le32dec(cfm) != 0) {
+			if (ld->rejected++ == 0)
+				ld->first_error = addr + off;
+		}
+	}
+	return USBD_NORMAL_COMPLETION;
+}
+
+static const uint8_t *
+uaicfw_u02_table(const struct uaicfw_kit *kit, unsigned index, size_t *len)
+{
+	const uint8_t * const buf = kit->buf[U02_TABLES];
+	size_t pos = 12;
+
+	/* uaicfw_kit_tables already checked the layout. */
+	for (unsigned i = 0; i < index; i++)
+		pos += 4 + le32dec(buf + pos);
+	*len = le32dec(buf + pos);
+	return buf + pos + 4;
+}
+
+static bool
+uaicfw_u02_ram(uint32_t addr)
+{
+	return addr >= 0x00100000 && addr < 0x00200000 && (addr & 3) == 0;
+}
+
+/*
+ * aicwf_set_rf_config_8800dc in normal mode: TX power levels from the
+ * board file, the four gain tables and the 2.4 GHz calibration. The kit
+ * board file disables power offsets, so no MM_SET_TXPWR_OFST is sent.
+ */
+#define	UAICFW_MM_SET_RF_CONFIG_CFM	0x0068
+#define	UAICFW_MM_SET_RF_CALIB_CFM	0x006a
+#define	UAICFW_MM_SET_TXPWR_LVL_CFM	0x0078
+#define	UAICFW_TXPWR_LEVELS		34
+#define	UAICFW_TXPWR_LVL_LEN		95	/* mm_set_txpwr_lvl_req union */
+#define	UAICFW_RF_CONFIG_LEN		260	/* mm_set_rf_config_req */
+
+static int
+uaicfw_u02_levels(const struct uaicfw_kit *kit,
+    uint8_t levels[UAICFW_TXPWR_LVL_LEN])
+{
+	const uint8_t *p = kit->buf[U02_USER];
+	const uint8_t * const end = p + kit->size[U02_USER];
+	unsigned count = 0;
+	bool enabled = false;
+
+	memset(levels, 0, UAICFW_TXPWR_LVL_LEN);
+	while (p < end) {
+		const uint8_t *line = memchr(p, '\n', end - p);
+		if (line == NULL)
+			line = end;
+		const size_t n = line - p;
+		if (n >= 8 && memcmp(p, "enable=1", 8) == 0)
+			enabled = true;
+		if (n > 4 && memcmp(p, "lvl_", 4) == 0) {
+			const uint8_t *eq = memchr(p, '=', n);
+			unsigned value = 0;
+
+			if (eq == NULL || eq + 1 == line ||
+			    count == UAICFW_TXPWR_LEVELS)
+				return EFTYPE;
+			for (const uint8_t *d = eq + 1; d < line; d++) {
+				if (*d == '\r' && d + 1 == line)
+					break;
+				if (*d < '0' || *d > '9' || value > 12)
+					return EFTYPE;
+				value = value * 10 + *d - '0';
+			}
+			if (value > 127)
+				return EFTYPE;
+			levels[++count] = value;
+		}
+		p = line == end ? end : line + 1;
+	}
+	if (!enabled || count != UAICFW_TXPWR_LEVELS)
+		return EFTYPE;
+	levels[0] = 1;
+	return 0;
+}
+
+static usbd_status
+uaicfw_u02_rf(device_t self, struct uaicfw_softc *sc,
+    const struct uaicfw_kit *kit)
+{
+	static const struct {
+		unsigned table;
+		uint8_t select, offset;
+	} gains[] = {
+		{ 7, 1, 0 }, { 8, 1, 16 },	/* TX gain, two halves */
+		{ 9, 0, 0 }, { 10, 0, 32 },	/* RX gain, 20 and 40 MHz */
+	};
+	uint8_t levels[UAICFW_TXPWR_LVL_LEN], cfm[16], calib[24];
+	uint16_t got;
+	uint8_t *req;
+	usbd_status status;
+
+	if (uaicfw_u02_levels(kit, levels) != 0) {
+		aprint_error_dev(self, "U02 board file has no TX power levels\n");
+		return USBD_INVAL;
+	}
+	status = uaicfw_command_wait(sc, UAICFW_MM_SET_TXPWR_LVL_REQ, levels,
+	    sizeof(levels), UAICFW_MM_SET_TXPWR_LVL_CFM, cfm, sizeof(cfm), false,
+	    NULL, UAICFW_TIMEOUT_MS, &got);
+	if (status != USBD_NORMAL_COMPLETION)
+		return status;
+	req = kmem_alloc(UAICFW_RF_CONFIG_LEN, KM_SLEEP);
+	for (size_t i = 0; i < __arraycount(gains); i++) {
+		size_t len;
+		const uint8_t * const t = uaicfw_u02_table(kit, gains[i].table,
+		    &len);
+
+		memset(req, 0, UAICFW_RF_CONFIG_LEN);
+		req[0] = gains[i].select;
+		req[1] = gains[i].offset;
+		req[2] = 16;
+		memcpy(req + 4, t, MIN(len, UAICFW_RF_CONFIG_LEN - 4));
+		status = uaicfw_command_wait(sc, UAICFW_MM_SET_RF_CONFIG_REQ,
+		    req, UAICFW_RF_CONFIG_LEN, UAICFW_MM_SET_RF_CONFIG_CFM, cfm,
+		    sizeof(cfm), false, NULL, UAICFW_TIMEOUT_MS, &got);
+		if (status != USBD_NORMAL_COMPLETION)
+			break;
+	}
+	kmem_free(req, UAICFW_RF_CONFIG_LEN);
+	if (status != USBD_NORMAL_COMPLETION)
+		return status;
+	/* Normal-mode 2.4 GHz calibration; the factory reply is empty. */
+	memset(calib, 0, sizeof(calib));
+	le32enc(calib, 0x0f8f);
+	le32enc(calib + 8, 0x0c34c008);
+	le32enc(calib + 16, 0x264203);
+	status = uaicfw_command_wait(sc, UAICFW_MM_SET_RF_CALIB_REQ, calib,
+	    sizeof(calib), UAICFW_MM_SET_RF_CALIB_CFM, cfm, sizeof(cfm), false,
+	    NULL, UAICFW_CALIB_TIMEOUT_MS, &got);
+	if (status == USBD_NORMAL_COMPLETION)
+		aprint_normal_dev(self, "RF calibrated: %u TX power levels, "
+		    "4 gain tables\n", UAICFW_TXPWR_LEVELS);
+	return status;
+}
+
+/* An administrator keeps the passive survey with an aic8800dc/passive file. */
+static bool
+uaicfw_u02_passive_requested(void)
+{
+	firmware_handle_t fh;
+
+	if (firmware_open("aic8800dc", "passive", &fh) != 0)
+		return false;
+	(void)firmware_close(fh);
+	return true;
+}
+
+static usbd_status
+uaicfw_u02_prepare(device_t self, struct uaicfw_softc *sc,
+    const struct uaicfw_kit *kit)
+{
+	static const enum uaicfw_field ptrs[] = {
+		UAICFW_U02_WIFISETTING_PTR, UAICFW_U02_LDPC_PTR,
+		UAICFW_U02_AGC_PTR, UAICFW_U02_TXGAIN_PTR
+	};
+	struct uaicfw_u02_load ld = { 0 };
+	const char *phase = "WLAN patch";
+	uint32_t base[__arraycount(ptrs)];
+	const uint8_t *p;
+	size_t len;
+	usbd_status status;
+
+	ld.blk = kmem_alloc(8 + UAICFW_BLOCK_MAX, KM_SLEEP);
+	status = uaicfw_mem_block_write(sc, &ld, UAICFW_U02_PATCH_ADDR,
+	    kit->buf[U02_WLAN], kit->size[U02_WLAN]);
+	if (status != USBD_NORMAL_COMPLETION)
+		goto out;
+
+	phase = "setting pointers";
+	for (size_t i = 0; i < __arraycount(ptrs); i++) {
+		status = uaicfw_read_field(sc, ptrs[i], &base[i]);
+		if (status != USBD_NORMAL_COMPLETION)
+			goto out;
+		if (!uaicfw_u02_ram(base[i])) {
+			aprint_error_dev(self, "U02 setting pointer %zu: %#x\n",
+			    i, base[i]);
+			status = USBD_INVAL;
+			goto out;
+		}
+	}
+	phase = "WLAN settings";
+	p = uaicfw_u02_table(kit, U02T_WIFISETTING, &len);
+	for (size_t i = 0; i + 8 <= len; i += 8) {
+		status = uaicfw_mem_write(sc, base[0] + le32dec(p + i),
+		    le32dec(p + i + 4));
+		if (status != USBD_NORMAL_COMPLETION)
+			goto out;
+	}
+	phase = "LDPC table";
+	p = uaicfw_u02_table(kit, U02T_LDPC, &len);
+	if ((status = uaicfw_mem_block_write(sc, &ld, base[1], p, len)) !=
+	    USBD_NORMAL_COMPLETION)
+		goto out;
+	phase = "AGC table";
+	p = uaicfw_u02_table(kit, U02T_AGC, &len);
+	if ((status = uaicfw_mem_block_write(sc, &ld, base[2], p, len)) !=
+	    USBD_NORMAL_COMPLETION)
+		goto out;
+	phase = "TX gain map";
+	p = uaicfw_u02_table(kit, U02T_TXGAIN, &len);
+	if ((status = uaicfw_mem_block_write(sc, &ld, base[3], p, len)) !=
+	    USBD_NORMAL_COMPLETION)
+		goto out;
+
+	/* aicwf_patch_table_load: the descriptor, then address/value rows. */
+	phase = "patch table";
+	p = kit->buf[U02_PATCH_TABLE];
+	len = kit->size[U02_PATCH_TABLE];
+	if (!uaicfw_u02_ram(le32dec(p))) {
+		status = USBD_INVAL;
+		goto out;
+	}
+	if ((status = uaicfw_mem_block_write(sc, &ld, le32dec(p), p,
+	    UAICFW_U02_TBL_DESC)) != USBD_NORMAL_COMPLETION)
+		goto out;
+	for (size_t i = UAICFW_U02_TBL_DESC; i + 8 <= len; i += 8) {
+		status = uaicfw_mem_write(sc, le32dec(p + i), le32dec(p + i + 4));
+		if (status != USBD_NORMAL_COMPLETION)
+			goto out;
+		ld.rows++;
+	}
+	aprint_normal_dev(self, "U02 patch applied: %u blocks, %u rejected, "
+	    "%u/%u table rows\n", ld.blocks, ld.rejected, ld.rows, kit->rows);
+	if (ld.empty != 0)
+		aprint_normal_dev(self, "%u block writes had no status word\n",
+		    ld.empty);
+	if (ld.rejected != 0) {
+		aprint_error_dev(self, "first rejected block at %#x\n",
+		    ld.first_error);
+		status = USBD_INVAL;
+		goto out;
+	}
+
+	/* aicwf_dpd_calib_8800dc: calibrate unless the RF misc RAM is valid. */
+	phase = "DPD calibration";
+	const char *marker = uaicfw_u02_dpd_marker(sc);
+	if (strcmp(marker, "absent") == 0) {
+		uint8_t req[8], cfm[4];
+		uint16_t got;
+
+		ld.blocks = 0;
+		if ((status = uaicfw_mem_block_write(sc, &ld,
+		    UAICFW_U02_CALIB_ADDR, kit->buf[U02_CALIB],
+		    kit->size[U02_CALIB])) != USBD_NORMAL_COMPLETION)
+			goto out;
+		if (ld.rejected != 0) {
+			status = USBD_INVAL;
+			goto out;
+		}
+		le32enc(req, UAICFW_U02_CALIB_ENTRY);
+		le32enc(req + 4, UAICFW_START_APP_FNCALL);
+		status = uaicfw_command_wait(sc, UAICFW_DBG_START_APP_REQ, req,
+		    sizeof(req), UAICFW_DBG_START_APP_CFM, cfm, sizeof(cfm),
+		    false, NULL, UAICFW_CALIB_TIMEOUT_MS, &got);
+		if (status != USBD_NORMAL_COMPLETION)
+			goto out;
+		marker = uaicfw_u02_dpd_marker(sc);
+		if (got == sizeof(cfm))
+			aprint_normal_dev(self, "DPD calibration program "
+			    "returned %u, marker %s\n", le32dec(cfm), marker);
+		else
+			aprint_normal_dev(self, "DPD calibration program "
+			    "finished, marker %s\n", marker);
+	} else {
+		aprint_normal_dev(self, "DPD marker %s, calibration skipped\n",
+		    marker);
+	}
+	if (strcmp(marker, "present") != 0) {
+		status = USBD_INVAL;
+		goto out;
+	}
+
+	/*
+	 * CONFIG_START_FROM_BOOTROM: wdt_config, then start_from_bootrom
+	 * hands the normal-mode boot ROM to the patched FullMAC.
+	 */
+	phase = "boot ROM handoff";
+	{
+		uint8_t req[12], cfm[8];
+		uint32_t value;
+		uint16_t got;
+
+		le32enc(req, UAICFW_U02_WDT_REG);
+		le32enc(req + 4, 1);
+		le32enc(req + 8, 1);
+		status = uaicfw_command(sc, UAICFW_DBG_MEM_MASK_WRITE_REQ, req,
+		    sizeof(req), UAICFW_DBG_MEM_MASK_WRITE_CFM, cfm, sizeof(cfm),
+		    false, NULL);
+		if (status != USBD_NORMAL_COMPLETION)
+			goto out;
+		/* The watchdog control does not read back the written bit. */
+		if (!aicwf_read_confirm(cfm, sizeof(cfm), UAICFW_U02_WDT_REG,
+		    &value)) {
+			aprint_error_dev(self, "watchdog echo %#x %#x\n",
+			    le32dec(cfm), le32dec(cfm + 4));
+			status = USBD_INVAL;
+			goto out;
+		}
+		status = uaicfw_read_field(sc, UAICFW_U02_LMAC_ENTRY, &value);
+		if (status != USBD_NORMAL_COMPLETION)
+			goto out;
+		le32enc(req, UAICFW_U02_LMAC_ADDR);
+		le32enc(req + 4, UAICFW_START_APP_DUMMY);
+		status = uaicfw_command_wait(sc, UAICFW_DBG_START_APP_REQ, req, 8,
+		    UAICFW_DBG_START_APP_CFM, cfm, 4, false, NULL,
+		    UAICFW_CALIB_TIMEOUT_MS, &got);
+		if (status != USBD_NORMAL_COMPLETION)
+			goto out;
+		aprint_normal_dev(self, "boot ROM handed over: entry word %#x, "
+		    "%s %u\n", value, got == 4 ? "status" : "reply bytes",
+		    got == 4 ? le32dec(cfm) : got);
+	}
+
+	/* rwnx_main.c: start the FullMAC stack with defaults. */
+	phase = "MM_SET_STACK_START";
+	{
+		const uint8_t req[4] = { 1, 0, 0, 0 };
+		uint8_t cfm[2];
+
+		status = uaicfw_command_wait(sc, AICWF_MM_SET_STACK_START_REQ,
+		    req, sizeof(req), AICWF_MM_SET_STACK_START_CFM, cfm,
+		    sizeof(cfm), false, NULL, UAICFW_CALIB_TIMEOUT_MS, NULL);
+		if (status == USBD_NORMAL_COMPLETION)
+			aprint_normal_dev(self, "FullMAC stack started: 5 GHz %u, "
+			    "vendor 0x%02x\n", cfm[0], cfm[1]);
+	}
+	if (status == USBD_NORMAL_COMPLETION) {
+		phase = "RF configuration";
+		status = uaicfw_u02_rf(self, sc, kit);
+	}
+	if (status == USBD_NORMAL_COMPLETION)
+		sc->sc_station_ready = true;
+out:
+	if (status != USBD_NORMAL_COMPLETION) {
+		aprint_error_dev(self, "U02 %s failed: %s\n", phase,
+		    usbd_errstr(status));
+		/* A partly prepared radio cannot serve the passive survey. */
+		if (ld.blocks != 0) {
+			mutex_enter(&sc->sc_rx_lock);
+			if (sc->sc_error == USBD_NORMAL_COMPLETION)
+				sc->sc_error = status;
+			mutex_exit(&sc->sc_rx_lock);
+		}
+	}
+	kmem_free(ld.blk, 8 + UAICFW_BLOCK_MAX);
+	return status;
+}
 #endif
 
 static void
@@ -1005,6 +1495,38 @@ uaicfw_survey_command(const uint8_t *packet, size_t len)
 	}
 }
 
+/*
+ * A prepared radio accepts the station's MM, ME, SCANU and SM messages.
+ * The debug task and the RF and stack setup stay with the transport.
+ */
+static bool
+uaicfw_station_command(const uint8_t *packet, size_t len)
+{
+	const size_t hdr = AICWF_TX_MSG_OFFSET + AICWF_MSG_HDR_LEN;
+
+	if (len < hdr || len > UAICFW_TX_SIZE || packet[2] != AICWF_TYPE_MSG ||
+	    packet[3] != 0 || le16dec(packet) != len - AICWF_HDR_LEN ||
+	    le16dec(packet + AICWF_TX_MSG_OFFSET + 6) != len - hdr)
+		return false;
+	const uint16_t id = le16dec(packet + AICWF_TX_MSG_OFFSET);
+	if (le16dec(packet + AICWF_TX_MSG_OFFSET + 2) != id >> 10 ||
+	    le16dec(packet + AICWF_TX_MSG_OFFSET + 4) != AICWF_TASK_DRIVER)
+		return false;
+	switch (id >> 10) {
+	case 0:			/* MM */
+		return id != UAICFW_MM_SET_RF_CONFIG_REQ &&
+		    id != UAICFW_MM_SET_RF_CALIB_REQ &&
+		    id != UAICFW_MM_SET_TXPWR_LVL_REQ &&
+		    id != AICWF_MM_SET_STACK_START_REQ;
+	case 4:			/* SCANU */
+	case 5:			/* ME */
+	case 6:			/* SM */
+		return true;
+	default:
+		return false;
+	}
+}
+
 /* Serialize the reusable OUT transfer with sc_cmd_lock. */
 static usbd_status
 uaicfw_send(struct uaicfw_softc *sc, struct uaicfw_pipe *p, size_t len,
@@ -1048,7 +1570,8 @@ uaicfw_write(void *arg, const uint8_t *packet, size_t len, bool *attempted)
 
 	if (attempted != NULL)
 		*attempted = false;
-	if (!uaicfw_survey_command(packet, len))
+	if (!(sc->sc_station_ready ? uaicfw_station_command(packet, len) :
+	    uaicfw_survey_command(packet, len)))
 		return EOPNOTSUPP;
 	mutex_enter(&sc->sc_cmd_lock);
 	status = uaicfw_out_state(sc);
@@ -1163,7 +1686,8 @@ uaicfw_data(void *arg, enum uaicfw_data_kind kind, const uint8_t *packet,
 	if (confirm) {
 		mutex_enter(&sc->sc_rx_lock);
 		if (status == USBD_NORMAL_COMPLETION)
-			status = uaicfw_wait_reply(sc, &reply.status, start);
+			status = uaicfw_wait_reply(sc, &reply.status, start,
+			    UAICFW_TIMEOUT_MS);
 		sc->sc_data_reply = NULL;
 		mutex_exit(&sc->sc_rx_lock);
 	}
@@ -1194,11 +1718,18 @@ uaicfw_mountroot(device_t self)
 			    kit.release, kit.wlan_size, kit.rows);
 			aprint_normal_dev(self, "DPD marker before WLAN setup: %s\n",
 			    uaicfw_u02_dpd_marker(sc));
+			if (uaicfw_u02_passive_requested())
+				aprint_normal_dev(self, "station start disabled "
+				    "by aic8800dc/passive\n");
+			else
+				(void)uaicfw_u02_prepare(self, sc, &kit);
+			uaicfw_kit_release(&kit);
 		}
 	}
 #endif
 	const usbd_status status = uaicfw_out_state(sc);
 
+	aa.station = sc->sc_station_ready && status == USBD_NORMAL_COMPLETION;
 	/* A terminal RX failure can occur while the root disk is mounting. */
 	if (status != USBD_NORMAL_COMPLETION) {
 		aprint_error_dev(self, "station transport unavailable: %s\n",

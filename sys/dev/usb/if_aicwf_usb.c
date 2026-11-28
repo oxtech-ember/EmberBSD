@@ -220,12 +220,13 @@ aicwf_usb_attach(device_t parent, device_t self, void *aux)
 	int error;
 
 	aprint_naive("\n");
-	aprint_normal(": AIC8800DC station, passive receive only\n");
+	aprint_normal(": AIC8800DC station%s\n",
+	    aa->station ? "" : ", passive receive only");
 	usc->bus = *aa;
 	mutex_init(&usc->lock, MUTEX_DEFAULT, IPL_SOFTUSB);
 	SIMPLEQ_INIT(&usc->packets);
 	aicwf_prepare(sc, self, &ops, usc, true);
-	sc->sc_receive_only = true;
+	sc->sc_receive_only = !aa->station;
 	usc->prepared = true;
 	error = workqueue_create(&usc->rxq, "aicwfrx", aicwf_usb_rx_work, usc,
 	    PRI_NONE, IPL_SOFTUSB, WQ_MPSAFE);

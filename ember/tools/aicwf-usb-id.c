@@ -36,7 +36,7 @@ static int
 firmware_open(const char *driver, const char *name, firmware_handle_t *fh)
 {
 	char path[1024];
-	assert(strcmp(driver, "aic8800dc") == 0 && !kit_handles && !kit_allocations);
+	assert(strcmp(driver, "aic8800dc") == 0 && !kit_handles);
 	kit_opens++;
 	if (kit_dir == NULL)
 		return ENOENT;
@@ -203,6 +203,23 @@ static int cv_timedwait(kcondvar_t *, kmutex_t *, int);
 static void *device_private(device_t);
 #define explicit_memset memset
 #define KASSERT assert
+#define CTASSERT(x) _Static_assert(x, #x)
+#define MIN(a, b) ((a) < (b) ? (a) : (b))
+#define KM_SLEEP 0
+static unsigned kmem_live;
+static void *kmem_alloc(size_t n, int f)
+{
+	void *p = malloc(n);
+	assert(p != NULL && f == KM_SLEEP);
+	kmem_live++;
+	return p;
+}
+static void kmem_free(void *p, size_t n)
+{
+	assert(p != NULL && n != 0 && kmem_live != 0);
+	kmem_live--;
+	free(p);
+}
 #define roundup(x, y) (((x) + (y) - 1) / (y) * (y))
 #define CFATTACH_DECL_NEW(...)
 #define aprint_naive(...) ((void)0)
@@ -250,6 +267,15 @@ report(const char *fmt, ...)
 	if (strncmp(fmt, "station files ", 14) == 0) {
 		va_end(ap);
 		return;
+	}
+	/* The U02 preparation stages. */
+	static const char * const u02_stages[] = { "U02 ", "DPD ", "boot ROM ",
+	    "FullMAC stack ", "RF calibrated", "station start ", "%u block " };
+	for (size_t i = 0; i < __arraycount(u02_stages); i++) {
+		if (strncmp(fmt, u02_stages[i], strlen(u02_stages[i])) == 0) {
+			va_end(ap);
+			return;
+		}
 	}
 	if (strncmp(fmt, "factory", 7) == 0) {
 		vsnprintf(condition_line, sizeof(condition_line), fmt, ap);
@@ -575,11 +601,116 @@ data_confirm(unsigned pipe, uint32_t status, uint32_t token)
 	x->cb(x, x->arg, USBD_NORMAL_COMPLETION);
 }
 
+/* The normal-mode U02 preparation against a scripted radio. */
+static bool u02_mode;
+enum u02_fault { U02_OK, U02_EMPTY_BLOCK, U02_REJECT_BLOCK, U02_NO_MARKER,
+    U02_BAD_POINTER, U02_LONG_RF_REPLY };
+static enum u02_fault u02_fault;
+static bool u02_marker;
+static uint16_t u02_cfm, u02_cfm_len;
+static uint8_t u02_param[16];
+static struct { uint16_t id; uint32_t w0, w1; uint16_t len; uint8_t last; }
+    u02_log[96];
+static unsigned u02_count;
+
+static void
+u02_request(const uint8_t *b, size_t len)
+{
+	const uint16_t id = le16dec(b + 8);
+	const uint16_t plen = le16dec(b + 14);
+	const uint32_t w0 = plen >= 4 ? le32dec(b + 16) : 0;
+	const uint32_t w1 = plen >= 8 ? le32dec(b + 20) : 0;
+	uint32_t value = 0;
+
+	assert(len == 16 + plen && u02_count < __arraycount(u02_log));
+	u02_log[u02_count].id = id;
+	u02_log[u02_count].w0 = w0;
+	u02_log[u02_count].w1 = w1;
+	u02_log[u02_count].len = plen;
+	u02_log[u02_count].last = plen ? b[len - 1] : 0;
+	u02_count++;
+	memset(u02_param, 0, sizeof(u02_param));
+	u02_cfm = id + 1;
+	switch (id) {
+	case 0x0400:		/* DBG_MEM_READ */
+		switch (w0) {
+		case 0x10164: value = 0x00110000; break;
+		case 0x1016c: value = u02_fault == U02_BAD_POINTER ? 0x40000000 : 0x00111000; break;
+		case 0x10170: value = 0x00112000; break;
+		case 0x10174: value = 0x00113000; break;
+		case 0x10178: value = 0x00120ebc; break;
+		case 0x120ec0: value = u02_marker ? 0x80000000 : 0; break;
+		default: break;
+		}
+		/* FALLTHROUGH */
+	case 0x0402:		/* DBG_MEM_WRITE */
+	case 0x0411:		/* DBG_MEM_MASK_WRITE */
+		le32enc(u02_param, w0);
+		le32enc(u02_param + 4, id == 0x0400 ? value : w1);
+		u02_cfm_len = 8;
+		break;
+	case 0x040b:		/* DBG_MEM_BLOCK_WRITE */
+		assert(plen == 520 && w1 <= 512 && w1 != 0);
+		for (size_t i = 8 + w1; i < plen; i++)
+			assert(b[16 + i] == 0);
+		u02_cfm_len = u02_fault == U02_EMPTY_BLOCK ? 0 : 4;
+		if (u02_fault == U02_REJECT_BLOCK && w0 == 0x00180200)
+			le32enc(u02_param, 1);
+		break;
+	case 0x040d:		/* DBG_START_APP */
+		assert(plen == 8);
+		if (w0 == 0x00130009 && w1 == 4 && u02_fault != U02_NO_MARKER)
+			u02_marker = true;
+		u02_cfm_len = 4;
+		break;
+	case 0x007b:		/* MM_SET_STACK_START */
+		assert(plen == 4 && w0 == 1);
+		u02_cfm_len = 2;
+		break;
+	case 0x0077:		/* MM_SET_TXPWR_LVL */
+		assert(plen == 95 && b[16] == 1 && b[17] == 20 && b[50] == 127);
+		u02_cfm_len = 0;
+		break;
+	case 0x0067:		/* MM_SET_RF_CONFIG */
+		assert(plen == 260 && b[18] == 16);
+		u02_cfm_len = 0;
+		break;
+	case 0x0069:		/* MM_SET_RF_CALIB */
+		assert(plen == 24 && w0 == 0x0f8f);
+		u02_cfm_len = u02_fault == U02_LONG_RF_REPLY ? 16 : 0;
+		break;
+	default:
+		assert(!"unexpected U02 command");
+	}
+}
+
+static void
+u02_reply(struct usbd_xfer *x)
+{
+	memset(x->buf, 0, 32);
+	le16enc(x->buf, 12 + u02_cfm_len);
+	x->buf[2] = AICWF_TYPE_MSG;
+	le16enc(x->buf + 4, u02_cfm);
+	le16enc(x->buf + 10, u02_cfm_len);
+	memcpy(x->buf + 16, u02_param, u02_cfm_len);
+	x->actual = 16 + u02_cfm_len;
+}
+
 static void deliver(void);
 static usbd_status
 emulate_transfer(struct usbd_xfer *x)
 {
 	uint8_t *b = x->buf;
+	if (u02_mode) {
+		if (x->pipe->addr == 2) {
+			u02_request(b, x->len);
+			x->actual = x->len;
+		} else {
+			assert(x->pipe->addr & 0x80);
+			u02_reply(x);
+		}
+		return USBD_NORMAL_COMPLETION;
+	}
 	if (x->pipe->addr == 1) {
 		assert(data_test != OUT_IDLE && x->len <= sizeof(data_wire));
 		data_writes++;
@@ -780,6 +911,13 @@ deliver(void)
 static int
 cv_timedwait(kcondvar_t *cv, kmutex_t *m, int ticks)
 {
+	if (u02_mode) {
+		assert(ticks == 500 || ticks == 4000);
+		mutex_exit(m);
+		deliver();
+		mutex_enter(m);
+		return 0;
+	}
 	assert(ticks > 0 && ticks <= 500 && *m);
 	if (command_timing != CMD_NORMAL && writes == 3) {
 		assert(command_timing != CMD_OUT_EXPIRED);
@@ -945,7 +1083,8 @@ static void
 survey_queue_checks(void)
 {
 	struct uaicfw_softc sc = { 0 };
-	struct uaicfw_request req = { AICWF_MM_ADD_IF_CFM, 2, USBD_IN_PROGRESS, false, NULL };
+	struct uaicfw_request req = { AICWF_MM_ADD_IF_CFM, 2, USBD_IN_PROGRESS, false,
+	    false, NULL };
 	uint8_t records[240] = { 0 };
 	uint8_t first[UAICFW_RX_SIZE];
 	uint8_t rest[24];
@@ -1580,6 +1719,199 @@ kit_table_checks(void)
 	assert(!uaicfw_kit_tables(packed, sizeof(packed)));
 }
 
+static const char u02_board_file[] =
+    "# comment\nenable=1\nloss_enable=0\n"
+    "lvl_11b_11ag_1m_2g4=20\nlvl_11b_11ag_2m_2g4=20\n"
+    "lvl_11b_11ag_5m5_2g4=20\nlvl_11b_11ag_11m_2g4=20\n"
+    "lvl_11b_11ag_6m_2g4=20\nlvl_11b_11ag_9m_2g4=20\n"
+    "lvl_11b_11ag_12m_2g4=20\nlvl_11b_11ag_18m_2g4=20\n"
+    "lvl_11b_11ag_24m_2g4=18\nlvl_11b_11ag_36m_2g4=18\n"
+    "lvl_11b_11ag_48m_2g4=16\nlvl_11b_11ag_54m_2g4=16\n"
+    "lvl_11n_11ac_mcs0_2g4=20\nlvl_11n_11ac_mcs1_2g4=20\n"
+    "lvl_11n_11ac_mcs2_2g4=20\nlvl_11n_11ac_mcs3_2g4=20\n"
+    "lvl_11n_11ac_mcs4_2g4=18\nlvl_11n_11ac_mcs5_2g4=18\n"
+    "lvl_11n_11ac_mcs6_2g4=16\nlvl_11n_11ac_mcs7_2g4=16\n"
+    "lvl_11n_11ac_mcs8_2g4=16\nlvl_11n_11ac_mcs9_2g4=16\n"
+    "lvl_11ax_mcs0_2g4=20\nlvl_11ax_mcs1_2g4=20\n"
+    "lvl_11ax_mcs2_2g4=20\nlvl_11ax_mcs3_2g4=20\n"
+    "lvl_11ax_mcs4_2g4=18\nlvl_11ax_mcs5_2g4=18\n"
+    "lvl_11ax_mcs6_2g4=16\nlvl_11ax_mcs7_2g4=16\n"
+    "lvl_11ax_mcs8_2g4=15\nlvl_11ax_mcs9_2g4=15\r\n"
+    "lvl_11ax_mcs10_2g4=15\nlvl_11ax_mcs11_2g4=127";
+
+/* Drive uaicfw_u02_prepare over the attached fake USB device. */
+static void
+u02_prepare_checks(struct usbif_attach_arg *a)
+{
+	static const size_t sizes[11] = {
+		16, 16, 192, 16, 1340, 2048, 384, 128, 128, 256, 256
+	};
+	static uint8_t tables[4836], wlan[1030], calib[512];
+	static uint8_t patch[128 + 16];
+	static char board[sizeof(u02_board_file)];
+	static const enum u02_fault faults[] = { U02_OK, U02_EMPTY_BLOCK,
+	    U02_LONG_RF_REPLY, U02_REJECT_BLOCK, U02_NO_MARKER, U02_BAD_POINTER };
+	struct uaicfw_kit kit = { 0 };
+	size_t pos = 12;
+
+	memcpy(tables, "AICDCU02", 8);
+	le16enc(tables + 8, 1);
+	le16enc(tables + 10, 11);
+	for (unsigned i = 0; i < 11; i++) {
+		le32enc(tables + pos, sizes[i]);
+		for (size_t j = 0; j < sizes[i]; j++)
+			tables[pos + 4 + j] = (uint8_t)(i * 16 + j);
+		pos += 4 + sizes[i];
+	}
+	assert(pos == sizeof(tables));
+	/* Two WLAN setting rows at offsets 0x10 and 0x20. */
+	uint8_t *ws = tables + 12 + 4 * 4 + 16 + 16 + 192;
+	le32enc(ws, 0x10); le32enc(ws + 4, 0x11111111);
+	le32enc(ws + 8, 0x20); le32enc(ws + 12, 0x22222222);
+	for (size_t i = 0; i < sizeof(wlan); i++)
+		wlan[i] = (uint8_t)(0xa0 + i);
+	memset(calib, 0xc5, sizeof(calib));
+	memset(patch, 0, sizeof(patch));
+	le32enc(patch, 0x00180800);
+	le32enc(patch + 128, 0x00110100); le32enc(patch + 132, 0x1);
+	le32enc(patch + 136, 0x00110104); le32enc(patch + 140, 0x2);
+	memcpy(board, u02_board_file, sizeof(board));
+	kit.buf[U02_TABLES] = tables; kit.size[U02_TABLES] = pos;
+	kit.buf[U02_WLAN] = wlan; kit.size[U02_WLAN] = sizeof(wlan);
+	kit.buf[U02_CALIB] = calib; kit.size[U02_CALIB] = sizeof(calib);
+	kit.buf[U02_PATCH_TABLE] = patch; kit.size[U02_PATCH_TABLE] = sizeof(patch);
+	kit.buf[U02_USER] = board; kit.size[U02_USER] = sizeof(board) - 1;
+	kit.rows = 2;
+
+	fault = NONE;
+	for (size_t f = 0; f < __arraycount(faults); f++) {
+		config.bNumInterface = 3;
+		writes = reads = errors = 0;
+		memset(&device, 0, sizeof(device));
+		uaicfw_attach(0, 0, a);
+		assert(writes == 3 && device.sc_error == USBD_NORMAL_COMPLETION);
+		u02_mode = true;
+		u02_fault = faults[f];
+		u02_marker = false;
+		u02_count = 0;
+		const usbd_status st = uaicfw_u02_prepare(0, &device, &kit);
+		u02_mode = false;
+		const bool ok = faults[f] == U02_OK || faults[f] == U02_EMPTY_BLOCK ||
+		    faults[f] == U02_LONG_RF_REPLY;
+		if ((st == USBD_NORMAL_COMPLETION) != ok)
+			fprintf(stderr, "u02 fault %d status %d after %u: %#x %#x\n",
+			    faults[f], st, u02_count, u02_log[u02_count - 1].id,
+			    u02_log[u02_count - 1].w0);
+		assert((st == USBD_NORMAL_COMPLETION) == ok);
+		assert(device.sc_station_ready == ok);
+		/* Once the radio was written, a failure is terminal. */
+		assert((device.sc_error != USBD_NORMAL_COMPLETION) == !ok);
+		assert(kmem_live == 0);
+		if (faults[f] == U02_BAD_POINTER) {
+			assert(u02_count == 3 + 2 && u02_log[4].w0 == 0x1016c);
+		} else if (faults[f] == U02_REJECT_BLOCK) {
+			assert(u02_log[2].id == 0x040b && u02_count == 3 + 4 + 2 + 8 + 1 + 2);
+		} else if (faults[f] == U02_NO_MARKER) {
+			assert(u02_log[u02_count - 1].w0 == 0x120ebc + 12 ||
+			    u02_log[u02_count - 1].id == 0x0400);
+		} else {
+			/* WLAN 3 blocks, 4 pointers, 2 settings, LDPC 3, AGC 4,
+			 * TX gain 1, descriptor 1, 2 rows, marker 5, calib 1,
+			 * FNCALL, marker 5, watchdog, entry, handoff, stack,
+			 * levels, 4 gain tables, calibration. */
+			assert(u02_count == 42);
+			assert(u02_log[0].w0 == 0x00180000 && u02_log[0].w1 == 512);
+			assert(u02_log[2].w0 == 0x00180400 && u02_log[2].w1 == 6);
+			assert(u02_log[3].id == 0x0400 && u02_log[3].w0 == 0x10164);
+			assert(u02_log[7].id == 0x0402 && u02_log[7].w0 == 0x00110010 &&
+			    u02_log[7].w1 == 0x11111111);
+			assert(u02_log[9].w0 == 0x00111000 && u02_log[11].w1 == 1340 - 1024);
+			assert(u02_log[12].w0 == 0x00112000 && u02_log[15].w1 == 512);
+			assert(u02_log[16].w0 == 0x00113000 && u02_log[16].w1 == 384);
+			assert(u02_log[17].w0 == 0x00180800 && u02_log[17].w1 == 128);
+			assert(u02_log[18].id == 0x0402 && u02_log[19].w1 == 2);
+			assert(u02_log[25].id == 0x040b && u02_log[25].w0 == 0x00130000 &&
+			    u02_log[25].w1 == 512);
+			assert(u02_log[26].id == 0x040d && u02_log[26].w0 == 0x00130009);
+			assert(u02_log[32].id == 0x0411 && u02_log[32].w0 == 0x4010300c);
+			assert(u02_log[33].id == 0x0400 && u02_log[33].w0 == 0x00150000);
+			assert(u02_log[34].id == 0x040d && u02_log[34].w1 == 5);
+			assert(u02_log[35].id == 0x007b && u02_log[36].id == 0x0077);
+			for (unsigned i = 37; i < 41; i++)
+				assert(u02_log[i].id == 0x0067);
+			assert(u02_log[41].id == 0x0069);
+		}
+		mountroot_hook = NULL;
+		assert(uaicfw_detach(0, 0) == 0 && !opens && !allocs);
+	}
+}
+
+/* The U02 board-file levels, kit table lookup and full-station command filter. */
+static void
+u02_station_checks(void)
+{
+	char text[sizeof(u02_board_file)];
+	uint8_t levels[95], tables[12 + 3 * 8], packet[64];
+	struct uaicfw_kit kit = { 0 };
+	size_t len;
+
+	memcpy(text, u02_board_file, sizeof(u02_board_file));
+	kit.buf[U02_USER] = text;
+	kit.size[U02_USER] = sizeof(u02_board_file) - 1;
+	assert(uaicfw_u02_levels(&kit, levels) == 0);
+	assert(levels[0] == 1 && levels[1] == 20 && levels[9] == 18 &&
+	    levels[33] == 15 && levels[34] == 127 && levels[35] == 0);
+	/* A value above the 7-bit power range or a missing level is rejected. */
+	text[sizeof(u02_board_file) - 2] = '8';
+	assert(uaicfw_u02_levels(&kit, levels) == EFTYPE);
+	kit.size[U02_USER] = sizeof(u02_board_file) - 1 - strlen("\nlvl_11ax_mcs11_2g4=128");
+	assert(uaicfw_u02_levels(&kit, levels) == EFTYPE);
+	memcpy(text, u02_board_file, sizeof(u02_board_file));
+	memcpy(strstr(text, "enable=1"), "enable=0", 8);
+	kit.size[U02_USER] = sizeof(u02_board_file) - 1;
+	assert(uaicfw_u02_levels(&kit, levels) == EFTYPE);
+
+	/* The table file lists word-aligned tables after a 12-byte header. */
+	memset(tables, 0, sizeof(tables));
+	for (unsigned i = 0; i < 3; i++) {
+		le32enc(tables + 12 + i * 8, 4);
+		le32enc(tables + 16 + i * 8, 0x1000 + i);
+	}
+	kit.buf[U02_TABLES] = tables;
+	assert(le32dec(uaicfw_u02_table(&kit, 2, &len)) == 0x1002 && len == 4);
+	assert(uaicfw_u02_ram(0x00100000) && uaicfw_u02_ram(0x001ffffc));
+	assert(!uaicfw_u02_ram(0x00200000) && !uaicfw_u02_ram(0x00100002) &&
+	    !uaicfw_u02_ram(0x40500000));
+
+	/* A prepared radio takes station messages, never the debug task. */
+	size_t n = aicwf_command_encode(packet, sizeof(packet), 0x0000, NULL, 0);
+	assert(uaicfw_station_command(packet, n));
+	n = aicwf_command_encode(packet, sizeof(packet), 0x1800, packet + 40, 8);
+	assert(uaicfw_station_command(packet, n));
+	assert(!uaicfw_station_command(packet, n - 1));
+	n = aicwf_command_encode(packet, sizeof(packet), 0x040b, packet + 40, 8);
+	assert(!uaicfw_station_command(packet, n));
+	n = aicwf_command_encode(packet, sizeof(packet), 0x0402, packet + 40, 8);
+	assert(!uaicfw_station_command(packet, n));
+	n = aicwf_command_encode(packet, sizeof(packet), 0x0000, NULL, 0);
+	packet[2] = AICWF_TYPE_DATA;
+	assert(!uaicfw_station_command(packet, n));
+	/* The RF and stack setup and unknown tasks stay with the transport. */
+	static const uint16_t denied[] = { 0x0067, 0x0069, 0x0077, 0x007b,
+	    0x0c00, 0x1c00 };
+	static const uint16_t allowed[] = { 0x0002, 0x0006, 0x0024, 0x0073,
+	    0x1000, 0x100a, 0x1400, 0x1404, 0x1800, 0x1803 };
+	for (size_t i = 0; i < __arraycount(denied); i++) {
+		n = aicwf_command_encode(packet, sizeof(packet), denied[i], NULL, 0);
+		assert(!uaicfw_station_command(packet, n));
+	}
+	for (size_t i = 0; i < __arraycount(allowed); i++) {
+		n = aicwf_command_encode(packet, sizeof(packet), allowed[i], NULL, 0);
+		assert(uaicfw_station_command(packet, n));
+	}
+	assert(kmem_live == 0);
+}
+
 int
 main(int argc, char **argv)
 {
@@ -1589,14 +1921,20 @@ main(int argc, char **argv)
 		struct uaicfw_kit kit = { 0 };
 		kit_dir = argv[1];
 		int error = uaicfw_kit_prepare(&kit);
-		assert(!kit_handles && !kit_allocations);
+		assert(!kit_handles);
 		if (error) {
+			/* Every buffer read before the failure was released. */
+			assert(!kit_allocations);
 			assert(!kit.release && !kit.rows && !kit.wlan_size);
 			fprintf(stderr, "kit rejected: error %d after %u opens\n",
 			    error, kit_opens);
 			return 1;
 		}
-		assert(kit.wlan_size && kit_opens == 6);
+		assert(kit.wlan_size && kit_opens == 6 && kit_allocations == 6);
+		for (unsigned i = 0; i < U02_NASSETS; i++)
+			assert(kit.buf[i] != NULL && kit.size[i] != 0);
+		uaicfw_kit_release(&kit);
+		assert(!kit_allocations && kit.buf[U02_WLAN] == NULL);
 		printf("%s %zu %u\n", kit.release, kit.wlan_size, kit.rows);
 		return 0;
 	}
@@ -1712,10 +2050,12 @@ main(int argc, char **argv)
 		}
 		assert(uaicfw_detach(0, 0) == 0 && !opens && !allocs);
 	}
+	u02_station_checks();
 	mountroot_failure_checks(&a);
 	condition_checks(&a);
 	power_checks(a);
 	command_deadline_checks(&a);
+	u02_prepare_checks(&a);
 	writes = errors = 0;
 	iface.eps[2].bEndpointAddress = 1;
 	assert(uaicfw_match(0, 0, &a) == UMATCH_NONE);
@@ -1725,6 +2065,7 @@ main(int argc, char **argv)
 	assert(!writes && errors == 1);
 	puts("PASS: both bulk-IN endpoints, early and late FullMAC replies, "
 	     "DC clock/PMU setup, DPD marker, records, Ethernet, SAE, protected SA Query, "
-	     "TX tokens and cleanup");
+	     "TX tokens, U02 patch, DPD, boot ROM and RF preparation, "
+	     "station command filter and cleanup");
 	return 0;
 }

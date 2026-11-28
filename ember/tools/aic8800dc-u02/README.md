@@ -9,8 +9,11 @@ On the matched onboard radio, the kernel reads these six files through
 firmload after the root filesystem mounts and all 17 clock and power steps
 succeed. Install them in `/libdata/firmware/aic8800dc`. The kernel checks
 the release digest and table boundaries. It reports the release, WLAN file
-size and patch table row count. This stage reads host files only. The
-passive station can attach if the files are unavailable or invalid.
+size and patch table row count. It then loads the verified files into the
+radio and starts the station in normal mode. The steps are described in
+[AIC FullMAC station](../../../sys/dev/ic/docs/aicwf-fullmac.md#dc-u02-normal-startup).
+The passive station attaches if the files are unavailable or invalid, or if
+a startup stage fails.
 
 On the matched Lyra, the driver also samples the radio's DPD marker before
 WLAN setup. It checks that the normal-mode RF descriptor selects the known

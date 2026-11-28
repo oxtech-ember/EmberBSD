@@ -25,6 +25,8 @@ struct uaicfw_attach_args {
 	int (*data)(void *, enum uaicfw_data_kind, const uint8_t *, size_t,
 	    const struct uaicfw_port *, bool *);
 	void (*listen)(void *, uaicfw_input_fn, uaicfw_serial_fn, void *);
+	/* The radio is prepared for a full station, not only a survey. */
+	bool station;
 	/* The child sets this after it attaches its network interface. */
 	bool if_attached;
 };
