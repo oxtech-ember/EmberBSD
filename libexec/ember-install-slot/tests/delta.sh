@@ -14,6 +14,11 @@ cleanup()
 	rm -rf "$work"
 }
 trap cleanup EXIT
+rc=0; "$stage" "$work/invalid" /dev/missing prepare A plan || rc=$?
+test "$rc" = 2
+rc=0; "$stage" "$work/invalid" /dev/missing wrong prepare A plan || rc=$?
+test "$rc" = 2
+test ! -e "$work/invalid"
 src=$work/source dst=$work/destination
 mkdir "$src" "$dst" "$src/empty" "$src/tmp" "$src/obsolete" "$src/dir"
 echo secret >"$work/outside"
@@ -98,19 +103,23 @@ test "$(stat -f %i "$dst/independent1")" != "$(stat -f %i "$dst/independent2")"
 test "$(readlink "$dst/link")" = "$work"
 cmp "$src/dir/outside" "$dst/dir/outside"
 test "$(cat "$work/outside")" = secret
-test -d "$dst/empty" && test -p "$dst/fifo"
+test -d "$dst/empty"
+test -p "$dst/fifo"
 cmp "$src/obsolete" "$dst/obsolete"
 cmp "$src/line
 break" "$dst/line
 break"
-test ! -e "$dst/stale" && test -d "$dst/tmp" && test -z "$(ls -A "$dst/tmp")"
+test ! -e "$dst/stale"
+test -d "$dst/tmp"
+test -z "$(ls -A "$dst/tmp")"
 mkdir "$work/reference"
 (cd "$src" && tar --one-file-system -cpf "$work/reference.tar" --null --no-recursion -T "$work/all")
 (cd "$work/reference" && tar -xpf "$work/reference.tar")
 for t in "$work/reference" "$dst"; do
 	test "$(cat "$t/app/tmp/required")" = installed
 	test "$(cat "$t/app/var/run/site")" = configured
-	test -d "$t/var/run" && test ! -e "$t/var/run/volatile"
+	test -d "$t/var/run"
+	test ! -e "$t/var/run/volatile"
 	test ! -e "$t/var/db/ember-update/incoming"
 	test "$(stat -f %i "$t/hard1")" = "$(stat -f %i "$t/hard2")"
 	cmp "$src/sparse" "$t/sparse"
@@ -130,6 +139,7 @@ mount -t tmpfs tmpfs "$dst/mount"
 nested=$dst/mount
 echo protected >"$nested/data"
 rc=0; "$tool" "$src" "$dst" <"$work/all" >"$work/changed" || rc=$?
-test "$rc" = 1 && test "$(cat "$nested/data")" = protected
+test "$rc" = 1
+test "$(cat "$nested/data")" = protected
 umount "$nested"; nested=
 echo 'Verified package slot reuse, tree replacement, metadata and fallback.'
