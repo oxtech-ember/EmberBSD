@@ -108,6 +108,9 @@ struct igpio_gpp {
 	int igg_gpio_base;	/* first ACPI GPIO number */
 };
 
+/* A group without ACPI GPIO numbers; only its interrupts are masked. */
+#define IGPIO_GPP_NOMAP		(-1)
+
 struct igpio_gpp_device {
 	const char *igd_acpi_hid;
 	int igd_hostsw_own;
@@ -165,8 +168,9 @@ static const struct igpio_gpp igpio_jsl_gpps[] = {
  * the Alder Lake-S layout.  Hardware data from Linux
  * drivers/pinctrl/intel/pinctrl-alderlake.c at
  * 995832b2cebe6969d1b42635db698803ee31294d.  SPI0 and JTAG have no ACPI
- * GPIO numbers.  INTC1056 keeps the linear numbering until it is checked
- * on Alder Lake-S hardware.
+ * GPIO numbers: they are listed with IGPIO_GPP_NOMAP so that their
+ * interrupts are masked, as Linux does.  INTC1056 keeps the linear
+ * numbering until it is checked on Alder Lake-S hardware.
  */
 static const struct igpio_gpp igpio_adls_gpps[] = {
 	{ 0, 0,   0, 25,   0 },	/* GPP_I */
@@ -177,6 +181,7 @@ static const struct igpio_gpp igpio_adls_gpps[] = {
 	{ 1, 0,  95, 24, 160 },	/* GPP_B */
 	{ 1, 1, 119,  8, 192 },	/* GPP_G */
 	{ 1, 2, 127, 24, 224 },	/* GPP_H */
+	{ 2, 0, 151,  9, IGPIO_GPP_NOMAP },	/* SPI0 */
 	{ 2, 1, 160, 16, 256 },	/* GPP_A */
 	{ 2, 2, 176, 24, 288 },	/* GPP_C */
 	{ 3, 0, 200,  8, 320 },	/* GPP_S */
@@ -184,6 +189,7 @@ static const struct igpio_gpp igpio_adls_gpps[] = {
 	{ 3, 2, 231, 15, 384 },	/* GPP_K */
 	{ 3, 3, 246, 24, 416 },	/* GPP_F */
 	{ 4, 0, 270, 25, 448 },	/* GPP_D */
+	{ 4, 1, 295,  9, IGPIO_GPP_NOMAP },	/* JTAG */
 };
 
 static const struct igpio_gpp_device igpio_gpp_devices[] = {

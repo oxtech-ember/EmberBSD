@@ -541,7 +541,12 @@ test_rpls_numbering(void)
 
 	reset_hw();
 	errors = 0;
+	/* SPI0 and JTAG have no ACPI GPIO numbers, but attach masks them. */
+	regs[2][0x220 / 4] = 0x1ff;
+	regs[4][(0x220 + 4) / 4] = 0x1ff;
 	attach("INTC1085", NBAR);
+	CHECK(regs[2][0x220 / 4] == 0);
+	CHECK(regs[4][(0x220 + 4) / 4] == 0);
 	CHECK(sc.sc_banks != NULL);
 	CHECK(sc.sc_gpp_device != NULL);
 	CHECK(sc.sc_npins == 473);

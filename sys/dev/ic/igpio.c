@@ -234,6 +234,8 @@ igpio_find_gpp(const struct igpio_gpp_device *igd, int pin)
 
 	for (i = 0; i < igd->igd_ngpps; i++) {
 		gg = &igd->igd_gpps[i];
+		if (gg->igg_gpio_base == IGPIO_GPP_NOMAP)
+			continue;
 		if (pin >= gg->igg_gpio_base &&
 		    pin < gg->igg_gpio_base + gg->igg_npads)
 			return gg;
@@ -337,7 +339,8 @@ igpio_gpp_attach(struct igpio_softc *sc)
 		KASSERT(gg->igg_first_pad >= ibs->ibs_first_pin);
 		KASSERT(gg->igg_first_pad + gg->igg_npads - 1 <=
 		    ibs->ibs_last_pin);
-		npins = MAX(npins, gg->igg_gpio_base + gg->igg_npads);
+		if (gg->igg_gpio_base != IGPIO_GPP_NOMAP)
+			npins = MAX(npins, gg->igg_gpio_base + gg->igg_npads);
 	}
 
 	sc->sc_npins = npins;
@@ -500,6 +503,9 @@ igpio_gpp_intr(struct igpio_softc *sc)
 
 	for (i = 0; i < igd->igd_ngpps; i++) {
 		gg = &igd->igd_gpps[i];
+		/* Masked at attach; no handler can be established there. */
+		if (gg->igg_gpio_base == IGPIO_GPP_NOMAP)
+			continue;
 		ib = &sc->sc_banks[gg->igg_barno];
 		bsh = sc->sc_bsh[gg->igg_barno];
 		is = igd->igd_gpi_is + gg->igg_regno * 4;

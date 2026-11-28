@@ -244,7 +244,7 @@ igpio_acpi_detach(device_t self, int flags)
 
 	if (isc->sc_bsh != NULL) {
 		kmem_free(isc->sc_bsh, sizeof(*isc->sc_bsh) * nbar);
-		isc->sc_length = NULL;
+		isc->sc_bsh = NULL;
 	}
 
 	if (asc->sc_pmf) {
