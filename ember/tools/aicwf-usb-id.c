@@ -401,6 +401,7 @@ static unsigned opens, allocs, writes, reads, errors;
 static uint32_t requested;
 static const uint32_t condition_fields[] = { 0x40200024, 0x40500148, 0x40505010, 0x40500010 };
 static uint32_t field_values[4];
+static const uint32_t *dpd_sample;
 static unsigned current_field;
 static unsigned condition_reads, fail_at;
 static unsigned power_writes, power_fail_at;
@@ -610,7 +611,16 @@ emulate_transfer(struct usbd_xfer *x)
 		} else if (writes == 2) {
 			assert(x->len == sizeof(version_hdr));
 			assert(memcmp(b, version_hdr, sizeof(version_hdr)) == 0);
-		} else if (le16dec(b + 8) == AICWF_DBG_MEM_READ_REQ) {
+		} else if (cmd == AICWF_DBG_MEM_READ_REQ && dpd_sample != NULL) {
+			assert(x->len == 20 && memcmp(b, hdr, sizeof(hdr)) == 0);
+			assert(condition_reads < 5);
+			current_field = condition_reads++;
+			requested = le32dec(b + 16);
+			if (current_field == 0)
+				assert(requested == 0x00010178);
+			else
+				assert(requested == dpd_sample[0] + 4 * (current_field - 1));
+		} else if (cmd == AICWF_DBG_MEM_READ_REQ) {
 			const bool has_bbpll = (field_values[1] & 1) != 0;
 			assert(target_board && condition_reads < (has_bbpll ? 4U : 3U));
 			assert(x->len == 20 && memcmp(b, hdr, sizeof(hdr)) == 0);
@@ -722,7 +732,8 @@ emulate_transfer(struct usbd_xfer *x)
 		le32enc(b + 16, fault == BAD_ECHO ? 0xdead : requested);
 		le32enc(b + 20, requested == 0x20 ? sub_id : (chip_id << 16) | chip_flags);
 		if (condition_reads != 0) {
-			le32enc(b + 20, field_values[current_field]);
+			le32enc(b + 20, dpd_sample != NULL ?
+			    dpd_sample[current_field] : field_values[current_field]);
 			if (fail_at == condition_reads && condition_fault == CONDITION_ECHO)
 				le32enc(b + 16, requested ^ 4);
 			if (fail_at == condition_reads && condition_fault == CONDITION_LENGTH)
@@ -1394,6 +1405,47 @@ condition_checks(struct usbif_attach_arg *a)
 }
 
 static void
+expect_dpd_marker(const char *state, unsigned requests)
+{
+	condition_reads = 0;
+	assert(strcmp(uaicfw_u02_dpd_marker(&device), state) == 0);
+	assert(condition_reads == requests && device.sc_error == USBD_NORMAL_COMPLETION);
+}
+
+static void
+dpd_marker_checks(void)
+{
+	/* A selector followed by the four normal-mode header words. */
+	uint32_t sample[] = { 0x00120ebc, 0, 0x800fffffU, 0, 0xff };
+	const uint32_t ignored[] = { 0, 0xfffffU, 0, 0xff };
+	const unsigned saved_reads = condition_reads;
+
+	dpd_sample = sample;
+	sample[0] ^= 4;
+	expect_dpd_marker("unknown", 1);
+	sample[0] ^= 4;
+	expect_dpd_marker("present", 5);
+	for (size_t i = 0; i < __arraycount(ignored); i++) {
+		for (uint32_t bit = 1; bit != 0; bit <<= 1) {
+			sample[i + 1] ^= bit;
+			expect_dpd_marker(ignored[i] & bit ? "present" : "absent", 5);
+			sample[i + 1] ^= bit;
+		}
+	}
+	for (fail_at = 1; fail_at <= __arraycount(sample); fail_at++) {
+		condition_fault = CONDITION_ECHO;
+		expect_dpd_marker("unknown", fail_at);
+		condition_fault = CONDITION_TIMEOUT;
+		expect_dpd_marker("unknown", fail_at);
+	}
+	condition_fault = CONDITION_OK;
+	fail_at = 0;
+	expect_dpd_marker("present", 5);
+	condition_reads = saved_reads;
+	dpd_sample = NULL;
+}
+
+static void
 power_checks(struct usbif_attach_arg a)
 {
 	struct usbd_device root = { 0 };
@@ -1483,6 +1535,7 @@ power_checks(struct usbif_attach_arg a)
 			assert(kit_opens == (power_confirmed != 0));
 			assert(children == 1 && !errors && device.sc_input);
 			if (i == 0) {
+				dpd_marker_checks();
 				const uint16_t cmds[] = { 0x0402, 0x0411 };
 				uint8_t packet[64], args[12] = { 0 };
 				for (size_t j = 0; j < __arraycount(cmds); j++) {
@@ -1671,7 +1724,7 @@ main(int argc, char **argv)
 	assert(uaicfw_detach(0, 0) == 0);
 	assert(!writes && errors == 1);
 	puts("PASS: both bulk-IN endpoints, early and late FullMAC replies, "
-	     "DC clock/PMU setup, records, Ethernet, SAE, protected SA Query, "
+	     "DC clock/PMU setup, DPD marker, records, Ethernet, SAE, protected SA Query, "
 	     "TX tokens and cleanup");
 	return 0;
 }

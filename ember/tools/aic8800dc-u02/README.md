@@ -12,6 +12,15 @@ the release digest and table boundaries. It reports the release, WLAN file
 size and patch table row count. This stage reads host files only. The
 passive station can attach if the files are unavailable or invalid.
 
+On the matched Lyra, the driver also samples the radio's DPD marker before
+WLAN setup. It checks that the normal-mode RF descriptor selects the known
+U02 header. The factory driver reported the same location on a
+[Pico Ultra W](https://github.com/LuckfoxTECH/luckfox-pico/issues/131).
+The Lyra driver then reads the three mask words and the reserved word.
+`present` and `absent` report the factory marker in this sample.
+`unknown` means the descriptor differed or a read failed. The station
+attaches in passive mode if its USB transport remains available.
+
 ## Prepare the tables
 
 Use the Lyra 261020 SDK from [Luckfox downloads](https://wiki.luckfox.com/Luckfox-Lyra/Download/).

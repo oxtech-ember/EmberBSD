@@ -39,6 +39,7 @@
 
 #define	UAICFW_IDENT_REG	0x40500000
 #define	UAICFW_SUBID_REG	0x00000020
+#define	UAICFW_U02_RF_MISC	0x00120ebc	/* normal-mode RF status on Lyra */
 #define	UAICFW_PARAM_MAX	1032	/* includes a 1024-byte block write */
 #define	UAICFW_TX_SIZE		(AICWF_TX_MSG_OFFSET + AICWF_MSG_HDR_LEN + \
 				 UAICFW_PARAM_MAX)
@@ -529,7 +530,8 @@ done:
 /* These are the only readable fields. No caller supplies a device address. */
 enum uaicfw_field {
 	UAICFW_CHIP, UAICFW_SUBID, UAICFW_USB_CONFIG, UAICFW_XTAL, UAICFW_BBPLL,
-	UAICFW_CLOCK_SELECT
+	UAICFW_CLOCK_SELECT, UAICFW_U02_RF_MISC_PTR, UAICFW_DPD_MASK0,
+	UAICFW_DPD_MASK1, UAICFW_DPD_MASK2, UAICFW_DPD_RESERVED
 };
 
 static usbd_status
@@ -543,6 +545,12 @@ uaicfw_read_field(struct uaicfw_softc *sc, enum uaicfw_field field,
 		[UAICFW_XTAL] = 0x40500148,
 		[UAICFW_BBPLL] = 0x40505010,
 		[UAICFW_CLOCK_SELECT] = 0x40500010,
+		/* Normal-mode RF configuration, rkwifibt 223f2479. */
+		[UAICFW_U02_RF_MISC_PTR] = 0x00010164 + 0x14,
+		[UAICFW_DPD_MASK0] = UAICFW_U02_RF_MISC,
+		[UAICFW_DPD_MASK1] = UAICFW_U02_RF_MISC + 4,
+		[UAICFW_DPD_MASK2] = UAICFW_U02_RF_MISC + 8,
+		[UAICFW_DPD_RESERVED] = UAICFW_U02_RF_MISC + 12,
 	};
 	uint8_t req[4], cfm[8];
 	usbd_status status;
@@ -559,6 +567,31 @@ uaicfw_read_field(struct uaicfw_softc *sc, enum uaicfw_field field,
 }
 
 #ifdef FDT
+/* Sample only the normal-mode header reported by this USB U02 revision. */
+static const char *
+uaicfw_u02_dpd_marker(struct uaicfw_softc *sc)
+{
+	static const enum uaicfw_field fields[] = {
+		UAICFW_DPD_MASK0, UAICFW_DPD_MASK1, UAICFW_DPD_MASK2,
+		UAICFW_DPD_RESERVED
+	};
+	uint32_t base, words[__arraycount(fields)];
+
+	if (uaicfw_read_field(sc, UAICFW_U02_RF_MISC_PTR, &base) !=
+	    USBD_NORMAL_COMPLETION || base != UAICFW_U02_RF_MISC)
+		return "unknown";
+	for (size_t i = 0; i < __arraycount(fields); i++) {
+		if (uaicfw_read_field(sc, fields[i], &words[i]) !=
+		    USBD_NORMAL_COMPLETION)
+			return "unknown";
+	}
+	/* rkwifibt: aicwf_misc_ram_valid_check_8800dc, normal station mode. */
+	if (words[0] == 0 && (words[1] & 0xfff00000U) == 0x80000000U &&
+	    words[2] == 0 && (words[3] & 0xffffff00U) == 0)
+		return "present";
+	return "absent";
+}
+
 /* Summarize the release only after all file snapshots match. */
 struct uaicfw_kit {
 	size_t wlan_size;
@@ -1159,6 +1192,8 @@ uaicfw_mountroot(device_t self)
 			aprint_normal_dev(self, "station files verified: %s, "
 			    "WLAN file %zu bytes, patch table %u rows\n",
 			    kit.release, kit.wlan_size, kit.rows);
+			aprint_normal_dev(self, "DPD marker before WLAN setup: %s\n",
+			    uaicfw_u02_dpd_marker(sc));
 		}
 	}
 #endif
