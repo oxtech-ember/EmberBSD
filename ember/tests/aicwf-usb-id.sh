@@ -25,4 +25,4 @@ copy {print} copy && /^}/ {exit}' "$src/sys/dev/usb/if_aicwf_usb.c" > "$work/sta
 ${CC:-cc} -std=c99 -Wall -Wextra -Werror -Wno-unused-parameter ${AICWF_USB_CFLAGS:-} \
     -I"$src/sys/dev/ic" -I"$src/sys/dev/usb" -I"$work" "$src/ember/tools/aicwf-usb-id.c" \
     -o "$work/check"
-"$work/check"
+"$work/check" "$@"

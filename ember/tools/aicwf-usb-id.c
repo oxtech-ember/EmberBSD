@@ -10,6 +10,76 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "a733-sha256.h"
+#define SHA256_CTX struct sha256_ctx
+#define SHA256_DIGEST_LENGTH 32
+#define SHA256_Init sha256_init
+#define SHA256_Update(ctx, buf, len) sha256_update((ctx), (buf), (len))
+#define SHA256_Final(out, ctx) sha256_final((ctx), (out))
+#ifndef EFTYPE
+#define EFTYPE EINVAL
+#endif
+
+typedef FILE *firmware_handle_t;
+static const char *kit_dir;
+static unsigned kit_opens, kit_allocations, kit_handles;
+
+static void
+be64enc(void *buf, uint64_t n)
+{
+	uint8_t *p = buf;
+	for (unsigned i = 0; i < 8; i++)
+		p[7 - i] = (uint8_t)(n >> (8 * i));
+}
+
+static int
+firmware_open(const char *driver, const char *name, firmware_handle_t *fh)
+{
+	char path[1024];
+	assert(strcmp(driver, "aic8800dc") == 0 && !kit_handles && !kit_allocations);
+	kit_opens++;
+	if (kit_dir == NULL)
+		return ENOENT;
+	assert((size_t)snprintf(path, sizeof(path), "%s/%s", kit_dir, name)
+	    < sizeof(path));
+	*fh = fopen(path, "rb");
+	if (*fh == NULL)
+		return errno;
+	kit_handles++;
+	return 0;
+}
+
+static int
+firmware_close(firmware_handle_t fh)
+{
+	assert(kit_handles > 0);
+	kit_handles--;
+	return fclose(fh) == 0 ? 0 : EIO;
+}
+
+static int
+firmware_read_alloc(firmware_handle_t fh, size_t limit, void **out, size_t *len)
+{
+	assert(fseek(fh, 0, SEEK_END) == 0);
+	long size = ftell(fh);
+	rewind(fh);
+	if (size <= 0 || (size_t)size > limit)
+		return size <= 0 ? EINVAL : EFBIG;
+	*len = (size_t)size;
+	*out = malloc(*len);
+	assert(*out != NULL && fread(*out, 1, *len, fh) == *len);
+	kit_allocations++;
+	return 0;
+}
+
+static void
+firmware_free(void *buf, size_t len)
+{
+	assert(kit_allocations && buf && len);
+	kit_allocations--;
+	free(buf);
+}
+
 typedef unsigned u_int;
 typedef int device_t, cfdata_t;
 
@@ -174,6 +244,10 @@ report(const char *fmt, ...)
 	va_start(ap, fmt);
 	if (strcmp(fmt, "clock/PMU sequence confirmed\n") == 0) {
 		power_confirmed++;
+		va_end(ap);
+		return;
+	}
+	if (strncmp(fmt, "station files ", 14) == 0) {
 		va_end(ap);
 		return;
 	}
@@ -1340,6 +1414,7 @@ power_checks(struct usbif_attach_arg a)
 		uaicfw_lyra_power_busy = 0; /* A separate boot for each case. */
 		memset(&device, 0, sizeof(device));
 		power_writes = power_confirmed = condition_reads = writes = errors = children = 0;
+		kit_opens = 0;
 		power_hash = UINT32_C(2166136261);
 		power_error[0] = '\0';
 		power_update_clear = i >= 32;
@@ -1401,9 +1476,11 @@ power_checks(struct usbif_attach_arg a)
 		} else {
 			assert(power_writes == 0 && power_confirmed == 0);
 		}
+		assert(!kit_opens);
 		if (!power_fail_at) {
 			assert(mountroot_hook);
 			mountroot_hook(0);
+			assert(kit_opens == (power_confirmed != 0));
 			assert(children == 1 && !errors && device.sc_input);
 			if (i == 0) {
 				const uint16_t cmds[] = { 0x0402, 0x0411 };
@@ -1430,9 +1507,46 @@ power_checks(struct usbif_attach_arg a)
 	target_board = false;
 }
 
-int
-main(void)
+/* Each table has a little-endian byte length followed by whole words. */
+static void
+kit_table_checks(void)
 {
+	uint8_t packed[12 + 11 * 8] = "AICDCU02";
+	le16enc(packed + 8, 1);
+	le16enc(packed + 10, 11);
+	for (size_t pos = 12; pos < sizeof(packed); pos += 8)
+		le32enc(packed + pos, 4);
+	assert(uaicfw_kit_tables(packed, sizeof(packed)));
+	for (size_t size = 0; size < sizeof(packed); size++)
+		assert(!uaicfw_kit_tables(packed, size));
+	le32enc(packed + 12, 0);
+	assert(!uaicfw_kit_tables(packed, sizeof(packed)));
+	le32enc(packed + 12, UINT32_MAX - 3);
+	assert(!uaicfw_kit_tables(packed, sizeof(packed)));
+	le32enc(packed + 12, 3);
+	assert(!uaicfw_kit_tables(packed, sizeof(packed)));
+}
+
+int
+main(int argc, char **argv)
+{
+	kit_table_checks();
+	assert(argc == 1 || argc == 2);
+	if (argc == 2) {
+		struct uaicfw_kit kit = { 0 };
+		kit_dir = argv[1];
+		int error = uaicfw_kit_prepare(&kit);
+		assert(!kit_handles && !kit_allocations);
+		if (error) {
+			assert(!kit.release && !kit.rows && !kit.wlan_size);
+			fprintf(stderr, "kit rejected: error %d after %u opens\n",
+			    error, kit_opens);
+			return 1;
+		}
+		assert(kit.wlan_size && kit_opens == 6);
+		printf("%s %zu %u\n", kit.release, kit.wlan_size, kit.rows);
+		return 0;
+	}
 	survey_queue_checks();
 	struct usbd_interface iface = {
 	    {0, 4}, {{1, 2, 512}, {0x81, 2, 512}, {2, 2, 512}, {0x82, 2, 512}}};

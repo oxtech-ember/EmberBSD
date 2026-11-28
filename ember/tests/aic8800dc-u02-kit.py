@@ -107,6 +107,18 @@ class FactoryTables(unittest.TestCase):
 
 
 class FactoryKit(unittest.TestCase):
+    def test_kernel_catalog(self):
+        # The host tool owns this catalog. Its installation remains independent
+        # of the kernel source tree.
+        source = TOOL.parents[2] / "sys/dev/usb/uaicfw_kit.def"
+        entries = [row for row in source.read_text().splitlines()
+                   if not row.startswith("/*")]
+        files = [f'U02_FILE({role}, "{name}")'
+                 for role, name in kit["ASSETS"].items()]
+        profiles = [f'U02_RELEASE("{release}", "{digest}")'
+                    for release, digest in kit["PROFILES"].values()]
+        self.assertEqual(entries, files + profiles)
+
     def test_every_release_combination(self):
         self.assertEqual(set(FILES), set(kit["FILES"]))
         different = {name for name, pair in FILES.items() if pair[0] != pair[1]}

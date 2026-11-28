@@ -5,6 +5,13 @@ Luckfox Lyra Zero W. Use the original WLAN driver and firmware directory from
 one image. The supported sets are the factory NAND release with patch build
 `g0a86431` and the 261020 release with patch build `g09cea8d`.
 
+On the matched onboard radio, the kernel reads these six files through
+firmload after the root filesystem mounts and all 17 clock and power steps
+succeed. Install them in `/libdata/firmware/aic8800dc`. The kernel checks
+the release digest and table boundaries. It reports the release, WLAN file
+size and patch table row count. This stage reads host files only. The
+passive station can attach if the files are unavailable or invalid.
+
 ## Prepare the tables
 
 Use the Lyra 261020 SDK from [Luckfox downloads](https://wiki.luckfox.com/Luckfox-Lyra/Download/).

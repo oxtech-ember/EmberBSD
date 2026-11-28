@@ -8,15 +8,16 @@ import struct
 
 from aic8800dc_u02_files import read_regular
 
-TABLES = "aic8800dc_u02_tables.bin"
-FILES = (
-    TABLES,
-    "aic_powerlimit_8800dc.txt",
-    "aic_userconfig_8800dc.txt",
-    "fmacfw_calib_8800dc_u02.bin",
-    "fmacfw_patch_8800dc_u02.bin",
-    "fmacfw_patch_tbl_8800dc_u02.bin",
-)
+ASSETS = {
+    "TABLES": "aic8800dc_u02_tables.bin",
+    "POWER": "aic_powerlimit_8800dc.txt",
+    "USER": "aic_userconfig_8800dc.txt",
+    "CALIB": "fmacfw_calib_8800dc_u02.bin",
+    "WLAN": "fmacfw_patch_8800dc_u02.bin",
+    "PATCH_TABLE": "fmacfw_patch_tbl_8800dc_u02.bin",
+}
+FILES = tuple(ASSETS.values())
+TABLES = ASSETS["TABLES"]
 # Key each package by the original Linux driver and its complete asset set.
 PROFILES = {
     "df86e12cd99327d776988ee792378f7fd8d82097c5fe3b57dc82bca785ae0693": (

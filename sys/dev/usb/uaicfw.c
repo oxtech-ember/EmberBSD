@@ -20,6 +20,8 @@
 #include <net/if_ether.h>
 
 #ifdef FDT
+#include <sys/sha2.h>
+#include <dev/firmload.h>
 #include <dev/fdt/fdtvar.h>
 #include <dev/ofw/openfirm.h>
 #endif
@@ -102,6 +104,9 @@ struct uaicfw_softc {
 	uint8_t sc_reply[UAICFW_PARAM_MAX];
 	usbd_status sc_error;
 	bool sc_stopping;
+#ifdef FDT
+	bool sc_lyra_power_confirmed;
+#endif
 };
 
 static int uaicfw_match(device_t, cfdata_t, void *);
@@ -554,6 +559,127 @@ uaicfw_read_field(struct uaicfw_softc *sc, enum uaicfw_field field,
 }
 
 #ifdef FDT
+/* Summarize the release only after all file snapshots match. */
+struct uaicfw_kit {
+	size_t wlan_size;
+	const char *release;
+	unsigned rows;
+};
+
+enum uaicfw_asset {
+#define U02_FILE(id, name)	U02_##id,
+#define U02_RELEASE(label, digest)
+#include "uaicfw_kit.def"
+#undef U02_RELEASE
+#undef U02_FILE
+};
+
+static const char * const uaicfw_assets[] = {
+#define U02_FILE(id, name)	[U02_##id] = name,
+#define U02_RELEASE(label, digest)
+#include "uaicfw_kit.def"
+#undef U02_RELEASE
+#undef U02_FILE
+};
+
+static const struct {
+	const char *label, *digest;
+} uaicfw_releases[] = {
+#define U02_FILE(id, name)
+#define U02_RELEASE(label, digest)	{ label, digest },
+#include "uaicfw_kit.def"
+#undef U02_RELEASE
+#undef U02_FILE
+};
+
+static bool
+uaicfw_kit_tables(const uint8_t *buf, size_t size)
+{
+	size_t pos = 12;
+
+	if (size < pos || memcmp(buf, "AICDCU02", 8) != 0 ||
+	    le16dec(buf + 8) != 1 || le16dec(buf + 10) != 11)
+		return false;
+	for (unsigned i = 0; i < 11; i++) {
+		if (size - pos < 4)
+			return false;
+		const uint32_t len = le32dec(buf + pos);
+		pos += 4;
+		if (!len || len % 4 != 0 || len > size - pos)
+			return false;
+		pos += len;
+	}
+	return pos == size;
+}
+
+static int
+uaicfw_kit_prepare(struct uaicfw_kit *kit)
+{
+	static const uint8_t domain[] = "AIC8800DC-U02-STATION-KIT\0\1";
+	static const char digits[] = "0123456789abcdef";
+	uint8_t digest[SHA256_DIGEST_LENGTH], length[8];
+	char hex[2 * SHA256_DIGEST_LENGTH + 1];
+	SHA256_CTX sum, file;
+	struct uaicfw_kit result = { 0 };
+	int error;
+
+	SHA256_Init(&sum);
+	SHA256_Update(&sum, domain, sizeof(domain) - 1);
+	for (size_t i = 0; i < __arraycount(uaicfw_assets); i++) {
+		const char *name = uaicfw_assets[i];
+		firmware_handle_t fh;
+		void *buf;
+		size_t size;
+
+		error = firmware_open("aic8800dc", name, &fh);
+		if (error)
+			return error;
+		error = firmware_read_alloc(fh, 40284, &buf, &size);
+		const int close_error = firmware_close(fh);
+		if (error)
+			return error;
+		error = close_error;
+		if (!error && i == U02_TABLES && !uaicfw_kit_tables(buf, size))
+			error = EFTYPE;
+		if (!error && i == U02_PATCH_TABLE) {
+			/* The factory table starts with a 128-byte descriptor. */
+			if (size <= 128 || (size - 128) % 8 != 0)
+				error = EFTYPE;
+			else
+				result.rows = (size - 128) / 8;
+		}
+		if (error) {
+			firmware_free(buf, size);
+			return error;
+		}
+
+		SHA256_Init(&file);
+		SHA256_Update(&file, buf, size);
+		SHA256_Final(digest, &file);
+		be64enc(length, size);
+		SHA256_Update(&sum, (const uint8_t *)name, strlen(name) + 1);
+		SHA256_Update(&sum, length, sizeof(length));
+		SHA256_Update(&sum, digest, sizeof(digest));
+		if (i == U02_WLAN)
+			result.wlan_size = size;
+		firmware_free(buf, size);
+	}
+	SHA256_Final(digest, &sum);
+	for (size_t i = 0; i < sizeof(digest); i++) {
+		hex[2 * i] = digits[digest[i] >> 4];
+		hex[2 * i + 1] = digits[digest[i] & 15];
+	}
+	hex[sizeof(hex) - 1] = '\0';
+	for (size_t i = 0; i < __arraycount(uaicfw_releases); i++) {
+		if (strcmp(hex, uaicfw_releases[i].digest) == 0) {
+			result.release = uaicfw_releases[i].label;
+			*kit = result;
+			return 0;
+		}
+	}
+	return EFTYPE;
+}
+
 /* The board has one soldered WLAN function behind its CH334F on OTG1. */
 static bool
 uaicfw_lyra_onboard(struct usbd_device *dev)
@@ -652,6 +778,7 @@ uaicfw_lyra_power(device_t self, struct uaicfw_softc *sc)
 		}
 	}
 	atomic_store_relaxed(&uaicfw_lyra_power_busy, 0);
+	sc->sc_lyra_power_confirmed = true;
 	aprint_normal_dev(self, "clock/PMU sequence confirmed\n");
 	return USBD_NORMAL_COMPLETION;
 }
@@ -1020,6 +1147,21 @@ uaicfw_mountroot(device_t self)
 		.cookie = sc, .write = uaicfw_write, .data = uaicfw_data,
 		.listen = uaicfw_listen,
 	};
+#ifdef FDT
+	if (sc->sc_lyra_power_confirmed &&
+	    uaicfw_out_state(sc) == USBD_NORMAL_COMPLETION) {
+		struct uaicfw_kit kit = { 0 };
+		const int error = uaicfw_kit_prepare(&kit);
+		if (error) {
+			aprint_normal_dev(self, "station files unavailable (error %d)\n",
+			    error);
+		} else {
+			aprint_normal_dev(self, "station files verified: %s, "
+			    "WLAN file %zu bytes, patch table %u rows\n",
+			    kit.release, kit.wlan_size, kit.rows);
+		}
+	}
+#endif
 	const usbd_status status = uaicfw_out_state(sc);
 
 	/* A terminal RX failure can occur while the root disk is mounting. */

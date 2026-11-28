@@ -1,0 +1,10 @@
+/* SPDX-License-Identifier: BSD-2-Clause */
+/* Generated from ember/tools/aic8800dc-u02-kit.py. */
+U02_FILE(TABLES, "aic8800dc_u02_tables.bin")
+U02_FILE(POWER, "aic_powerlimit_8800dc.txt")
+U02_FILE(USER, "aic_userconfig_8800dc.txt")
+U02_FILE(CALIB, "fmacfw_calib_8800dc_u02.bin")
+U02_FILE(WLAN, "fmacfw_patch_8800dc_u02.bin")
+U02_FILE(PATCH_TABLE, "fmacfw_patch_tbl_8800dc_u02.bin")
+U02_RELEASE("g0a86431", "d427276066df05c67d514e80ee46fe8cf03a28ba3703ef596a2ccc2c80e9a05f")
+U02_RELEASE("261020 / g09cea8d", "682c79c1205796837970c190eb608fa40f12981c86a9a1bd6558826099daf780")

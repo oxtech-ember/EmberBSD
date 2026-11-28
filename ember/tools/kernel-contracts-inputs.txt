@@ -40,6 +40,9 @@ ember/tests/aicwf-command.sh sys/dev/ic/aicwfvar.h
 ember/tests/aic8800dc-u02-kit.py ember/tools/aic8800dc-u02-kit.py
 ember/tests/aic8800dc-u02-kit.py ember/tools/aic8800dc-u02-tables.py
 ember/tests/aic8800dc-u02-kit.py ember/tools/aic8800dc_u02_files.py
+ember/tests/aic8800dc-u02-kit.py sys/dev/usb/uaicfw_kit.def
+ember/tests/aicwf-usb-id.sh sys/dev/usb/uaicfw_kit.def
+ember/tests/aicwf-usb-id.sh ember/tools/a733-sha256.h
 ember/tests/aicwf-usb-id.sh ember/tools/aicwf-usb-id.c
 ember/tests/aicwf-usb-id.sh sys/dev/ic/aicwf_command.h
 ember/tests/aicwf-usb-id.sh sys/dev/ic/aicwf_sae.h
