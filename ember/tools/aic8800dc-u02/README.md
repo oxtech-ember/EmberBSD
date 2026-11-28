@@ -51,6 +51,9 @@ contains two 32-bit words. The NAND table is 896 bytes and has 96 rows.
 The 261020 table is 1,008 bytes and has 110 rows. The factory driver sends
 the header before the rows and prints the description from its file buffer.
 A matching build string can remain from an earlier run or an incomplete upload.
+The loader replaces the return code after each row. A later success can hide
+an earlier error. Check the descriptor, the first row error and the count of
+accepted rows to verify the full transfer.
 [Factory patch table loader](https://github.com/EliSofke/LuckfoxLyraSDK/blob/6dcbca0d8a517d79bd8fb4205ca4966b136604bc/external/rkwifibt/drivers/aic8800/aic8800/aic8800_fdrv/aicwf_compat_8800dc.c#L1713-L1768)
 
 The YuzukiHD Zephyr component contains three non-H U02 arrays for the WLAN
