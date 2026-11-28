@@ -567,9 +567,12 @@ class LLVMSourceTests(unittest.TestCase):
                 self.assertEqual(result.returncode, 0, result.stderr)
                 gcc, llvm, subdirs = result.stdout.splitlines()
                 self.assertEqual((gcc, llvm), ("no", "no"))
+                # Compare whole path names: lib/libgcc_s is the LLVM unwinder.
+                entries = subdirs.split()
                 for legacy in ("external/bsd/libc++", "libgcc", "libstdc++", "libsupc++",
                                "libcxxrt", "external/bsd/compiler_rt"):
-                    self.assertNotIn(legacy, subdirs)
+                    self.assertFalse(any(entry == legacy or entry.endswith("/" + legacy)
+                                         for entry in entries), legacy)
 
     def test_set_selector_is_derived_from_the_effective_runtime_configuration(self):
         options = self.runtime_options()
@@ -614,7 +617,8 @@ if __name__ == "__main__":
     SOURCE = args.source.resolve()
     PREPARED_LLVM = args.prepared_llvm.resolve() if args.prepared_llvm else None
     CLANG = args.clang.resolve() if args.clang else None
-    LINKER = args.linker.resolve() if args.linker else None
+    # lld selects its flavour from the invoked name; keep ld.lld unresolved.
+    LINKER = args.linker.absolute() if args.linker else None
     SYSROOT = args.sysroot.resolve() if args.sysroot else None
     if bool(args.native_tools) != bool(args.install):
         parser.error("--native-tools and --install must be selected together")
