@@ -293,7 +293,10 @@ acpi_compatible_match(const struct acpi_attach_args *aa,
 	return 0;
 }
 
-static bool pmf_device_register(device_t d, void *a, void *b)
+typedef struct pmf_qual pmf_qual_t;
+static bool pmf_device_register(device_t d,
+    bool (*a)(device_t, const pmf_qual_t *),
+    bool (*b)(device_t, const pmf_qual_t *))
 { (void)d; (void)a; (void)b; return true; }
 static void pmf_device_deregister(device_t d) { (void)d; }
 const char *AcpiFormatException(ACPI_STATUS s) { (void)s; return "test"; }
@@ -506,6 +509,58 @@ test_mtps_interrupts(void)
 
 	igpio_detach(&sc);
 	CHECK(sc.sc_gpp_intr == NULL && sc.sc_pins == NULL);
+}
+
+/*
+ * Raptor Lake-S (INTC1085) uses group-aligned ACPI GPIO numbers with the
+ * Alder Lake-S layout.  SPI0 and JTAG have none, and numbers between
+ * groups have no pad.
+ */
+static void
+test_rpls_numbering(void)
+{
+	static const struct {
+		int pin, bank, pad, regno;
+	} map[] = {
+		{   0, 0,   0, 0 },	/* GPP_I */
+		{  64, 0,  48, 2 },	/* GPP_J */
+		{ 128, 0,  87, 4 },	/* vGPIO_0 */
+		{ 160, 1,   0, 0 },	/* GPP_B */
+		{ 256, 2,   9, 1 },	/* GPP_A, after SPI0 */
+		{ 311, 2,  48, 2 },	/* last GPP_C */
+		{ 352, 3,   8, 1 },	/* GPP_E */
+		{ 439, 3,  69, 3 },	/* last GPP_F */
+		{ 448, 4,   0, 0 },	/* GPP_D */
+		{ 472, 4,  24, 0 },	/* last GPP_D */
+	};
+	static const int nopad[] = { 25, 136, 312, 336, 473 };
+	const struct igpio_gpp *gg;
+	struct igpio_bank *ib;
+	size_t i;
+	int pad;
+
+	reset_hw();
+	errors = 0;
+	attach("INTC1085", NBAR);
+	CHECK(sc.sc_banks != NULL);
+	CHECK(sc.sc_gpp_device != NULL);
+	CHECK(sc.sc_npins == 473);
+	if (sc.sc_banks == NULL || sc.sc_gpp_device == NULL) {
+		if (sc.sc_banks != NULL)
+			igpio_detach(&sc);
+		return;
+	}
+	for (i = 0; i < __arraycount(map); i++) {
+		gg = NULL;
+		pad = -1;
+		ib = igpio_pin_bank(&sc, map[i].pin, &pad, &gg);
+		CHECK(ib == &sc.sc_banks[map[i].bank] && pad == map[i].pad &&
+		    gg != NULL && gg->igg_regno == map[i].regno);
+		CHECK(igpio_pin_lookup(&sc, map[i].pin) == map[i].pin);
+	}
+	for (i = 0; i < __arraycount(nopad); i++)
+		CHECK(igpio_pin_lookup(&sc, nopad[i]) == -1);
+	igpio_detach(&sc);
 }
 
 static void
@@ -785,6 +840,7 @@ main(void)
 		igpio_detach(&sc);
 	test_mtps_interrupts();
 	test_jsl_numbering();
+	test_rpls_numbering();
 	test_missing_community();
 	test_unknown_community();
 	test_legacy_linear();

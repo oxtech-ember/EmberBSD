@@ -22,6 +22,14 @@ for pair in 0:7f4c 1:7f4d 2:7f4e 3:7f4f 4:7f7a 5:7f7b; do
     grep -Fq "{ .id = VIDDID(INTEL, 800SERIES_S_I2C_$n) }," \
         "$src/sys/arch/x86/pci/dwiic_pci.c" || fail "dwiic_pci lacks I2C $n"
 done
+# The 700 Series PCH-S (Raptor Lake-S/HX) LPSS I2C functions.
+for pair in 0:7a4c 1:7a4d 2:7a4e 3:7a4f 4:7a7c 5:7a7d; do
+    n=${pair%%:*} id=${pair#*:}
+    grep -Eq "^#define	PCI_PRODUCT_INTEL_7HS_I2C_$n	0x$id	" \
+        "$src/sys/dev/pci/pcidevs.h" || fail "pcidevs.h lacks 7HS I2C $n 0x$id"
+    grep -Fq "{ .id = VIDDID(INTEL, 7HS_I2C_$n) }," \
+        "$src/sys/arch/x86/pci/dwiic_pci.c" || fail "dwiic_pci lacks 7HS I2C $n"
+done
 # D0 must be requested before mapping Jasper Lake LPSS MMIO registers.
 dwiic="$src/sys/arch/x86/pci/dwiic_pci.c"
 d0_line=$(grep -nF 'pci_set_powerstate(pa->pa_pc, pa->pa_tag, PCI_PMCSR_STATE_D0)' \
@@ -35,6 +43,10 @@ map_line=$(grep -nF 'pci_mapreg_map(pa, PCI_BAR0' "$dwiic" | \
 # The GpioInt controller named by the touchpad's _CRS.
 grep -Fq '{ .compat = "INTC1084" },' "$src/sys/dev/acpi/igpio_acpi.c" ||
     fail "igpio_acpi does not match INTC1084"
+grep -Fq '{ .compat = "INTC1085" },' "$src/sys/dev/acpi/igpio_acpi.c" ||
+    fail "igpio_acpi does not match INTC1085"
+grep -Fq '{ "INTC1085", 0x150, 0x200, 0x220,' "$src/sys/dev/ic/igpioreg.h" ||
+    fail "igpio has no Raptor Lake-S GPIO resource map"
 grep -Fq '{ .compat = "INT34C8" },' "$src/sys/dev/acpi/igpio_acpi.c" ||
     fail "igpio_acpi does not match INT34C8"
 # Jasper Lake ACPI GPIO resources use group-aligned numbers.

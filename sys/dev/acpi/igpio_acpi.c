@@ -84,6 +84,8 @@ static const struct device_compatible_entry compat_data[] = {
 	{ .compat = "INTC1071" },	/* emmitsburg */
 	/* Origin: EmberBSD (AI-assisted), 800 Series PCH-S GPIO. */
 	{ .compat = "INTC1084" },	/* meteorpoint-s */
+	/* Origin: EmberBSD (AI-assisted), 700 Series PCH-S GPIO. */
+	{ .compat = "INTC1085" },	/* raptorlake-s */
 	{ .compat = "INTC3000" },	/* denverton */
 	{ .compat = "INTC3001" },	/* cedarfork */
 #ifdef notyet

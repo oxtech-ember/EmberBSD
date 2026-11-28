@@ -160,9 +160,37 @@ static const struct igpio_gpp igpio_jsl_gpps[] = {
 	{ 3, 0, 225,  8,   0 },	/* GPP_G */
 };
 
+/*
+ * Origin: EmberBSD (AI-assisted).  Raptor Lake-S (700 Series PCH-S) uses
+ * the Alder Lake-S layout.  Hardware data from Linux
+ * drivers/pinctrl/intel/pinctrl-alderlake.c at
+ * 995832b2cebe6969d1b42635db698803ee31294d.  SPI0 and JTAG have no ACPI
+ * GPIO numbers.  INTC1056 keeps the linear numbering until it is checked
+ * on Alder Lake-S hardware.
+ */
+static const struct igpio_gpp igpio_adls_gpps[] = {
+	{ 0, 0,   0, 25,   0 },	/* GPP_I */
+	{ 0, 1,  25, 23,  32 },	/* GPP_R */
+	{ 0, 2,  48, 12,  64 },	/* GPP_J */
+	{ 0, 3,  60, 27,  96 },	/* vGPIO */
+	{ 0, 4,  87,  8, 128 },	/* vGPIO_0 */
+	{ 1, 0,  95, 24, 160 },	/* GPP_B */
+	{ 1, 1, 119,  8, 192 },	/* GPP_G */
+	{ 1, 2, 127, 24, 224 },	/* GPP_H */
+	{ 2, 1, 160, 16, 256 },	/* GPP_A */
+	{ 2, 2, 176, 24, 288 },	/* GPP_C */
+	{ 3, 0, 200,  8, 320 },	/* GPP_S */
+	{ 3, 1, 208, 23, 352 },	/* GPP_E */
+	{ 3, 2, 231, 15, 384 },	/* GPP_K */
+	{ 3, 3, 246, 24, 416 },	/* GPP_F */
+	{ 4, 0, 270, 25, 448 },	/* GPP_D */
+};
+
 static const struct igpio_gpp_device igpio_gpp_devices[] = {
 	{ "INTC1084", 0x150, 0x200, 0x220,
 	    igpio_mtps_gpps, __arraycount(igpio_mtps_gpps) },
+	{ "INTC1085", 0x150, 0x200, 0x220,
+	    igpio_adls_gpps, __arraycount(igpio_adls_gpps) },
 	{ "INT34C8", 0x0c0, 0x100, 0x120,
 	    igpio_jsl_gpps, __arraycount(igpio_jsl_gpps) },
 };
