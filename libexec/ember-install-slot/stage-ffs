@@ -77,29 +77,48 @@ shift 3
 root=$work/root
 snap=$work/snapshot
 fst=
-target_mounted=
-snap_mounted=
 writer=
+remove_mountpoint()
+{
+	# A signal can arrive after mount succeeds and before the shell resumes.
+	if rmdir "$1" 2>/dev/null; then return 0; fi
+	[ -n "$2" ] && [ ! -L "$1" ] || return 1
+	entry=$(df -PM -t ffs "$1") || return 1
+	printf '%s\n' "$entry" | awk -v point="$1" -v device="$2" \
+	    'NR == 2 && NF == 6 && $1 == device && $6 == point { found=1 }
+	     END { exit !(found && NR == 2) }' || return 1
+	umount "$1" && rmdir "$1"
+}
+change_snapshot()
+{
+	# Finish the ioctl and record ownership before honoring a stop request.
+	interrupted=
+	trap 'interrupted=yes' HUP INT TERM
+	(trap '' HUP INT TERM; fssconfig "$@")
+	case "$1" in -x) fst=$2 ;; -u) fst= ;; esac
+	trap 'exit 1' HUP INT TERM
+	[ -z "$interrupted" ]
+}
 finish()
 {
 	result=$?
-	trap - EXIT HUP INT TERM
+	trap - EXIT
+	trap '' HUP INT TERM
 	if [ -n "$writer" ]; then kill "$writer" 2>/dev/null || :; wait "$writer" || :; fi
-	if [ -n "$snap_mounted" ]; then umount "$snap" || exit 1; fi
+	remove_mountpoint "$snap" "${fst:+/dev/$fst}" || exit 1
 	if [ -n "$fst" ]; then fssconfig -u "$fst" || exit 1; fi
-	if [ -n "$target_mounted" ]; then umount "$root" || exit 1; fi
-	rm -rf "$work"
+	remove_mountpoint "$root" "$device" || exit 1
+	rm -rfx "$work" || exit 1
 	exit "$result"
 }
+# Arm recursive cleanup only after both directories exist.
+mkdir "$root" "$snap"
 trap finish EXIT
 trap 'exit 1' HUP INT TERM
-mkdir "$root" "$snap"
 fstdev=$(fssconfig -l | awk '/^fss[0-9]+: not in use$/ { sub(/:$/, "", $1); print $1; exit }')
 [ -n "$fstdev" ] || { echo 'No free FFS snapshot device' >&2; exit 1; }
-fssconfig -x "$fstdev" / "$work/backing"
-fst=$fstdev
+change_snapshot -x "$fstdev" / "$work/backing"
 mount -r -t ffs "/dev/$fst" "$snap"
-snap_mounted=yes
 copy_tree()
 {
 	(cd "$snap" && exec tar --one-file-system -cpf - --null --no-recursion -T "$1") >"$work/tree" &
@@ -120,7 +139,6 @@ raw=/dev/r${device##*/}
 copied=
 if [ "$method" = packages ] && fsck_ffs -n "$raw" &&
     mount -t ffs -o async,noatime "$device" "$root"; then
-	target_mounted=yes
 	if /usr/libexec/ember-install-slot delta "$2" "$work" <"$work/paths" >"$work/changed"; then
 		if copy_tree "$work/changed"; then copied=yes; fi
 	else
@@ -130,19 +148,15 @@ if [ "$method" = packages ] && fsck_ffs -n "$raw" &&
 	if [ -z "$copied" ]; then
 		logger -s -t ember-install-slot 'Cannot reuse the inactive FFS. Rebuild it from the snapshot.' || :
 		umount "$root"
-		target_mounted=
 	fi
 fi
 if [ -z "$copied" ]; then
 	newfs -O 1 "$raw"
 	mount -t ffs -o async,noatime "$device" "$root"
-	target_mounted=yes
 	copy_tree "$work/paths"
 fi
 umount "$snap"
-snap_mounted=
-fssconfig -u "$fst"
-fst=
+change_snapshot -u "$fst"
 /usr/libexec/ember-install-slot populate "$root" "$@"
 chroot "$root" /bin/sh -ec '
     for dir in /boot /tmp /var/run /var/tmp; do test -d "$dir"; done
@@ -157,4 +171,3 @@ chroot "$root" /bin/sh -ec '
 '
 sync
 umount "$root"
-target_mounted=

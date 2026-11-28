@@ -234,8 +234,9 @@ Run `tests/store.sh` for package selection, manual promotion and installed
 desktop binding. Set `CC`, `CPPFLAGS`, and `LDFLAGS` to select the host SDK.
 
 The FFS installer tests are in `libexec/ember-install-slot/tests` at the source root.
+Run `./cleanup.sh ../stage-ffs` from that test directory to check interruption during snapshot and mount operations.
 Build the `delta.c` test driver with the installer's `delta.c`, `equal.c`, and target headers.
-On NetBSD, run `delta.sh DRIVER FFS_DIRECTORY` as root.
+On NetBSD, run `./delta.sh DRIVER FFS_DIRECTORY` as root from the same directory.
 It checks a reused file, changed content, hard links, metadata, stale entries and fallback.
 
 On NetBSD, run `tests/handoff.sh CLIENT INPUT PROFILE RC_SCRIPT` as root for
