@@ -234,7 +234,8 @@ firmware_open(const char *drvname, const char *imgname, firmware_handle_t *fhp)
 			error = ENOMEM;
 			break;
 		}
-		error = vn_open(NULL, pb, NOCHROOT, FREAD, 0, &vp, NULL, NULL);
+		error = vn_open(NULL, pb, NOCHROOT, FREAD | O_REGULAR, 0,
+		    &vp, NULL, NULL);
 		pathbuf_destroy(pb);
 		if (error == ENOENT) {
 			continue;
@@ -254,13 +255,6 @@ firmware_open(const char *drvname, const char *imgname, firmware_handle_t *fhp)
 		(void)vn_close(vp, FREAD, kauth_cred_get());
 		firmware_handle_free(fh);
 		return (error);
-	}
-
-	if (va.va_type != VREG) {
-		VOP_UNLOCK(vp);
-		(void)vn_close(vp, FREAD, kauth_cred_get());
-		firmware_handle_free(fh);
-		return (EINVAL);
 	}
 
 	/* XXX Mark as busy text file. */

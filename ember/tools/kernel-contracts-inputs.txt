@@ -582,3 +582,9 @@ ember/tools/ww-mutex-contract.sh ember/tools/ww-mutex-contract.c
 ember/tools/ww-mutex-contract.sh sys/external/bsd/drm2/include/linux/
 ember/tools/ww-mutex-contract.sh sys/external/bsd/drm2/linux/
 ember/tools/ww-mutex-contract.sh sys/sys/
+ember/tools/firmload-contract.py ember/tools/firmload-contract.c
+ember/tools/firmload-contract.py sys/dev/firmload.c
+ember/tools/firmload-contract.py sys/dev/firmload.h
+ember/tools/firmload-contract.py sys/dev/ic/bwfm.c
+ember/tools/firmload-contract.py sys/dev/sdmmc/if_aicwf.c
+ember/tools/firmload-contract.py sys/kern/vfs_vnops.c

@@ -16,7 +16,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--revision', help='Read consumers from a Git revision.')
     parser.add_argument('--consumers-only', action='store_true')
-    parser.add_argument('--work', required=True, type=Path,
+    parser.add_argument('--work', type=Path,
                         help='Existing parent for temporary test outputs.')
     parser.add_argument('--keep', action='store_true')
     args = parser.parse_args()
@@ -38,6 +38,20 @@ def main():
         if 'firmware_read_alloc(' in source('sys/dev/sdmmc/if_aicwf.c'):
             selections.insert(0, ('sys/dev/firmload.c', 'int', 'firmware_read_alloc'))
     parts = []
+    if not args.consumers_only:
+        # Compile the actual image-open flags with the target VFS type check.
+        fw = source('sys/dev/firmload.c')
+        call = re.search(r'vn_open\(NULL, pb, NOCHROOT, ([^,]+),', fw)
+        if not call:
+            raise SystemExit('Cannot find the firmload vnode open flags')
+        vfs = source('sys/kern/vfs_vnops.c')
+        permission = vfs.index('error = vn_openchk(vp, cred, fmode);')
+        opening = vfs.index('VOP_OPEN(vp, fmode, cred)')
+        if permission >= opening:
+            raise SystemExit('vn_open must check the vnode before VOP_OPEN')
+        parts.append('#define IMAGE_OPEN_FLAGS (' + call[1] + ')')
+        selections.insert(0, ('sys/kern/vfs_vnops.c', 'int', 'vn_openchk'))
+
     for path, result, name in selections:
         text = source(path)
         match = re.search(r'^' + re.escape(result + '\n' + name) +
@@ -51,7 +65,7 @@ def main():
         (work / 'dev').mkdir()
         (work / 'dev/firmload.h').write_text(source('sys/dev/firmload.h'))
         (work / 'firmload-under-test.c').write_text('\n'.join(parts) + '\n')
-        command = shlex.split(os.environ.get('CC', 'gcc-16')) + [
+        command = shlex.split(os.environ.get('CC', 'cc')) + [
             '-std=c11', '-Wall', '-Wextra', '-Werror', '-g']
         command += shlex.split(os.environ.get('FIRMLOAD_CFLAGS', ''))
         if args.consumers_only:

@@ -85,6 +85,10 @@ Upon success,
 returns 0 and stores a firmware image handle in the location pointed to by
 .Fa fhp .
 Otherwise, an error code is returned to indicate the reason for failure.
+The image must be a regular file.
+A FIFO returns
+.Er EFTYPE
+before opening it can wait for a writer.
 .It Fn "firmware_close" "fh"
 .Pp
 Close the firmware image file associated with the firmware handle

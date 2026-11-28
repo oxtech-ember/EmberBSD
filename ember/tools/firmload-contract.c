@@ -148,6 +148,29 @@ struct bwfm_firmware_context {
 static const struct { const char *suffix, *description; }
     bwfm_firmware_filetypes[] = { { "bin", "UCODE" } };
 
+#ifndef CONSUMERS_ONLY
+/* Model VFS access and write services around the real vn_openchk. */
+#ifndef EFTYPE
+#define EFTYPE 79
+#endif
+enum { VNON, VBAD, VREG, VFIFO, VDIR, VCHR, VBLK };
+enum { FREAD = 1, FWRITE = 2, FEXEC = 4, O_REGULAR = 8,
+       O_DIRECTORY = 16, O_TRUNC = 32 };
+enum { VREAD = 1, VWRITE = 2, VEXEC = 4 };
+struct vnode { int v_type; };
+typedef void *kauth_cred_t;
+#define SET_ERROR(e) (e)
+#define vn_writechk(vp) (0)
+static int
+VOP_ACCESS(struct vnode *vp, int mode, kauth_cred_t cred)
+{
+	(void)vp;
+	(void)cred;
+	CHECK(mode == VREAD);
+	return 0;
+}
+#endif
+
 #include "firmload-under-test.c"
 
 static void
@@ -210,6 +233,14 @@ int
 main(void)
 {
 #ifndef CONSUMERS_ONLY
+	struct vnode vp = { .v_type = VREG };
+	CHECK(vn_openchk(&vp, NULL, IMAGE_OPEN_FLAGS) == 0);
+	const int special[] = { VFIFO, VDIR, VCHR, VBLK };
+	for (size_t i = 0; i < sizeof(special)/sizeof(special[0]); i++) {
+		vp.v_type = special[i];
+		CHECK(vn_openchk(&vp, NULL, IMAGE_OPEN_FLAGS) == EFTYPE);
+	}
+
 	static const struct { off_t size; size_t limit; int error; } cases[] = {
 		{ -1, SIZE_MAX, EINVAL }, { 0, SIZE_MAX, EINVAL },
 		{ 1, 0, EFBIG }, { 4, 3, EFBIG }, { 4, 4, 0 },
