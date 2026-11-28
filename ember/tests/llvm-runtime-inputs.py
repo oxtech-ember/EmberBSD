@@ -440,7 +440,7 @@ class LLVMSourceTests(unittest.TestCase):
                     "-n", target, fixture_extra=".MADE: " + dependencies + "\n" +
                         " ".join(p for p in dependencies.split() if p.startswith("/")) + ":\n")
                 self.assertEqual(result.returncode, 0, result.stderr)
-                self.assertIn("/sdk/bin/clang --target=aarch64--netbsd", result.stdout)
+                self.assertIn("/sdk/bin/clang --no-default-config --target=aarch64--netbsd", result.stdout)
                 self.assertIn("--rtlib=compiler-rt --unwindlib=libunwind", result.stdout)
                 self.assertIn("-Wl,--exclude-libs,libunwind.a", result.stdout)
                 self.assertIn("-resource-dir=" + str(self.work / "bootstrap/lib/clang/23"), result.stdout)
